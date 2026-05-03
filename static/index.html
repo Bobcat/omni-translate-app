@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="nl">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>ASR Translate TTS</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="app">
+      <header class="topbar">
+        <div class="language-row" aria-label="Taalrichting">
+          <button class="language-chip" id="sourceLanguageChip" type="button" aria-label="Brontaal kiezen">
+            <span id="sourceLanguageCode">NL</span>
+            <span class="chip-caret" aria-hidden="true">v</span>
+          </button>
+          <span class="direction" aria-hidden="true">-&gt;</span>
+          <button class="language-chip" id="targetLanguageChip" type="button" aria-label="Doeltaal kiezen">
+            <span id="targetLanguageCode">EN</span>
+            <span class="chip-caret" aria-hidden="true">v</span>
+          </button>
+        </div>
+        <button class="status-pill" id="listenButton" type="button">pauze</button>
+        <button class="settings-button" id="settingsButton" type="button" aria-label="Audio-instellingen openen">mic</button>
+      </header>
+
+      <section class="text-panels" aria-live="polite">
+        <article class="pane">
+          <div class="pane-header">
+            <h1>Bron / wat gehoord wordt</h1>
+            <span class="pane-meta" id="sourcePaneMeta">NL</span>
+          </div>
+          <div class="text-stream" id="sourceText" data-empty="Nog geen spraak herkend"></div>
+          <div class="preview-stream" id="sourcePreview"></div>
+        </article>
+        <article class="pane target-pane">
+          <div class="pane-header">
+            <h1>Vertaling / wat gezegd zal worden</h1>
+            <span class="pane-meta" id="targetPaneMeta">EN</span>
+          </div>
+          <div class="text-stream" id="targetText" data-empty="Nog geen vertaling"></div>
+          <div class="preview-stream" id="targetPreview"></div>
+          <section class="meaning-check" id="meaningCheck" hidden>
+            <h2>Betekeniscontrole</h2>
+            <div id="meaningText"></div>
+          </section>
+        </article>
+      </section>
+
+      <footer class="action-dock">
+        <button class="primary-action" id="speakNowButton" type="button" disabled>Spreek nu</button>
+        <button class="secondary-action" id="swapButton" type="button">
+          <span aria-hidden="true">&lt;-&gt;</span>
+          Wissel richting
+        </button>
+        <div class="mini-status" id="miniStatus"></div>
+      </footer>
+      <button class="hidden-playback-button" id="audioResumeButton" type="button" hidden>Speel audio af</button>
+      <audio id="ttsAudio" preload="auto"></audio>
+
+      <div class="sheet-layer" id="languageSheet" hidden>
+        <button class="sheet-scrim" id="languageSheetScrim" type="button" aria-label="Sluiten"></button>
+        <section class="bottom-sheet" role="dialog" aria-modal="true" aria-labelledby="languageSheetTitle">
+          <header class="sheet-header">
+            <h2 id="languageSheetTitle">Kies taal</h2>
+            <button class="sheet-close" id="languageSheetClose" type="button" aria-label="Sluiten">x</button>
+          </header>
+          <div class="language-options" id="languageOptions"></div>
+        </section>
+      </div>
+
+      <div class="sheet-layer" id="settingsSheet" hidden>
+        <button class="sheet-scrim" id="settingsSheetScrim" type="button" aria-label="Sluiten"></button>
+        <section class="bottom-sheet" role="dialog" aria-modal="true" aria-labelledby="settingsSheetTitle">
+          <header class="sheet-header">
+            <h2 id="settingsSheetTitle">Instellingen</h2>
+            <button class="sheet-close" id="settingsSheetClose" type="button" aria-label="Sluiten">x</button>
+          </header>
+          <div class="settings-list">
+            <section class="setting-group audio-input-settings" aria-label="Microfoon">
+              <div class="setting-title-row">
+                <span>Microfoon</span>
+                <span class="setting-value" id="micPreGainValue">1.0x</span>
+              </div>
+              <label class="range-row" for="micPreGain">
+                <span>Amplificatie</span>
+                <input id="micPreGain" type="range" min="0.5" max="3.0" step="0.1" value="1.0">
+              </label>
+              <div class="mic-level" role="meter" aria-label="Mic level" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                <div class="mic-level-fill" id="micLevelFill"></div>
+                <div class="mic-level-threshold" aria-hidden="true"></div>
+              </div>
+              <label class="toggle-row" for="micAutoGainControl">
+                <input id="micAutoGainControl" type="checkbox">
+                <span>Auto gain control</span>
+              </label>
+              <button class="link-row audio-reset-button" id="audioSettingsReset" type="button">Reset audio</button>
+            </section>
+            <div class="setting-row">
+              <span>Audio-uitvoer</span>
+              <span>uit</span>
+            </div>
+          </div>
+        </section>
+      </div>
+    </main>
+    <script type="module" src="/src/app.js"></script>
+  </body>
+</html>

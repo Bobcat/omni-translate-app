@@ -1,0 +1,83 @@
+{
+  "service": {
+    "root_path": ""
+  },
+  "asr_pool": {
+    "base_url": "http://127.0.0.1:8090",
+    "token": ""
+  },
+  "live": {
+    "session_ttl_s": 900,
+    "audio": {
+      "sample_rate_hz": 16000,
+      "channels": 1
+    },
+    "timing": {
+      "drain_wait_s": 20.0,
+      "emit_min_ms": 120
+    },
+    "asr": {
+      "language": null,
+      "beam_size": 5,
+      "chunk_size": 10,
+      "backend": "whisperx",
+      "align_enabled": false,
+      "diarize_enabled": false,
+      "diarize_speaker_mode": "fixed",
+      "diarize_min_speakers": 1,
+      "diarize_max_speakers": 4
+    },
+    "rolling": {
+      "min_infer_audio_ms": 500,
+      "single_segment_commit_min_ms": 12000,
+      "force_commit_repeats": 3,
+      "max_uncommitted_ms": 30000,
+      "hard_clip_keep_tail_ms": 5000,
+      "max_decode_window_ms": 12000,
+      "buffer_trim_threshold_ms": 30000,
+      "buffer_trim_drop_ms": 20000,
+      "min_new_audio_ms": 500,
+      "pacing": {
+        "base_emit_ms": 250,
+        "startup": {
+          "duration_ms": 1200,
+          "emit_ms": 100,
+          "min_infer_audio_ms": 250,
+          "min_new_audio_ms": 200
+        }
+      },
+      "vad": {
+        "enabled": true,
+        "venv": "/home/gunnar/whisperx/.venv",
+        "threshold": 0.35,
+        "max_speech_duration_s": 12.0,
+        "min_speech_ms": 120,
+        "hangover_ms": 600
+      },
+      "speech_gate": {
+        "silence_enter_ms": 900,
+        "rearm_hits": 2,
+        "rearm_window_ms": 500,
+        "force_commit_silence_ms": 2500
+      }
+    }
+  },
+  "translation": {
+    "model": "google_gemma-4-E2B-it-Q5_K_M-gguf",
+    "second_pass_model": "",
+    "source_language": "Dutch",
+    "target_language": "English",
+    "preview": {
+      "enabled": false,
+      "min_chars": 80,
+      "max_distance_ratio": 0.15,
+      "min_growth_chars": 50
+    },
+    "prompt": "You are a translation engine. Translate the user's text from {{source_lang}} into {{target_lang}}. Return only the translation."
+  },
+  "tts": {
+    "enabled": false,
+    "backend": "dev_tone",
+    "kokoro_model_root": "/home/gunnar/.cache/llm-workbench/tts-models/kokoro-82m"
+  }
+}
