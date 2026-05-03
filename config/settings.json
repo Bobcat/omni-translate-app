@@ -76,7 +76,7 @@
     "prompt": "You are a translation engine. Translate the user's text from {{source_lang}} into {{target_lang}}. Return only the translation."
   },
   "tts": {
-    "enabled": false,
+    "enabled": true,
     "backend": "dev_tone",
     "kokoro_model_root": "/home/gunnar/.cache/llm-workbench/tts-models/kokoro-82m"
   }

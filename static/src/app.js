@@ -30,15 +30,23 @@ const els = {
   languageSheetTitle: document.querySelector('#languageSheetTitle'),
   languageOptions: document.querySelector('#languageOptions'),
   settingsSheet: document.querySelector('#settingsSheet'),
+  settingsSheetTitle: document.querySelector('#settingsSheetTitle'),
   settingsSheetScrim: document.querySelector('#settingsSheetScrim'),
-  settingsSheetClose: document.querySelector('#settingsSheetClose'),
+  settingsBackButton: document.querySelector('#settingsBackButton'),
+  settingsHomePage: document.querySelector('#settingsHomePage'),
+  settingsMicrophoneNav: document.querySelector('#settingsMicrophoneNav'),
+  settingsAudioNav: document.querySelector('#settingsAudioNav'),
+  settingsMicrophonePage: document.querySelector('#settingsMicrophonePage'),
+  settingsAudioPage: document.querySelector('#settingsAudioPage'),
   micPreGain: document.querySelector('#micPreGain'),
   micPreGainValue: document.querySelector('#micPreGainValue'),
+  micSettingsSummary: document.querySelector('#micSettingsSummary'),
   micAutoGainControl: document.querySelector('#micAutoGainControl'),
   micLevel: document.querySelector('.mic-level'),
   micLevelFill: document.querySelector('#micLevelFill'),
   audioSettingsReset: document.querySelector('#audioSettingsReset'),
   ttsOutputState: document.querySelector('#ttsOutputState'),
+  ttsOutputDetail: document.querySelector('#ttsOutputDetail'),
 };
 
 const state = {
@@ -54,6 +62,7 @@ const state = {
   audioStatus: '',
   status: 'idle',
   captureMutedForPlayback: false,
+  settingsPage: 'home',
   audioSettings: {
     preGain: 1,
     autoGainControl: false,
@@ -119,13 +128,15 @@ async function init() {
   els.speakNowButton.addEventListener('click', speakNow);
   els.resetTurnButton.addEventListener('click', resetTurn);
   els.settingsButton.addEventListener('click', openSettingsSheet);
+  els.settingsBackButton.addEventListener('click', handleSettingsBack);
+  els.settingsMicrophoneNav.addEventListener('click', () => setSettingsPage('microphone'));
+  els.settingsAudioNav.addEventListener('click', () => setSettingsPage('audio'));
   els.micPreGain.addEventListener('input', handlePreGainInput);
   els.micAutoGainControl.addEventListener('change', handleAutoGainControlChange);
   els.audioSettingsReset.addEventListener('click', resetAudioSettings);
   els.languageSheetScrim.addEventListener('click', closeLanguageSheet);
   els.languageSheetClose.addEventListener('click', closeLanguageSheet);
   els.settingsSheetScrim.addEventListener('click', closeSettingsSheet);
-  els.settingsSheetClose.addEventListener('click', closeSettingsSheet);
   document.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape') return;
     closeLanguageSheet();
@@ -133,6 +144,8 @@ async function init() {
   });
 
   renderLanguageChips();
+  setupAutoFollow(els.sourceText);
+  setupAutoFollow(els.targetText);
   renderTranscript();
   renderAudioSettings();
   updateActionButtons();
@@ -238,6 +251,7 @@ function swapDirection() {
     return;
   }
   state.activeLaneId = nextLaneId;
+  enableTranscriptAutoFollow();
   renderLanguageChips();
   renderTranscript();
   updateActionButtons();
@@ -252,6 +266,7 @@ function handleMessage(msg) {
   if (msg.type === 'active_lane_changed') {
     state.activeLaneId = msg.active_lane_id || state.activeLaneId;
     if (msg.lane) mergeLanePayload(msg.lane.lane_id || state.activeLaneId, msg.lane);
+    enableTranscriptAutoFollow();
     renderLanguageChips();
     renderTranscript();
     updateActionButtons();
@@ -341,6 +356,7 @@ function applyReady(msg) {
     mergeLanePayload(laneId, msg.lanes[laneId]);
   }
   state.activeLaneId = msg.active_lane_id || state.activeLaneId;
+  enableTranscriptAutoFollow();
   renderLanguageChips();
   renderTranscript();
   updateActionButtons();
@@ -375,6 +391,7 @@ function clearAllLanes() {
   state.lanes = buildLocalLanes(state.sideALanguage, state.sideBLanguage);
   els.miniStatus.textContent = '';
   audioQueue.clear();
+  enableTranscriptAutoFollow();
   renderTranscript();
   updateActionButtons();
 }
@@ -496,12 +513,40 @@ function createLanguageGroup(title, names, current, role) {
 }
 
 function openSettingsSheet() {
+  setSettingsPage('home');
   renderAudioSettings();
   els.settingsSheet.hidden = false;
 }
 
 function closeSettingsSheet() {
   els.settingsSheet.hidden = true;
+}
+
+function handleSettingsBack() {
+  if (state.settingsPage === 'home') {
+    closeSettingsSheet();
+    return;
+  }
+  setSettingsPage('home');
+}
+
+function setSettingsPage(page) {
+  state.settingsPage = page === 'microphone' || page === 'audio' ? page : 'home';
+  renderSettingsPage();
+}
+
+function renderSettingsPage() {
+  const page = state.settingsPage;
+  els.settingsHomePage.hidden = page !== 'home';
+  els.settingsMicrophonePage.hidden = page !== 'microphone';
+  els.settingsAudioPage.hidden = page !== 'audio';
+  if (page === 'microphone') {
+    els.settingsSheetTitle.textContent = 'Microfoon';
+  } else if (page === 'audio') {
+    els.settingsSheetTitle.textContent = 'Audio-uitvoer';
+  } else {
+    els.settingsSheetTitle.textContent = 'Instellingen';
+  }
 }
 
 function setVisibleLanguage(role, value) {
@@ -548,7 +593,9 @@ function resetAudioSettings() {
 
 function renderAudioSettings() {
   els.micPreGain.value = String(state.audioSettings.preGain);
-  els.micPreGainValue.textContent = `${state.audioSettings.preGain.toFixed(1)}x`;
+  const preGainLabel = `${state.audioSettings.preGain.toFixed(1)}x`;
+  els.micPreGainValue.textContent = preGainLabel;
+  els.micSettingsSummary.textContent = preGainLabel;
   els.micAutoGainControl.checked = state.audioSettings.autoGainControl;
   els.micAutoGainControl.disabled = state.listening || state.finalizing;
   els.audioSettingsReset.disabled = Boolean((state.listening || state.finalizing) && state.audioSettings.autoGainControl);
@@ -556,12 +603,15 @@ function renderAudioSettings() {
 }
 
 function renderTtsOutputState(tts) {
+  let label = 'uit';
   if (!tts?.enabled) {
-    els.ttsOutputState.textContent = 'uit';
-    return;
+    label = 'uit';
+  } else {
+    const backend = String(tts.backend || '').trim();
+    label = backend ? `aan (${backend})` : 'aan';
   }
-  const backend = String(tts.backend || '').trim();
-  els.ttsOutputState.textContent = backend ? `aan (${backend})` : 'aan';
+  els.ttsOutputState.textContent = label;
+  els.ttsOutputDetail.textContent = label;
 }
 
 function renderMicLevel(value) {
@@ -592,8 +642,8 @@ function renderTranscript() {
   els.targetPreview.textContent = lane.targetPreview;
   els.sourcePaneMeta.textContent = codeForLanguage(lane.sourceLanguage);
   els.targetPaneMeta.textContent = codeForLanguage(lane.targetLanguage);
-  scrollToBottom(els.sourceText);
-  scrollToBottom(els.targetText);
+  pinToBottomIfFollowing(els.sourceText);
+  pinToBottomIfFollowing(els.targetText);
 }
 
 function buildLocalLanes(sideALanguage, sideBLanguage) {
@@ -685,6 +735,31 @@ function uniqueLanguages(names) {
   return names.filter((name, index) => names.indexOf(name) === index && languages.some((item) => item.name === name));
 }
 
-function scrollToBottom(el) {
+function setupAutoFollow(el) {
+  if (!el) return;
+  enableAutoFollow(el);
+  el.addEventListener('scroll', () => {
+    el.dataset.autofollow = isNearBottom(el) ? 'on' : 'off';
+  });
+}
+
+function enableTranscriptAutoFollow() {
+  enableAutoFollow(els.sourceText);
+  enableAutoFollow(els.targetText);
+}
+
+function enableAutoFollow(el) {
+  if (el) el.dataset.autofollow = 'on';
+}
+
+function pinToBottomIfFollowing(el) {
+  if (!el || el.dataset.autofollow === 'off') return;
   el.scrollTop = el.scrollHeight;
+  requestAnimationFrame(() => {
+    if (el.dataset.autofollow !== 'off') el.scrollTop = el.scrollHeight;
+  });
+}
+
+function isNearBottom(el) {
+  return el.scrollTop + el.clientHeight >= el.scrollHeight - 40;
 }

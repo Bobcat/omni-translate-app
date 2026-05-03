@@ -21,7 +21,7 @@
           </button>
         </div>
         <button class="status-pill" id="listenButton" type="button">start</button>
-        <button class="settings-button" id="settingsButton" type="button" aria-label="Audio-instellingen openen">Settings</button>
+        <button class="settings-button" id="settingsButton" type="button" aria-label="Instellingen openen">Settings</button>
       </header>
 
       <section class="text-panels" aria-live="polite">
@@ -71,33 +71,57 @@
       <div class="sheet-layer" id="settingsSheet" hidden>
         <button class="sheet-scrim" id="settingsSheetScrim" type="button" aria-label="Sluiten"></button>
         <section class="bottom-sheet" role="dialog" aria-modal="true" aria-labelledby="settingsSheetTitle">
-          <header class="sheet-header">
+          <header class="sheet-header settings-sheet-header">
+            <button class="settings-back" id="settingsBackButton" type="button">&lt; Terug</button>
             <h2 id="settingsSheetTitle">Instellingen</h2>
-            <button class="sheet-close" id="settingsSheetClose" type="button" aria-label="Sluiten">x</button>
           </header>
-          <div class="settings-list">
-            <section class="setting-group" aria-label="Microfoon">
-              <div class="setting-title-row">
-                <span>Microfoon</span>
-                <span class="setting-value" id="micPreGainValue">1.0x</span>
-              </div>
-              <label class="range-row" for="micPreGain">
-                <span>Amplificatie</span>
-                <input id="micPreGain" type="range" min="0.5" max="3.0" step="0.1" value="1.0">
-              </label>
-              <div class="mic-level" role="meter" aria-label="Mic level" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
-                <div class="mic-level-fill" id="micLevelFill"></div>
-                <div class="mic-level-threshold" aria-hidden="true"></div>
-              </div>
-              <label class="toggle-row" for="micAutoGainControl">
-                <input id="micAutoGainControl" type="checkbox">
-                <span>Auto gain control</span>
-              </label>
-              <button class="link-row audio-reset-button" id="audioSettingsReset" type="button">Reset audio</button>
-            </section>
-            <div class="setting-row">
-              <span>Audio-uitvoer</span>
-              <span id="ttsOutputState">uit</span>
+          <div class="settings-views">
+            <div class="settings-page" id="settingsHomePage">
+              <button class="settings-nav-row" id="settingsMicrophoneNav" type="button">
+                <span>
+                  <strong>Microfoon</strong>
+                  <small>Niveau en amplificatie</small>
+                </span>
+                <span class="setting-value" id="micSettingsSummary">1.0x</span>
+              </button>
+              <button class="settings-nav-row" id="settingsAudioNav" type="button">
+                <span>
+                  <strong>Audio-uitvoer</strong>
+                  <small>Status van spraakuitvoer</small>
+                </span>
+                <span class="setting-value" id="ttsOutputState">uit</span>
+              </button>
+            </div>
+
+            <div class="settings-page" id="settingsMicrophonePage" hidden>
+              <section class="setting-group" aria-label="Microfoon">
+                <div class="setting-title-row">
+                  <span>Amplificatie</span>
+                  <span class="setting-value" id="micPreGainValue">1.0x</span>
+                </div>
+                <label class="range-row" for="micPreGain">
+                  <span>Versterking</span>
+                  <input id="micPreGain" type="range" min="0.5" max="3.0" step="0.1" value="1.0">
+                </label>
+                <div class="mic-level" role="meter" aria-label="Mic level" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                  <div class="mic-level-fill" id="micLevelFill"></div>
+                  <div class="mic-level-threshold" aria-hidden="true"></div>
+                </div>
+                <label class="toggle-row" for="micAutoGainControl">
+                  <input id="micAutoGainControl" type="checkbox">
+                  <span>Auto gain control</span>
+                </label>
+                <button class="link-row audio-reset-button" id="audioSettingsReset" type="button">Reset audio</button>
+              </section>
+            </div>
+
+            <div class="settings-page" id="settingsAudioPage" hidden>
+              <section class="setting-group" aria-label="Audio-uitvoer">
+                <div class="setting-title-row">
+                  <span>Status</span>
+                  <span class="setting-value" id="ttsOutputDetail">uit</span>
+                </div>
+              </section>
             </div>
           </div>
         </section>
