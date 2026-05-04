@@ -518,6 +518,7 @@ class ConversationRuntime:
         if not speaking_part_ids:
             return
         self._close_asr_scope_for_turn(lane)
+        self._accept_visible_previews_for_parts(lane, part_ids=set(speaking_part_ids))
         for part in turn.parts:
             if part.part_id in speaking_part_ids:
                 part.speech_state = "speaking"
@@ -772,6 +773,28 @@ class ConversationRuntime:
             update_last_submitted=True,
         )
 
+    def _accept_visible_previews_for_parts(self, lane: ConversationLane, *, part_ids: set[str]) -> None:
+        for part in self.current_turn.parts:
+            if part.part_id not in part_ids:
+                continue
+            if part.source_preview_text:
+                part.source_committed_text = _accepted_preview_text(
+                    part.source_committed_text,
+                    part.source_preview_text,
+                )
+                part.source_preview_text = ""
+                lane.source_state.source_committed_text = part.source_committed_text
+                lane.source_state.source_preview_text = ""
+            if part.target_preview_text:
+                part.target_committed_text = _accepted_preview_text(
+                    part.target_committed_text,
+                    part.target_preview_text,
+                )
+                part.target_preview_text = ""
+                lane.translation_runner.target_state.target_committed_text = part.target_committed_text
+                lane.translation_runner.target_state.target_preview_text = ""
+                lane.last_target_committed = part.target_committed_text
+
     async def _pause_listening(self) -> None:
         self.listening = False
         SESSIONS.update(self.session_id, state="finalizing")
@@ -967,6 +990,18 @@ def _visible_text(committed: str, preview: str) -> str:
     if not preview_text:
         return committed_text
     return f"{committed_text} {preview_text}"
+
+
+def _accepted_preview_text(committed: str, preview: str) -> str:
+    committed_text = str(committed or "").rstrip()
+    preview_text = str(preview or "").strip()
+    if not preview_text:
+        return committed_text
+    if not committed_text:
+        return preview_text
+    if preview_text.startswith(committed_text):
+        return preview_text
+    return _visible_text(committed_text, preview_text)
 
 
 def _part_source_text(part: TurnPart) -> str:

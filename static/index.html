@@ -7,67 +7,86 @@
     <link rel="stylesheet" href="/styles.css">
   </head>
   <body>
-    <main class="app">
+    <main class="app is-setup">
       <header class="topbar">
-        <div class="language-row" aria-label="Language direction">
-          <button class="language-chip" id="sourceLanguageChip" type="button" aria-label="Choose source language">
-            <span id="sourceLanguageCode">NL</span>
-            <span class="chip-caret" aria-hidden="true">v</span>
-          </button>
-          <span class="direction" aria-hidden="true">-&gt;</span>
-          <button class="language-chip" id="targetLanguageChip" type="button" aria-label="Choose target language">
-            <span id="targetLanguageCode">EN</span>
-            <span class="chip-caret" aria-hidden="true">v</span>
-          </button>
+        <div class="mode-toggle" aria-label="View mode">
+          <button class="mode-button is-active" id="turnModeButton" type="button">Turn</button>
+          <button class="mode-button" id="conversationModeButton" type="button" disabled>Conversation</button>
         </div>
-        <button class="status-pill" id="listenButton" type="button">start</button>
-        <button class="settings-button" id="settingsButton" type="button" aria-label="Open settings">Settings</button>
+        <div class="topbar-right">
+          <span class="session-status-pill" id="sessionStatusPill" hidden>Listening</span>
+        </div>
       </header>
 
       <section class="text-panels" aria-live="polite">
         <article class="pane">
           <div class="pane-header">
-            <h1>Source / what is heard</h1>
+            <h1>What is heard</h1>
             <div class="pane-indicators">
               <span class="vad-badge" id="vadBadge" hidden>Speech detected</span>
-              <span class="pane-meta" id="sourcePaneMeta">NL</span>
+              <select class="language-select pane-language-select" id="sourceLanguageSelect" aria-label="Choose source language"></select>
+              <span class="pane-meta" id="sourcePaneMeta" hidden>NL</span>
+              <div class="source-header-actions" id="sourceHeaderActions" hidden>
+                <button class="icon-action" id="clearTurnButton" type="button" aria-label="Clear turn" title="Clear turn" disabled>
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M3 6h18"></path>
+                    <path d="M8 6V4h8v2"></path>
+                    <path d="M6 6l1 15h10l1-15"></path>
+                    <path d="M10 11v6"></path>
+                    <path d="M14 11v6"></path>
+                  </svg>
+                </button>
+                <button class="icon-action" id="swapButton" type="button" aria-label="Switch turn" title="Switch turn">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M7 7h11l-3-3"></path>
+                    <path d="M18 7l-3 3"></path>
+                    <path d="M17 17H6l3 3"></path>
+                    <path d="M6 17l3-3"></path>
+                  </svg>
+                </button>
+              </div>
             </div>
           </div>
-          <div class="text-stream" id="sourceText" data-empty="No speech recognized yet"></div>
+          <div class="pane-body">
+            <div class="setup-start-panel" id="setupStartPanel">
+              <svg class="setup-mic" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path>
+                <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+                <line x1="12" y1="19" x2="12" y2="22"></line>
+              </svg>
+              <span class="setup-start-label">Click start to begin</span>
+              <button class="setup-start-button" id="startButton" type="button" title="Start" aria-label="Start"></button>
+            </div>
+            <div class="text-stream" id="sourceText" data-empty="No speech recognized yet"></div>
+          </div>
         </article>
         <article class="pane target-pane">
           <div class="pane-header">
-            <h1>Translation / what will be spoken</h1>
-            <span class="pane-meta" id="targetPaneMeta">EN</span>
+            <h1>What will be spoken</h1>
+            <div class="pane-indicators">
+              <select class="language-select pane-language-select" id="targetLanguageSelect" aria-label="Choose target language"></select>
+              <span class="pane-meta" id="targetPaneMeta" hidden>EN</span>
+            </div>
           </div>
           <div class="text-stream" id="targetText" data-empty="No translation yet"></div>
         </article>
       </section>
 
-      <footer class="action-dock">
-        <button class="primary-action" id="speakNowButton" type="button" disabled>Speak now</button>
-        <div class="secondary-actions">
-          <button class="secondary-action" id="clearTurnButton" type="button" disabled>Clear turn</button>
-          <button class="secondary-action" id="swapButton" type="button">
-            <span aria-hidden="true">&lt;-&gt;</span>
-            Switch direction
-          </button>
-        </div>
-        <div class="mini-status" id="miniStatus"></div>
+      <footer class="action-dock" id="actionDock">
+        <button class="settings-button dock-icon-button" id="settingsButton" type="button" aria-label="Open settings" title="Settings">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 15.5A3.5 3.5 0 1 0 12 8a3.5 3.5 0 0 0 0 7.5Z"></path>
+            <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 0 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6V21a2 2 0 0 1-4 0v-.1a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1A2 2 0 0 1 4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.6-1H3a2 2 0 0 1 0-4h.1a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.3 7A2 2 0 0 1 7.1 4.2l.1.1a1.7 1.7 0 0 0 1.9.3 1.7 1.7 0 0 0 1-1.6V3a2 2 0 0 1 4 0v.1a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1A2 2 0 0 1 19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.1a2 2 0 0 1 0 4H21a1.7 1.7 0 0 0-1.6 1Z"></path>
+          </svg>
+        </button>
+        <button class="primary-action dock-action" id="speakNowButton" type="button" disabled hidden>Speak now</button>
+        <button class="secondary-action dock-action finish-action" id="finishButton" type="button" hidden>Finish</button>
+        <button class="secondary-action dock-action export-action" id="exportButton" type="button" hidden>Export</button>
+        <button class="secondary-action dock-action session-clear-action" id="clearSessionButton" type="button" hidden>Clear</button>
+        <div class="mini-status" id="miniStatus" hidden></div>
       </footer>
       <button class="hidden-playback-button" id="audioResumeButton" type="button" hidden>Play audio</button>
       <audio id="ttsAudio" preload="auto"></audio>
-
-      <div class="sheet-layer" id="languageSheet" hidden>
-        <button class="sheet-scrim" id="languageSheetScrim" type="button" aria-label="Close"></button>
-        <section class="bottom-sheet" role="dialog" aria-modal="true" aria-labelledby="languageSheetTitle">
-          <header class="sheet-header">
-            <h2 id="languageSheetTitle">Choose language</h2>
-            <button class="sheet-close" id="languageSheetClose" type="button" aria-label="Close">x</button>
-          </header>
-          <div class="language-options" id="languageOptions"></div>
-        </section>
-      </div>
 
       <div class="sheet-layer" id="settingsSheet" hidden>
         <button class="sheet-scrim" id="settingsSheetScrim" type="button" aria-label="Close"></button>
@@ -91,6 +110,13 @@
                   <small>Speech output status</small>
                 </span>
                 <span class="setting-value" id="ttsOutputState">off</span>
+              </button>
+              <button class="settings-nav-row" id="settingsDebugNav" type="button">
+                <span>
+                  <strong>Debug</strong>
+                  <small>Development display options</small>
+                </span>
+                <span class="setting-value" id="debugSettingsSummary">off</span>
               </button>
             </div>
 
@@ -122,6 +148,15 @@
                   <span>Status</span>
                   <span class="setting-value" id="ttsOutputDetail">off</span>
                 </div>
+              </section>
+            </div>
+
+            <div class="settings-page" id="settingsDebugPage" hidden>
+              <section class="setting-group" aria-label="Debug">
+                <label class="toggle-row" for="showStatusLine">
+                  <input id="showStatusLine" type="checkbox">
+                  <span>Show status line</span>
+                </label>
               </section>
             </div>
           </div>

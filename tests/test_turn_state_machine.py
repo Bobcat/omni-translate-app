@@ -105,6 +105,34 @@ class TurnStateMachineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(next_part.part_id, "turn_1_part_2")
         self.assertEqual(len(runtime.current_turn.parts), 2)
 
+    async def test_speak_now_accepts_visible_preview_text(self) -> None:
+        runtime, websocket = self.make_runtime(FastTTS())
+        lane = runtime._current_lane()
+        part = runtime.current_turn.parts[0]
+        part.source_committed_text = "Ik woon"
+        part.source_preview_text = "in het centrum"
+        part.target_committed_text = ""
+        part.target_preview_text = "I live downtown"
+        lane.source_state.source_committed_text = "Ik woon"
+        lane.source_state.source_preview_text = "in het centrum"
+        lane.translation_runner.target_state.target_preview_text = "I live downtown"
+        runtime._refresh_turn_state()
+
+        await runtime._speak_now()
+
+        self.assertEqual(part.source_committed_text, "Ik woon in het centrum")
+        self.assertEqual(part.source_preview_text, "")
+        self.assertEqual(part.target_committed_text, "I live downtown")
+        self.assertEqual(part.target_preview_text, "")
+        speak_now_update = next(
+            event
+            for event in websocket.sent
+            if event["type"] == "turn_update" and event["reason"] == "speak_now"
+        )
+        payload_part = speak_now_update["current_turn"]["parts"][0]
+        self.assertEqual(payload_part["source_committed_text"], "Ik woon in het centrum")
+        self.assertEqual(payload_part["source_preview_text"], "")
+
     async def test_clear_turn_while_tts_is_pending_discards_turn_and_drops_late_audio(self) -> None:
         runtime, websocket = self.make_runtime(SlowTTS())
 
