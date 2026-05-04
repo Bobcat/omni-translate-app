@@ -69,6 +69,8 @@ export class AudioQueue {
     const next = this.queue.shift();
     if (!next) {
       this.current = null;
+      this.audio.removeAttribute('src');
+      this.audio.load();
       this.onPlaybackIdle?.();
       this.render();
       return;
@@ -90,9 +92,9 @@ export class AudioQueue {
   }
 
   statusText() {
-    if (this.blocked) return 'Audio klaar';
-    if (this.current && !this.audio.paused) return this.queue.length ? `Speelt audio, ${this.queue.length} in wachtrij` : 'Speelt audio';
-    if (this.queue.length) return `${this.queue.length} audiofragmenten in wachtrij`;
+    if (this.blocked) return 'Audio ready';
+    if (this.current && !this.audio.paused) return this.queue.length ? `Playing audio, ${this.queue.length} queued` : 'Playing audio';
+    if (this.queue.length) return `${this.queue.length} audio clips queued`;
     return '';
   }
 }

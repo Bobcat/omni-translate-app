@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="nl">
+<html lang="en">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -9,98 +9,99 @@
   <body>
     <main class="app">
       <header class="topbar">
-        <div class="language-row" aria-label="Taalrichting">
-          <button class="language-chip" id="sourceLanguageChip" type="button" aria-label="Brontaal kiezen">
+        <div class="language-row" aria-label="Language direction">
+          <button class="language-chip" id="sourceLanguageChip" type="button" aria-label="Choose source language">
             <span id="sourceLanguageCode">NL</span>
             <span class="chip-caret" aria-hidden="true">v</span>
           </button>
           <span class="direction" aria-hidden="true">-&gt;</span>
-          <button class="language-chip" id="targetLanguageChip" type="button" aria-label="Doeltaal kiezen">
+          <button class="language-chip" id="targetLanguageChip" type="button" aria-label="Choose target language">
             <span id="targetLanguageCode">EN</span>
             <span class="chip-caret" aria-hidden="true">v</span>
           </button>
         </div>
         <button class="status-pill" id="listenButton" type="button">start</button>
-        <button class="settings-button" id="settingsButton" type="button" aria-label="Instellingen openen">Settings</button>
+        <button class="settings-button" id="settingsButton" type="button" aria-label="Open settings">Settings</button>
       </header>
 
       <section class="text-panels" aria-live="polite">
         <article class="pane">
           <div class="pane-header">
-            <h1>Bron / wat gehoord wordt</h1>
-            <span class="pane-meta" id="sourcePaneMeta">NL</span>
+            <h1>Source / what is heard</h1>
+            <div class="pane-indicators">
+              <span class="vad-badge" id="vadBadge" hidden>Speech detected</span>
+              <span class="pane-meta" id="sourcePaneMeta">NL</span>
+            </div>
           </div>
-          <div class="text-stream" id="sourceText" data-empty="Nog geen spraak herkend"></div>
-          <div class="preview-stream" id="sourcePreview"></div>
+          <div class="text-stream" id="sourceText" data-empty="No speech recognized yet"></div>
         </article>
         <article class="pane target-pane">
           <div class="pane-header">
-            <h1>Vertaling / wat gezegd zal worden</h1>
+            <h1>Translation / what will be spoken</h1>
             <span class="pane-meta" id="targetPaneMeta">EN</span>
           </div>
-          <div class="text-stream" id="targetText" data-empty="Nog geen vertaling"></div>
-          <div class="preview-stream" id="targetPreview"></div>
+          <div class="text-stream" id="targetText" data-empty="No translation yet"></div>
         </article>
       </section>
 
       <footer class="action-dock">
-        <button class="primary-action" id="speakNowButton" type="button" disabled>Spreek nu</button>
+        <button class="primary-action" id="speakNowButton" type="button" disabled>Speak now</button>
         <div class="secondary-actions">
-          <button class="secondary-action" id="resetTurnButton" type="button" disabled>Wis turn</button>
+          <button class="secondary-action" id="resetTurnButton" type="button" disabled>Clear turn</button>
           <button class="secondary-action" id="swapButton" type="button">
             <span aria-hidden="true">&lt;-&gt;</span>
-            Wissel richting
+            Switch direction
           </button>
         </div>
         <div class="mini-status" id="miniStatus"></div>
       </footer>
-      <button class="hidden-playback-button" id="audioResumeButton" type="button" hidden>Speel audio af</button>
+      <button class="hidden-playback-button" id="audioResumeButton" type="button" hidden>Play audio</button>
       <audio id="ttsAudio" preload="auto"></audio>
 
       <div class="sheet-layer" id="languageSheet" hidden>
-        <button class="sheet-scrim" id="languageSheetScrim" type="button" aria-label="Sluiten"></button>
+        <button class="sheet-scrim" id="languageSheetScrim" type="button" aria-label="Close"></button>
         <section class="bottom-sheet" role="dialog" aria-modal="true" aria-labelledby="languageSheetTitle">
           <header class="sheet-header">
-            <h2 id="languageSheetTitle">Kies taal</h2>
-            <button class="sheet-close" id="languageSheetClose" type="button" aria-label="Sluiten">x</button>
+            <h2 id="languageSheetTitle">Choose language</h2>
+            <button class="sheet-close" id="languageSheetClose" type="button" aria-label="Close">x</button>
           </header>
           <div class="language-options" id="languageOptions"></div>
         </section>
       </div>
 
       <div class="sheet-layer" id="settingsSheet" hidden>
-        <button class="sheet-scrim" id="settingsSheetScrim" type="button" aria-label="Sluiten"></button>
+        <button class="sheet-scrim" id="settingsSheetScrim" type="button" aria-label="Close"></button>
         <section class="bottom-sheet" role="dialog" aria-modal="true" aria-labelledby="settingsSheetTitle">
           <header class="sheet-header settings-sheet-header">
-            <button class="settings-back" id="settingsBackButton" type="button">&lt; Terug</button>
-            <h2 id="settingsSheetTitle">Instellingen</h2>
+            <button class="settings-back" id="settingsBackButton" type="button">&lt; Back</button>
+            <h2 id="settingsSheetTitle">Settings</h2>
           </header>
           <div class="settings-views">
             <div class="settings-page" id="settingsHomePage">
               <button class="settings-nav-row" id="settingsMicrophoneNav" type="button">
                 <span>
-                  <strong>Microfoon</strong>
-                  <small>Niveau en amplificatie</small>
+                  <strong>Microphone</strong>
+                  <small>Level and amplification</small>
                 </span>
                 <span class="setting-value" id="micSettingsSummary">1.0x</span>
               </button>
               <button class="settings-nav-row" id="settingsAudioNav" type="button">
                 <span>
-                  <strong>Audio-uitvoer</strong>
-                  <small>Status van spraakuitvoer</small>
+                  <strong>Audio output</strong>
+                  <small>Speech output status</small>
                 </span>
-                <span class="setting-value" id="ttsOutputState">uit</span>
+                <span class="setting-value" id="ttsOutputState">off</span>
               </button>
             </div>
 
             <div class="settings-page" id="settingsMicrophonePage" hidden>
-              <section class="setting-group" aria-label="Microfoon">
+              <section class="setting-group" aria-label="Microphone">
                 <div class="setting-title-row">
-                  <span>Amplificatie</span>
+                  <span>Amplification</span>
                   <span class="setting-value" id="micPreGainValue">1.0x</span>
                 </div>
                 <label class="range-row" for="micPreGain">
-                  <span>Versterking</span>
+                  <span>Gain</span>
                   <input id="micPreGain" type="range" min="0.5" max="3.0" step="0.1" value="1.0">
                 </label>
                 <div class="mic-level" role="meter" aria-label="Mic level" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
@@ -116,10 +117,10 @@
             </div>
 
             <div class="settings-page" id="settingsAudioPage" hidden>
-              <section class="setting-group" aria-label="Audio-uitvoer">
+              <section class="setting-group" aria-label="Audio output">
                 <div class="setting-title-row">
                   <span>Status</span>
-                  <span class="setting-value" id="ttsOutputDetail">uit</span>
+                  <span class="setting-value" id="ttsOutputDetail">off</span>
                 </div>
               </section>
             </div>

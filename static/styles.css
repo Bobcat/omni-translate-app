@@ -26,6 +26,7 @@
 html,
 body {
   margin: 0;
+  height: 100%;
   min-height: 100%;
   background: var(--bg);
   color: var(--text);
@@ -47,8 +48,9 @@ button {
 
 .app {
   width: min(100vw, 760px);
-  min-height: 100vh;
-  min-height: 100dvh;
+  height: 100vh;
+  height: 100dvh;
+  min-height: 0;
   margin: 0 auto;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
@@ -169,6 +171,7 @@ button {
 }
 
 .text-panels {
+  min-width: 0;
   min-height: 0;
   display: grid;
   grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
@@ -178,6 +181,7 @@ button {
 }
 
 .pane {
+  min-width: 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -219,10 +223,32 @@ button {
   font-weight: 700;
 }
 
-.text-stream,
-.preview-stream {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+.pane-indicators {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.vad-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
+  border: 1px solid #b7e8c9;
+  border-radius: 999px;
+  background: #f2fbf6;
+  color: #3f7253;
+  font-size: 0.69rem;
+  font-weight: 500;
+  line-height: 1;
+  text-align: center;
+  white-space: nowrap;
+  opacity: 0.88;
+  transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+}
+
+.vad-badge[hidden] {
+  display: none;
 }
 
 .text-stream {
@@ -232,6 +258,8 @@ button {
   padding: 14px;
   font-size: 0.98rem;
   line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
   scrollbar-gutter: stable;
 }
 
@@ -246,35 +274,11 @@ button {
   font-weight: 450;
 }
 
-.preview-stream {
-  max-height: 34%;
-  overflow: auto;
-  padding: 10px 14px;
-  border-top: 1px solid var(--border);
+.text-preview {
   color: #8b8f98;
-  background: var(--surface-soft);
-  font-size: 0.92rem;
   font-style: italic;
-  line-height: 1.45;
-  scrollbar-gutter: stable;
-}
-
-.preview-stream:empty {
-  display: none;
-}
-
-.preview-stream:not(:empty)::before {
-  content: "voorlopig";
-  display: block;
-  margin-bottom: 3px;
-  color: #84909f;
-  font-size: 0.74rem;
-  font-weight: 760;
-  text-transform: uppercase;
-}
-
-.target-pane .preview-stream {
-  background: #f8fbff;
+  opacity: 0.92;
+  white-space: pre-wrap;
 }
 
 .action-dock {
@@ -654,5 +658,10 @@ button {
   .settings-button {
     min-width: 76px;
     padding: 0 8px;
+  }
+
+  .vad-badge {
+    padding: 2px 6px;
+    font-size: 0.64rem;
   }
 }

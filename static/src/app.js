@@ -12,13 +12,12 @@ const els = {
   targetLanguageChip: document.querySelector('#targetLanguageChip'),
   sourceLanguageCode: document.querySelector('#sourceLanguageCode'),
   targetLanguageCode: document.querySelector('#targetLanguageCode'),
+  vadBadge: document.querySelector('#vadBadge'),
   sourcePaneMeta: document.querySelector('#sourcePaneMeta'),
   targetPaneMeta: document.querySelector('#targetPaneMeta'),
   settingsButton: document.querySelector('#settingsButton'),
   sourceText: document.querySelector('#sourceText'),
-  sourcePreview: document.querySelector('#sourcePreview'),
   targetText: document.querySelector('#targetText'),
-  targetPreview: document.querySelector('#targetPreview'),
   speakNowButton: document.querySelector('#speakNowButton'),
   resetTurnButton: document.querySelector('#resetTurnButton'),
   swapButton: document.querySelector('#swapButton'),
@@ -63,6 +62,7 @@ const state = {
   status: 'idle',
   captureMutedForPlayback: false,
   settingsPage: 'home',
+  vadHintTimer: null,
   audioSettings: {
     preGain: 1,
     autoGainControl: false,
@@ -79,7 +79,7 @@ audioQueue = new AudioQueue({
     state.audioStatus = text;
     if (text) {
       els.miniStatus.textContent = text;
-      if (text.startsWith('Speelt')) renderStatus('speaking');
+      if (text.startsWith('Playing')) renderStatus('speaking');
     } else if (state.listening) {
       renderStatus('listening');
     } else if (!state.finalizing && state.status === 'speaking') {
@@ -152,7 +152,7 @@ async function init() {
   setStatus('idle', '');
 }
 
-async function startListening({ statusDetail = 'Verbinding openen' } = {}) {
+async function startListening({ statusDetail = 'Opening connection' } = {}) {
   clearAllLanes();
   state.requestedStartLaneId = state.activeLaneId;
   setListenBusy(true);
@@ -218,7 +218,7 @@ function pauseListening() {
   renderMicLevel(0);
   renderAudioSettings();
   state.socket.pauseListening();
-  setStatus('finalizing', 'Afronden');
+  setStatus('finalizing', 'Finalizing');
   updateListenButton();
 }
 
@@ -228,28 +228,30 @@ function speakNow() {
     return;
   }
   if (activeTargetText() && state.socket?.speakNow()) {
-    els.miniStatus.textContent = 'Audio maken';
+    els.miniStatus.textContent = 'Creating audio';
   }
 }
 
 function resetTurn() {
   if (state.finalizing) return;
   if (state.socket?.resetTurn()) {
-    els.miniStatus.textContent = 'Turn wissen';
+    els.miniStatus.textContent = 'Clearing turn';
   }
 }
 
 function swapDirection() {
   const nextLaneId = state.activeLaneId === 'a_to_b' ? 'b_to_a' : 'a_to_b';
   if (state.finalizing) {
-    els.miniStatus.textContent = 'Wacht tot afronden klaar is';
+    els.miniStatus.textContent = 'Wait until finalizing is done';
     return;
   }
   if (state.socket?.isOpen()) {
     state.socket.setActiveLane(nextLaneId);
-    els.miniStatus.textContent = 'Richting wisselen';
+    els.miniStatus.textContent = 'Switching direction';
     return;
   }
+  applyTurnBoundary(activeLane(), '');
+  audioQueue.clear();
   state.activeLaneId = nextLaneId;
   enableTranscriptAutoFollow();
   renderLanguageChips();
@@ -266,6 +268,8 @@ function handleMessage(msg) {
   if (msg.type === 'active_lane_changed') {
     state.activeLaneId = msg.active_lane_id || state.activeLaneId;
     if (msg.lane) mergeLanePayload(msg.lane.lane_id || state.activeLaneId, msg.lane);
+    audioQueue.clear();
+    hideVadHint();
     enableTranscriptAutoFollow();
     renderLanguageChips();
     renderTranscript();
@@ -277,8 +281,13 @@ function handleMessage(msg) {
     setStatus(msg.state || 'idle', statusLabel(msg.state));
     return;
   }
+  if (msg.type === 'vad_state') {
+    handleVadState(msg);
+    return;
+  }
   if (msg.type === 'source_update') {
     const lane = laneForMessage(msg);
+    if (!shouldApplyTurnMessage(lane, msg)) return;
     if (msg.reset) {
       lane.sourceCommitted = '';
     } else {
@@ -286,12 +295,13 @@ function handleMessage(msg) {
     }
     lane.sourcePreview = msg.preview || '';
     if (lane.laneId === state.activeLaneId) renderTranscript();
-    if (msg.committed_append) els.miniStatus.textContent = 'Vertalen';
+    if (msg.committed_append) els.miniStatus.textContent = 'Translating';
     updateActionButtons();
     return;
   }
   if (msg.type === 'target_update') {
     const lane = laneForMessage(msg);
+    if (!shouldApplyTurnMessage(lane, msg)) return;
     if (msg.reset) {
       lane.targetCommitted = '';
     } else {
@@ -299,11 +309,13 @@ function handleMessage(msg) {
     }
     lane.targetPreview = msg.preview || '';
     if (lane.laneId === state.activeLaneId) renderTranscript();
-    if (msg.committed_append) els.miniStatus.textContent = 'Vertaling klaar';
+    if (msg.committed_append) els.miniStatus.textContent = 'Translation ready';
     updateActionButtons();
     return;
   }
   if (msg.type === 'tts_clip_ready') {
+    const lane = laneForMessage(msg);
+    if (!shouldApplyTurnMessage(lane, msg)) return;
     if (msg.tts) {
       audioQueue.enqueue({
         ...msg.tts,
@@ -311,7 +323,7 @@ function handleMessage(msg) {
         turnId: msg.turn_id,
         artifactId: msg.tts.artifact_id,
       });
-      els.miniStatus.textContent = 'Audio klaar';
+      els.miniStatus.textContent = 'Audio ready';
     }
     updateActionButtons();
     return;
@@ -321,26 +333,28 @@ function handleMessage(msg) {
     updateActionButtons();
     return;
   }
-  if (msg.type === 'turn_reset_ack' || msg.type === 'turn_kept') {
+  if (msg.type === 'turn_reset_ack') {
     const lane = ensureLane(msg.lane_id);
+    applyTurnBoundary(lane, msg.new_turn_id);
     if (lane.laneId === state.activeLaneId) renderTranscript();
     updateActionButtons();
     return;
   }
   if (msg.type === 'asr_status') {
     if (!els.miniStatus.textContent) {
-      els.miniStatus.textContent = 'Spraak verwerken';
+      els.miniStatus.textContent = 'Processing speech';
     }
     return;
   }
   if (msg.type === 'error') {
-    setStatus('error', msg.message || msg.code || 'Fout');
+    setStatus('error', msg.message || msg.code || 'Error');
     return;
   }
   if (msg.type === 'ended') {
     state.finalizing = false;
     state.listening = false;
     state.captureMutedForPlayback = false;
+    hideVadHint();
     cleanupClientSession({ keepSocket: false });
     setStatus('idle', audioQueue.statusText());
     updateListenButton();
@@ -356,6 +370,7 @@ function applyReady(msg) {
     mergeLanePayload(laneId, msg.lanes[laneId]);
   }
   state.activeLaneId = msg.active_lane_id || state.activeLaneId;
+  hideVadHint();
   enableTranscriptAutoFollow();
   renderLanguageChips();
   renderTranscript();
@@ -379,6 +394,7 @@ function cleanupClientSession({ keepSocket = false } = {}) {
   state.capture?.stop();
   state.capture = null;
   state.captureMutedForPlayback = false;
+  hideVadHint();
   renderMicLevel(0);
   renderAudioSettings();
   if (!keepSocket) {
@@ -391,6 +407,7 @@ function clearAllLanes() {
   state.lanes = buildLocalLanes(state.sideALanguage, state.sideBLanguage);
   els.miniStatus.textContent = '';
   audioQueue.clear();
+  hideVadHint();
   enableTranscriptAutoFollow();
   renderTranscript();
   updateActionButtons();
@@ -416,13 +433,13 @@ function updateSpeakNowButton() {
   els.speakNowButton.disabled = !(canSpeakTarget || canPlayAudio) || state.finalizing;
   els.speakNowButton.classList.toggle('is-busy', state.finalizing);
   if (state.finalizing) {
-    els.speakNowButton.textContent = 'Afronden...';
-  } else if (state.audioStatus.startsWith('Speelt')) {
-    els.speakNowButton.textContent = 'Speelt...';
+    els.speakNowButton.textContent = 'Finalizing...';
+  } else if (state.audioStatus.startsWith('Playing')) {
+    els.speakNowButton.textContent = 'Playing...';
   } else if (canPlayAudio) {
-    els.speakNowButton.textContent = 'Speel audio';
+    els.speakNowButton.textContent = 'Play audio';
   } else {
-    els.speakNowButton.textContent = 'Spreek nu';
+    els.speakNowButton.textContent = 'Speak now';
   }
 }
 
@@ -451,19 +468,19 @@ function renderStatus(status) {
 function statusLabel(status) {
   const normalized = String(status || 'idle').toLowerCase();
   if (normalized === 'listening') return 'stop';
-  if (normalized === 'finalizing') return 'wacht';
-  if (normalized === 'connecting') return 'verbindt';
-  if (normalized === 'speaking') return 'speelt';
-  if (normalized === 'error') return 'fout';
+  if (normalized === 'finalizing') return 'wait';
+  if (normalized === 'connecting') return 'opening';
+  if (normalized === 'speaking') return 'playing';
+  if (normalized === 'error') return 'error';
   return 'start';
 }
 
 function openLanguageSheet(role) {
   if (state.listening || state.finalizing) {
-    els.miniStatus.textContent = 'Talen staan vast tijdens live';
+    els.miniStatus.textContent = 'Languages are locked while live';
     return;
   }
-  els.languageSheetTitle.textContent = role === 'source' ? 'Kies brontaal' : 'Kies doeltaal';
+  els.languageSheetTitle.textContent = role === 'source' ? 'Choose source language' : 'Choose target language';
   renderLanguageOptions(role);
   els.languageSheet.hidden = false;
 }
@@ -477,7 +494,7 @@ function renderLanguageOptions(role) {
   const current = role === 'source' ? lane.sourceLanguage : lane.targetLanguage;
   const recent = uniqueLanguages([current, 'English', 'Dutch', 'German']);
   const recentGroup = createLanguageGroup('Recent', recent, current, role);
-  const allGroup = createLanguageGroup('Alle talen', languages.map((item) => item.name), current, role);
+  const allGroup = createLanguageGroup('All languages', languages.map((item) => item.name), current, role);
   els.languageOptions.replaceChildren(recentGroup, allGroup);
 }
 
@@ -541,11 +558,11 @@ function renderSettingsPage() {
   els.settingsMicrophonePage.hidden = page !== 'microphone';
   els.settingsAudioPage.hidden = page !== 'audio';
   if (page === 'microphone') {
-    els.settingsSheetTitle.textContent = 'Microfoon';
+    els.settingsSheetTitle.textContent = 'Microphone';
   } else if (page === 'audio') {
-    els.settingsSheetTitle.textContent = 'Audio-uitvoer';
+    els.settingsSheetTitle.textContent = 'Audio output';
   } else {
-    els.settingsSheetTitle.textContent = 'Instellingen';
+    els.settingsSheetTitle.textContent = 'Settings';
   }
 }
 
@@ -603,15 +620,49 @@ function renderAudioSettings() {
 }
 
 function renderTtsOutputState(tts) {
-  let label = 'uit';
+  let label = 'off';
   if (!tts?.enabled) {
-    label = 'uit';
+    label = 'off';
   } else {
     const backend = String(tts.backend || '').trim();
-    label = backend ? `aan (${backend})` : 'aan';
+    label = backend ? `on (${backend})` : 'on';
   }
   els.ttsOutputState.textContent = label;
   els.ttsOutputDetail.textContent = label;
+}
+
+function handleVadState(msg) {
+  const lane = laneForMessage(msg);
+  if (lane.laneId !== state.activeLaneId) return;
+  if (!shouldApplyTurnMessage(lane, msg)) return;
+  if (!state.listening) {
+    hideVadHint();
+    return;
+  }
+  if (msg.speech_detected !== true) {
+    hideVadHint();
+    return;
+  }
+  showVadHint();
+}
+
+function showVadHint() {
+  els.vadBadge.hidden = false;
+  if (state.vadHintTimer) {
+    clearTimeout(state.vadHintTimer);
+  }
+  state.vadHintTimer = setTimeout(() => {
+    state.vadHintTimer = null;
+    hideVadHint();
+  }, 900);
+}
+
+function hideVadHint() {
+  if (state.vadHintTimer) {
+    clearTimeout(state.vadHintTimer);
+    state.vadHintTimer = null;
+  }
+  els.vadBadge.hidden = true;
 }
 
 function renderMicLevel(value) {
@@ -630,20 +681,34 @@ function renderLanguageChips() {
   els.targetLanguageCode.textContent = codeForLanguage(lane.targetLanguage);
   els.sourceLanguageChip.disabled = locked;
   els.targetLanguageChip.disabled = locked;
-  els.sourceLanguageChip.setAttribute('aria-label', `Brontaal: ${lane.sourceLanguage}`);
-  els.targetLanguageChip.setAttribute('aria-label', `Doeltaal: ${lane.targetLanguage}`);
+  els.sourceLanguageChip.setAttribute('aria-label', `Source language: ${lane.sourceLanguage}`);
+  els.targetLanguageChip.setAttribute('aria-label', `Target language: ${lane.targetLanguage}`);
 }
 
 function renderTranscript() {
   const lane = activeLane();
-  els.sourceText.textContent = lane.sourceCommitted;
-  els.sourcePreview.textContent = lane.sourcePreview;
-  els.targetText.textContent = lane.targetCommitted;
-  els.targetPreview.textContent = lane.targetPreview;
+  renderTextStream(els.sourceText, lane.sourceCommitted, lane.sourcePreview);
+  renderTextStream(els.targetText, lane.targetCommitted, lane.targetPreview);
   els.sourcePaneMeta.textContent = codeForLanguage(lane.sourceLanguage);
   els.targetPaneMeta.textContent = codeForLanguage(lane.targetLanguage);
   pinToBottomIfFollowing(els.sourceText);
   pinToBottomIfFollowing(els.targetText);
+}
+
+function renderTextStream(el, committed, preview) {
+  const committedText = String(committed || '');
+  const previewText = previewSuffixText(committedText, preview);
+  if (!committedText && !previewText) {
+    el.replaceChildren();
+    return;
+  }
+  const committedSpan = document.createElement('span');
+  committedSpan.className = 'text-committed';
+  committedSpan.textContent = committedText;
+  const previewSpan = document.createElement('span');
+  previewSpan.className = 'text-preview';
+  previewSpan.textContent = previewText;
+  el.replaceChildren(committedSpan, previewSpan);
 }
 
 function buildLocalLanes(sideALanguage, sideBLanguage) {
@@ -656,6 +721,7 @@ function buildLocalLanes(sideALanguage, sideBLanguage) {
 function createLane(laneId, sourceLanguage, targetLanguage) {
   return {
     laneId,
+    turnId: '',
     sourceLanguage,
     targetLanguage,
     sourceCommitted: '',
@@ -669,10 +735,39 @@ function mergeLanePayload(laneId, payload) {
   const lane = ensureLane(laneId);
   lane.sourceLanguage = normalizeLanguageName(payload.source_language || lane.sourceLanguage);
   lane.targetLanguage = normalizeLanguageName(payload.target_language || lane.targetLanguage);
+  const nextTurnId = String(payload.current_turn_id || '').trim();
+  if (nextTurnId && lane.turnId && lane.turnId !== nextTurnId) {
+    applyTurnBoundary(lane, nextTurnId);
+  } else if (nextTurnId) {
+    lane.turnId = nextTurnId;
+  }
 }
 
 function laneForMessage(msg) {
   return ensureLane(msg.lane_id || state.activeLaneId);
+}
+
+function shouldApplyTurnMessage(lane, msg) {
+  const msgTurnId = String(msg.turn_id || '').trim();
+  if (!msgTurnId) return true;
+  if (msg.reset === true) {
+    lane.turnId = msgTurnId;
+    return true;
+  }
+  if (!lane.turnId) {
+    lane.turnId = msgTurnId;
+    return true;
+  }
+  return msgTurnId === lane.turnId;
+}
+
+function applyTurnBoundary(lane, newTurnId) {
+  const nextTurnId = String(newTurnId || '').trim();
+  if (nextTurnId) lane.turnId = nextTurnId;
+  lane.sourceCommitted = '';
+  lane.sourcePreview = '';
+  lane.targetCommitted = '';
+  lane.targetPreview = '';
 }
 
 function ensureLane(laneId) {
@@ -703,6 +798,13 @@ function visibleText(committed, preview) {
   if (!left) return right;
   if (!right) return left;
   return `${left} ${right}`;
+}
+
+function previewSuffixText(committed, preview) {
+  const left = String(committed || '');
+  const right = String(preview || '').trim();
+  if (!right) return '';
+  return /\s$/.test(left) || !left ? right : ` ${right}`;
 }
 
 function directionLabel() {

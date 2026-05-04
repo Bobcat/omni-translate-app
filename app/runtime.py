@@ -317,6 +317,7 @@ class ConversationRuntime:
         if not self.listening and not force:
             return
         decision = lane.asr_runner.maybe_dispatch_work(now_mono=time.monotonic(), force=force)
+        await self._send_vad_state(lane, decision)
         if decision.error:
             await self._send(
                 event(
@@ -368,6 +369,28 @@ class ConversationRuntime:
             )
         )
 
+    async def _send_vad_state(self, lane: ConversationLane, decision: Any) -> None:
+        observation = getattr(decision, "speech_observation", None)
+        if observation is None:
+            return
+        speech_detected = bool(getattr(observation, "speech_hit", False))
+        default_reason = "speech" if speech_detected else "silence"
+        gate = getattr(decision, "speech_gate_decision", None)
+        await self._send(
+            event(
+                "vad_state",
+                self.session_id,
+                lane_id=lane.lane_id,
+                turn_id=lane.current_turn.turn_id,
+                phase="speech" if speech_detected else "silence",
+                speech_detected=speech_detected,
+                reason=str(getattr(observation, "reason", "") or default_reason),
+                speech_ms=int(max(0, int(getattr(observation, "speech_ms", 0) or 0))),
+                segments_count=int(max(0, int(getattr(observation, "segments_count", 0) or 0))),
+                speech_gate_state=str(getattr(gate, "next_state", "") or ""),
+            )
+        )
+
     async def _commit_preview_tail(self, lane: ConversationLane, *, speech_gate_forced: bool = False) -> None:
         segment = lane.asr_runner.commit_preview_tail(speech_gate_forced=speech_gate_forced)
         if segment is None:
@@ -388,6 +411,8 @@ class ConversationRuntime:
                 )
             )
             return
+        if next_lane_id != self.active_lane_id:
+            await self._start_new_turn(self._active_lane(), keep=True)
         self.active_lane_id = next_lane_id
         lane = self._active_lane()
         await self._send(
@@ -426,7 +451,7 @@ class ConversationRuntime:
                     reason="empty_target",
                     lane_id=lane.lane_id,
                     turn_id=turn.turn_id,
-                    message="Nog geen vertaling",
+                    message="No translation yet",
                 )
             )
             return
@@ -439,7 +464,7 @@ class ConversationRuntime:
                     reason="tts_disabled",
                     lane_id=lane.lane_id,
                     turn_id=turn.turn_id,
-                    message="Audio-uitvoer staat uit",
+                    message="Audio output is off",
                 )
             )
             return
@@ -461,6 +486,8 @@ class ConversationRuntime:
                     turn_id=turn.turn_id,
                 )
             )
+            return
+        if lane.current_turn.turn_id != turn.turn_id:
             return
         lane.pending_tts = {
             "turn_id": turn.turn_id,
@@ -494,17 +521,6 @@ class ConversationRuntime:
             return
         lane.spoken_clip_history.append(dict(pending))
         lane.pending_tts = None
-        old_turn_id = lane.current_turn.turn_id
-        await self._start_new_turn(lane, keep=True)
-        await self._send(
-            event(
-                "turn_kept",
-                self.session_id,
-                lane_id=lane.lane_id,
-                old_turn_id=old_turn_id,
-                new_turn_id=lane.current_turn.turn_id,
-            )
-        )
 
     async def _source_event(self, lane: ConversationLane, *, kind: str, text: str) -> None:
         turn_id = lane.current_turn.turn_id
@@ -620,6 +636,7 @@ class ConversationRuntime:
                     ),
                 }
             )
+        self._close_asr_scope_for_new_turn(lane)
         await _cancel_task(lane.translation_task)
         lane.translation_task = None
         lane.turn_counter += 1
@@ -651,6 +668,19 @@ class ConversationRuntime:
                 reason="new_turn",
                 tts=None,
             )
+        )
+
+    def _close_asr_scope_for_new_turn(self, lane: ConversationLane) -> None:
+        inflight = lane.asr_inflight
+        if inflight is not None:
+            sequence_id = self._sequence_from_request(inflight.job.request_id)
+            lane.asr_runner.clear_inflight_work(sequence_id=sequence_id)
+            self.asr_bridge.discard_request(inflight.job.request_id)
+            lane.asr_inflight = None
+        lane.asr_runner.manual_commit_preview()
+        lane.asr_runner.advance_offsets_to(
+            t1_ms=lane.asr_runner.recording_duration_ms,
+            update_last_submitted=True,
         )
 
     async def _pause_listening(self) -> None:
