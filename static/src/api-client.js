@@ -67,7 +67,7 @@ export class SessionSocket {
     return true;
   }
 
-  pauseListening() {
+  finishListening() {
     if (!this.isOpen()) return false;
     this.ws.send(JSON.stringify({ type: 'pause_listening' }));
     return true;

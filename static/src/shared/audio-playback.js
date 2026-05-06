@@ -1,18 +1,21 @@
 export class AudioQueue {
-  constructor({ audio, resumeButton, onStatus, onPlaybackStart, onPlaybackIdle, onItemEnded }) {
+  constructor({ audio, resumeButton, onStatus, onPlaybackStart, onPlaybackIdle, onPlaybackComplete, onItemEnded }) {
     this.audio = audio;
     this.resumeButton = resumeButton;
     this.onStatus = onStatus;
     this.onPlaybackStart = onPlaybackStart;
     this.onPlaybackIdle = onPlaybackIdle;
+    this.onPlaybackComplete = onPlaybackComplete;
     this.onItemEnded = onItemEnded;
     this.queue = [];
     this.current = null;
     this.blocked = false;
     this.audio.addEventListener('ended', () => {
       const ended = this.current;
+      const playbackWillComplete = this.queue.length === 0;
       if (ended) this.onItemEnded?.(ended);
       this.playNext();
+      if (playbackWillComplete) this.onPlaybackComplete?.(ended);
     });
     this.audio.addEventListener('play', () => {
       this.blocked = false;

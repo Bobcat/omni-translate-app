@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>ASR Translate TTS</title>
-    <link rel="stylesheet" href="/styles.css?v=20260505-finish-clip-risk">
+    <link rel="stylesheet" href="/styles.css?v=20260506-inline-mic-start">
   </head>
   <body>
     <main class="app is-setup">
@@ -90,10 +90,13 @@
           <span class="turn-language-label" id="setupTargetLanguage">EN</span>
         </button>
         <button class="primary-action dock-action" id="speakNowButton" type="button" disabled hidden>Speak now</button>
-        <button class="dock-action finish-action" id="finishButton" type="button" aria-label="Finish" title="Finish" hidden>
-          <svg class="finish-icon" viewBox="0 0 24 24" aria-hidden="true">
-            <rect x="6.5" y="6.5" width="11" height="11" rx="2"></rect>
+        <button class="dock-action session-right-action" id="finishButton" type="button" aria-label="Finish" title="Finish" hidden>
+          <svg class="session-right-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path>
+            <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+            <line x1="5" y1="19" x2="19" y2="5"></line>
           </svg>
+          <span class="session-right-label" id="sessionRightLabel">Finish</span>
         </button>
         <button class="secondary-action dock-action export-action" id="exportButton" type="button" hidden>Export</button>
         <button class="secondary-action dock-action session-clear-action" id="clearSessionButton" type="button" hidden>Clear</button>
@@ -149,9 +152,11 @@
                   <span class="setting-value" id="micPreGainValue">1.0x</span>
                 </div>
                 <label class="range-row" for="micPreGain">
-                  <span>Gain</span>
-                  <input id="micPreGain" type="range" min="0.5" max="3.0" step="0.1" value="1.0">
+                  <input id="micPreGain" type="range" min="0.5" max="3.0" step="0.1" value="1.0" aria-label="Amplification">
                 </label>
+                <div class="setting-title-row">
+                  <span>Input level</span>
+                </div>
                 <div class="mic-level" role="meter" aria-label="Mic level" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
                   <div class="mic-level-fill" id="micLevelFill"></div>
                   <div class="mic-level-threshold" aria-hidden="true"></div>
@@ -160,6 +165,7 @@
                   <input id="micAutoGainControl" type="checkbox">
                   <span>Auto gain control</span>
                 </label>
+                <button class="link-row settings-start-button" id="settingsStartButton" type="button">Start recording</button>
                 <button class="link-row audio-reset-button" id="audioSettingsReset" type="button">Reset audio</button>
               </section>
             </div>
@@ -185,6 +191,6 @@
         </section>
       </div>
     </main>
-    <script type="module" src="/src/app.js?v=20260505-finish-clip-risk"></script>
+    <script type="module" src="/src/app.js?v=20260506-inline-mic-start"></script>
   </body>
 </html>

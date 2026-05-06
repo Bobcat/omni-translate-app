@@ -16,6 +16,10 @@ const SESSION_STATES = {
   FINALIZING: 'finalizing',
   ENDED: 'ended',
 };
+const MIC_STATES = {
+  LISTENING: 'listening',
+  OFF: 'off',
+};
 const LANGUAGE_FLAGS = {
   ar: '🇸🇦',
   de: '🇩🇪',
@@ -57,6 +61,7 @@ const els = {
   sourceText: document.querySelector('#sourceText'),
   targetText: document.querySelector('#targetText'),
   speakNowButton: document.querySelector('#speakNowButton'),
+  sessionRightLabel: document.querySelector('#sessionRightLabel'),
   clearTurnButton: document.querySelector('#clearTurnButton'),
   swapButton: document.querySelector('#swapButton'),
   audioResumeButton: document.querySelector('#audioResumeButton'),
@@ -74,6 +79,7 @@ const els = {
   settingsDebugPage: document.querySelector('#settingsDebugPage'),
   debugSettingsSummary: document.querySelector('#debugSettingsSummary'),
   showStatusLine: document.querySelector('#showStatusLine'),
+  settingsStartButton: document.querySelector('#settingsStartButton'),
   micPreGain: document.querySelector('#micPreGain'),
   micPreGainValue: document.querySelector('#micPreGainValue'),
   micSettingsSummary: document.querySelector('#micSettingsSummary'),
@@ -98,6 +104,8 @@ const state = {
   audioStatus: '',
   status: 'idle',
   sessionState: SESSION_STATES.SETUP,
+  micState: MIC_STATES.OFF,
+  audioInputSampleRate: 16000,
   viewMode: 'turn',
   captureMutedForPlayback: false,
   settingsPage: 'home',
@@ -105,6 +113,7 @@ const state = {
   audioSettings: {
     preGain: 1,
     autoGainControl: false,
+    autoGainControlBusy: false,
     inputLevel: 0,
   },
   debugSettings: {
@@ -136,6 +145,10 @@ audioQueue = new AudioQueue({
     state.captureMutedForPlayback = false;
     renderStatus(state.sessionState === SESSION_STATES.RUNNING ? 'listening' : state.status);
   },
+  onPlaybackComplete: () => {
+    if (state.sessionState !== SESSION_STATES.RUNNING || state.micState !== MIC_STATES.LISTENING) return;
+    stopMicrophoneCapture({ statusText: 'Mic off' });
+  },
   onItemEnded: (item) => {
     state.socket?.ttsPlaybackComplete({
       laneId: item.laneId,
@@ -156,8 +169,8 @@ async function init() {
   state.lanes = buildLocalLanes(state.sideALanguage, state.sideBLanguage);
   renderTtsOutputState(config.tts);
 
-  els.startButton.addEventListener('click', () => startListening());
-  els.finishButton.addEventListener('click', finishSession);
+  els.startButton.addEventListener('click', handleStartButton);
+  els.finishButton.addEventListener('click', handleSessionRightAction);
   els.exportButton.addEventListener('click', exportEndedSession);
   els.clearSessionButton.addEventListener('click', clearEndedSession);
   els.turnModeButton.addEventListener('click', () => setViewMode('turn'));
@@ -172,6 +185,7 @@ async function init() {
   els.settingsMicrophoneNav.addEventListener('click', () => setSettingsPage('microphone'));
   els.settingsAudioNav.addEventListener('click', () => setSettingsPage('audio'));
   els.settingsDebugNav.addEventListener('click', () => setSettingsPage('debug'));
+  els.settingsStartButton.addEventListener('click', startFromSettings);
   els.micPreGain.addEventListener('input', handlePreGainInput);
   els.micAutoGainControl.addEventListener('change', handleAutoGainControlChange);
   els.audioSettingsReset.addEventListener('click', resetAudioSettings);
@@ -198,6 +212,7 @@ async function startListening({ statusDetail = 'Opening connection' } = {}) {
   const startLaneId = currentLaneId();
   clearAllLanes({ laneId: startLaneId });
   state.requestedStartLaneId = startLaneId;
+  state.micState = MIC_STATES.OFF;
   setListenBusy(true);
   setStatus('connecting', statusDetail);
   try {
@@ -219,18 +234,12 @@ async function startListening({ statusDetail = 'Opening connection' } = {}) {
     );
     await socket.connect();
     state.socket = socket;
-    state.capture = new AudioCapture({
-      targetSampleRate: session.audio_input?.sample_rate_hz || 16000,
-      chunkMs: 40,
-      preGain: state.audioSettings.preGain,
-      autoGainControl: state.audioSettings.autoGainControl,
-      onChunk: (buffer) => {
-        if (shouldSendMicrophoneAudio()) state.socket?.sendAudio(buffer);
-      },
-      onLevel: (level) => renderMicLevel(level),
-    });
+    state.audioInputSampleRate = session.audio_input?.sample_rate_hz || 16000;
+    state.capture = createAudioCapture({ targetSampleRate: state.audioInputSampleRate });
     await state.capture.start();
+    state.audioSettings.autoGainControl = state.capture.autoGainControl;
     state.socket.startListening();
+    state.micState = MIC_STATES.LISTENING;
     renderAudioSettings();
     setSessionState(SESSION_STATES.RUNNING);
     setStatus('listening', '');
@@ -245,6 +254,25 @@ async function startListening({ statusDetail = 'Opening connection' } = {}) {
   }
 }
 
+function handleStartButton() {
+  if (state.sessionState === SESSION_STATES.SETUP) {
+    startListening();
+    return;
+  }
+  if (state.sessionState === SESSION_STATES.RUNNING && state.micState === MIC_STATES.OFF) {
+    startMicrophoneCapture();
+  }
+}
+
+function handleSessionRightAction() {
+  if (state.sessionState !== SESSION_STATES.RUNNING) return;
+  if (state.micState === MIC_STATES.LISTENING) {
+    stopMicrophoneCapture({ statusText: 'Mic off' });
+    return;
+  }
+  finishSession();
+}
+
 function finishSession() {
   if (state.sessionState !== SESSION_STATES.RUNNING) return;
   if (!state.socket?.isOpen()) {
@@ -255,11 +283,53 @@ function finishSession() {
   state.captureMutedForPlayback = false;
   state.capture?.stop();
   state.capture = null;
+  state.micState = MIC_STATES.OFF;
+  hideVadHint();
   renderMicLevel(0);
   renderAudioSettings();
-  state.socket.pauseListening();
+  state.socket.finishListening();
   setSessionState(SESSION_STATES.FINALIZING);
   setStatus('finalizing', 'Finalizing');
+}
+
+async function startMicrophoneCapture() {
+  if (state.sessionState !== SESSION_STATES.RUNNING || state.micState !== MIC_STATES.OFF) return;
+  if (!state.socket?.isOpen()) return;
+  setListenBusy(true);
+  try {
+    state.capture = createAudioCapture({ targetSampleRate: state.audioInputSampleRate });
+    await state.capture.start();
+    state.audioSettings.autoGainControl = state.capture.autoGainControl;
+    state.socket.startListening();
+    state.micState = MIC_STATES.LISTENING;
+    state.captureMutedForPlayback = false;
+    renderAudioSettings();
+    renderTranscript();
+    setStatus('listening', '');
+  } catch (error) {
+    state.capture?.stop();
+    state.capture = null;
+    state.micState = MIC_STATES.OFF;
+    renderMicLevel(0);
+    renderAudioSettings();
+    setStatus('error', error.message || 'Microphone unavailable');
+  } finally {
+    setListenBusy(false);
+    renderLifecycle();
+  }
+}
+
+function stopMicrophoneCapture({ statusText = 'Mic off' } = {}) {
+  if (state.sessionState !== SESSION_STATES.RUNNING) return;
+  state.captureMutedForPlayback = false;
+  state.capture?.stop();
+  state.capture = null;
+  state.micState = MIC_STATES.OFF;
+  hideVadHint();
+  renderMicLevel(0);
+  renderAudioSettings();
+  renderTranscript();
+  setStatus('listening', statusText);
 }
 
 function speakNow() {
@@ -311,8 +381,22 @@ function exportEndedSession() {
 
 function shouldSendMicrophoneAudio() {
   return state.sessionState === SESSION_STATES.RUNNING
+    && state.micState === MIC_STATES.LISTENING
     && !state.captureMutedForPlayback
     && state.currentTurn.state !== TURN_STATES.OPEN_SPEAKING;
+}
+
+function createAudioCapture({ targetSampleRate = 16000 } = {}) {
+  return new AudioCapture({
+    targetSampleRate,
+    chunkMs: 40,
+    preGain: state.audioSettings.preGain,
+    autoGainControl: state.audioSettings.autoGainControl,
+    onChunk: (buffer) => {
+      if (shouldSendMicrophoneAudio()) state.socket?.sendAudio(buffer);
+    },
+    onLevel: (level) => renderMicLevel(level),
+  });
 }
 
 function swapDirection() {
@@ -439,6 +523,7 @@ function renderTurnStatus(reason) {
 function cleanupClientSession({ keepSocket = false } = {}) {
   state.capture?.stop();
   state.capture = null;
+  state.micState = MIC_STATES.OFF;
   state.captureMutedForPlayback = false;
   hideVadHint();
   renderMicLevel(0);
@@ -462,6 +547,9 @@ function clearAllLanes({ laneId = currentLaneId() } = {}) {
 
 function setSessionState(sessionState) {
   state.sessionState = Object.values(SESSION_STATES).includes(sessionState) ? sessionState : SESSION_STATES.SETUP;
+  if (state.sessionState !== SESSION_STATES.RUNNING) {
+    state.micState = MIC_STATES.OFF;
+  }
   renderLifecycle();
   updateActionButtons();
 }
@@ -474,13 +562,18 @@ function setViewMode(viewMode) {
 function renderLifecycle() {
   const setup = state.sessionState === SESSION_STATES.SETUP;
   const running = state.sessionState === SESSION_STATES.RUNNING;
+  const micOff = running && state.micState === MIC_STATES.OFF;
+  const micOffWithSourceText = micOff && hasSourceText();
+  const micListening = running && state.micState === MIC_STATES.LISTENING;
   const finalizing = state.sessionState === SESSION_STATES.FINALIZING;
   const ended = state.sessionState === SESSION_STATES.ENDED;
   els.app.classList.toggle('is-setup', setup);
   els.app.classList.toggle('is-running', running);
+  els.app.classList.toggle('is-mic-off', micOff);
+  els.app.classList.toggle('is-mic-listening', micListening);
   els.app.classList.toggle('is-finalizing', finalizing);
   els.app.classList.toggle('is-ended', ended);
-  els.setupStartPanel.hidden = !setup;
+  els.setupStartPanel.hidden = !(setup || (micOff && !micOffWithSourceText));
   els.sourceText.hidden = setup;
   els.turnHeaderActions.hidden = !running;
   els.setupSwapButton.hidden = !setup;
@@ -490,6 +583,7 @@ function renderLifecycle() {
   els.clearSessionButton.hidden = !ended;
   els.miniStatus.hidden = !state.debugSettings.showStatusLine;
   els.startButton.disabled = state.status === 'connecting';
+  els.settingsStartButton.disabled = !(setup || micOff) || state.status === 'connecting';
   els.setupSwapButton.disabled = !setup || state.status === 'connecting';
   els.finishButton.disabled = finalizing;
   els.turnModeButton.classList.toggle('is-active', state.viewMode === 'turn');
@@ -502,11 +596,13 @@ function renderLifecycle() {
 
 function setListenBusy(busy) {
   els.startButton.disabled = Boolean(busy);
+  els.settingsStartButton.disabled = Boolean(busy);
 }
 
 function updateActionButtons() {
   updateSpeakNowButton();
   updateClearTurnButton();
+  updateSessionRightAction();
   renderLanguageControls();
 }
 
@@ -535,7 +631,18 @@ function updateClearTurnButton() {
   const finalizing = state.sessionState === SESSION_STATES.FINALIZING;
   els.clearTurnButton.disabled = finalizing || !hasText || !live;
   els.swapButton.disabled = finalizing || !live;
-  els.finishButton.disabled = finalizing || !state.socket?.isOpen();
+}
+
+function updateSessionRightAction() {
+  const live = state.sessionState === SESSION_STATES.RUNNING && state.socket?.isOpen();
+  const finalizing = state.sessionState === SESSION_STATES.FINALIZING;
+  const micListening = state.micState === MIC_STATES.LISTENING;
+  els.finishButton.disabled = finalizing || !live;
+  els.finishButton.classList.toggle('is-mic-off-action', micListening);
+  els.finishButton.classList.toggle('is-finish-action', !micListening);
+  els.sessionRightLabel.textContent = micListening ? 'Mic off' : 'Finish';
+  els.finishButton.setAttribute('aria-label', micListening ? 'Turn microphone off' : 'Finish session');
+  els.finishButton.title = micListening ? 'Mic off' : 'Finish';
 }
 
 function setStatus(status, detail) {
@@ -547,13 +654,18 @@ function setStatus(status, detail) {
 
 function renderStatus(status) {
   const normalized = String(status || 'idle').toLowerCase();
+  const micOff = state.sessionState === SESSION_STATES.RUNNING
+    && state.micState === MIC_STATES.OFF
+    && normalized !== 'speaking'
+    && normalized !== 'error';
   const visible = state.sessionState !== SESSION_STATES.SETUP
     || normalized === 'connecting'
     || normalized === 'error';
   els.sessionStatusPill.hidden = !visible;
   els.sessionStatusPill.className = 'session-status-pill';
   if (normalized === 'connecting') els.sessionStatusPill.classList.add('is-connecting');
-  if (normalized === 'listening') els.sessionStatusPill.classList.add('is-listening');
+  if (normalized === 'listening' && !micOff) els.sessionStatusPill.classList.add('is-listening');
+  if (micOff) els.sessionStatusPill.classList.add('is-mic-off');
   if (normalized === 'finalizing') els.sessionStatusPill.classList.add('is-finalizing');
   if (normalized === 'speaking') els.sessionStatusPill.classList.add('is-speaking');
   if (normalized === 'error') els.sessionStatusPill.classList.add('is-error');
@@ -564,6 +676,7 @@ function renderStatus(status) {
 function statusLabel(status) {
   const normalized = String(status || 'idle').toLowerCase();
   if (state.sessionState === SESSION_STATES.ENDED) return 'Finished';
+  if (state.sessionState === SESSION_STATES.RUNNING && state.micState === MIC_STATES.OFF && normalized !== 'speaking' && normalized !== 'error') return 'Mic off';
   if (normalized === 'listening') return 'Listening...';
   if (normalized === 'finalizing') return 'Processing...';
   if (normalized === 'connecting') return 'Connecting...';
@@ -656,33 +769,98 @@ function handlePreGainInput() {
   renderAudioSettings();
 }
 
-function handleAutoGainControlChange() {
-  if (state.sessionState !== SESSION_STATES.SETUP) {
+function startFromSettings() {
+  if (state.status === 'connecting') return;
+  if (state.sessionState === SESSION_STATES.SETUP) {
+    startListening({ statusDetail: 'Opening microphone' });
+    return;
+  }
+  if (state.sessionState === SESSION_STATES.RUNNING && state.micState === MIC_STATES.OFF) {
+    startMicrophoneCapture();
+  }
+}
+
+async function handleAutoGainControlChange() {
+  const requested = Boolean(els.micAutoGainControl.checked);
+  if (state.sessionState === SESSION_STATES.SETUP
+    || (state.sessionState === SESSION_STATES.RUNNING && state.micState === MIC_STATES.OFF)) {
+    state.audioSettings.autoGainControl = requested;
     renderAudioSettings();
     return;
   }
-  state.audioSettings.autoGainControl = Boolean(els.micAutoGainControl.checked);
+  if (state.sessionState !== SESSION_STATES.RUNNING || !state.capture) {
+    renderAudioSettings();
+    return;
+  }
+  state.audioSettings.autoGainControl = requested;
+  await restartMicrophoneCapture({ statusText: requested ? 'Auto gain on' : 'Auto gain off' });
+}
+
+async function resetAudioSettings() {
+  state.audioSettings.preGain = 1;
+  state.capture?.setPreGain(state.audioSettings.preGain);
+  if (state.sessionState === SESSION_STATES.RUNNING && state.capture) {
+    state.audioSettings.autoGainControl = false;
+    await restartMicrophoneCapture({ statusText: 'Audio reset' });
+    return;
+  }
+  if (state.sessionState !== SESSION_STATES.RUNNING) {
+    state.audioSettings.autoGainControl = false;
+  } else if (state.micState === MIC_STATES.OFF) {
+    state.audioSettings.autoGainControl = false;
+  }
   renderAudioSettings();
 }
 
-function resetAudioSettings() {
-  if (state.sessionState !== SESSION_STATES.SETUP && state.audioSettings.autoGainControl) return;
-  state.audioSettings.preGain = 1;
-  if (state.sessionState === SESSION_STATES.SETUP) {
-    state.audioSettings.autoGainControl = false;
-  }
-  state.capture?.setPreGain(state.audioSettings.preGain);
+async function restartMicrophoneCapture({ statusText = '' } = {}) {
+  const previousCapture = state.capture;
+  const targetSampleRate = previousCapture?.targetSampleRate || 16000;
+  const previousSettings = {
+    preGain: previousCapture?.preGain || state.audioSettings.preGain,
+    autoGainControl: previousCapture?.autoGainControl === true,
+  };
+  state.audioSettings.autoGainControlBusy = true;
   renderAudioSettings();
+  previousCapture?.stop();
+  state.capture = null;
+  renderMicLevel(0);
+  try {
+    const nextCapture = createAudioCapture({ targetSampleRate });
+    await nextCapture.start();
+    state.capture = nextCapture;
+    state.micState = MIC_STATES.LISTENING;
+    state.audioSettings.autoGainControl = nextCapture.autoGainControl;
+    els.miniStatus.textContent = statusText;
+  } catch (error) {
+    state.audioSettings.preGain = previousSettings.preGain;
+    state.audioSettings.autoGainControl = previousSettings.autoGainControl;
+    try {
+      const restoredCapture = createAudioCapture({ targetSampleRate });
+      await restoredCapture.start();
+      state.capture = restoredCapture;
+      state.micState = MIC_STATES.LISTENING;
+      state.audioSettings.autoGainControl = restoredCapture.autoGainControl;
+      els.miniStatus.textContent = 'Auto gain unavailable';
+    } catch {
+      state.micState = MIC_STATES.OFF;
+      setStatus('error', error.message || 'Microphone unavailable');
+    }
+  } finally {
+    state.audioSettings.autoGainControlBusy = false;
+    renderAudioSettings();
+  }
 }
 
 function renderAudioSettings() {
   els.micPreGain.value = String(state.audioSettings.preGain);
   const preGainLabel = `${state.audioSettings.preGain.toFixed(1)}x`;
   els.micPreGainValue.textContent = preGainLabel;
-  els.micSettingsSummary.textContent = preGainLabel;
+  els.micSettingsSummary.textContent = state.audioSettings.autoGainControl ? `${preGainLabel}, AGC` : preGainLabel;
   els.micAutoGainControl.checked = state.audioSettings.autoGainControl;
-  els.micAutoGainControl.disabled = state.sessionState !== SESSION_STATES.SETUP;
-  els.audioSettingsReset.disabled = Boolean(state.sessionState !== SESSION_STATES.SETUP && state.audioSettings.autoGainControl);
+  const agcAvailable = state.sessionState === SESSION_STATES.SETUP
+    || state.sessionState === SESSION_STATES.RUNNING;
+  els.micAutoGainControl.disabled = state.audioSettings.autoGainControlBusy || !agcAvailable;
+  els.audioSettingsReset.disabled = state.audioSettings.autoGainControlBusy;
   renderMicLevel(state.audioSettings.inputLevel);
 }
 
@@ -749,12 +927,12 @@ function renderMicLevel(value) {
   els.micLevel.setAttribute('aria-valuenow', String(percent));
   els.micLevel.classList.toggle('is-hot', level >= 0.9);
   const haloLevel = Math.sqrt(level);
-  const clipRisk = level >= 0.95;
+  const clipRisk = state.micState === MIC_STATES.LISTENING && level >= 0.95;
   const hot = level >= 0.85;
   els.finishButton.classList.toggle('is-clip-risk', clipRisk);
-  els.finishButton.style.setProperty('--finish-halo-color', clipRisk ? '185, 28, 28' : hot ? '245, 158, 11' : '239, 68, 68');
-  els.finishButton.style.setProperty('--finish-halo-alpha', (0.08 + haloLevel * (clipRisk ? 0.42 : hot ? 0.36 : 0.3)).toFixed(3));
-  els.finishButton.style.setProperty('--finish-halo-size', `${Math.round(haloLevel * 14)}px`);
+  els.finishButton.style.setProperty('--session-right-halo-color', clipRisk ? '185, 28, 28' : hot ? '245, 158, 11' : '59, 130, 246');
+  els.finishButton.style.setProperty('--session-right-halo-alpha', (0.08 + haloLevel * (clipRisk ? 0.42 : hot ? 0.36 : 0.3)).toFixed(3));
+  els.finishButton.style.setProperty('--session-right-halo-size', `${Math.round(haloLevel * 14)}px`);
 }
 
 function renderLanguageSelectOptions() {
@@ -809,9 +987,39 @@ function renderTranscript() {
   const lane = currentLane();
   renderTurnStream(els.sourceText, state.currentTurn.parts, 'source', state.currentTurn.sourceText);
   renderTurnStream(els.targetText, state.currentTurn.parts, 'target', state.currentTurn.targetText);
+  renderInlineStartMic();
   renderDirectionLabels(lane);
   pinToBottomIfFollowing(els.sourceText);
   pinToBottomIfFollowing(els.targetText);
+}
+
+function renderInlineStartMic() {
+  els.sourceText.querySelector('.inline-start-mic')?.remove();
+  if (state.sessionState !== SESSION_STATES.RUNNING || state.micState !== MIC_STATES.OFF) return;
+  if (!hasSourceText()) return;
+  const target = [...els.sourceText.querySelectorAll('.turn-part')]
+    .reverse()
+    .find((part) => part.textContent.trim());
+  if (!target) return;
+  target.append(' ');
+  target.append(createInlineStartMicButton());
+}
+
+function createInlineStartMicButton() {
+  const button = document.createElement('button');
+  button.className = 'inline-start-mic';
+  button.type = 'button';
+  button.setAttribute('aria-label', 'Start microphone');
+  button.title = 'Start microphone';
+  button.addEventListener('click', startMicrophoneCapture);
+  button.innerHTML = `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path>
+      <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+      <line x1="12" y1="19" x2="12" y2="22"></line>
+    </svg>
+  `;
+  return button;
 }
 
 function renderDirectionLabels(lane) {
@@ -1024,6 +1232,10 @@ function hasVisibleTurnText() {
     || joinPartText(state.currentTurn.parts, 'source')
     || joinPartText(state.currentTurn.parts, 'target'),
   );
+}
+
+function hasSourceText() {
+  return Boolean(state.currentTurn.sourceText || joinPartText(state.currentTurn.parts, 'source'));
 }
 
 function exportTimestamp() {

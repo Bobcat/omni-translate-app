@@ -26,10 +26,11 @@ export class AudioCapture {
         channelCount: 1,
         noiseSuppression: false,
         echoCancellation: false,
-        autoGainControl: this.autoGainControl,
+        autoGainControl: this.autoGainControl ? { exact: true } : false,
       },
       video: false,
     });
+    this.syncAutoGainControlSetting();
     const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
     if (!AudioContextCtor) {
       throw new Error('AudioContext unavailable');
@@ -107,6 +108,19 @@ export class AudioCapture {
     } catch {
       try { this.preGainNode.gain.value = this.preGain; } catch {}
     }
+  }
+
+  syncAutoGainControlSetting() {
+    const track = this.audioTrack();
+    const value = track?.getSettings?.().autoGainControl;
+    if (typeof value === 'boolean') {
+      this.autoGainControl = value;
+    }
+    return this.autoGainControl;
+  }
+
+  audioTrack() {
+    return this.stream?.getAudioTracks?.()[0] || null;
   }
 }
 
