@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "asr-translate-tts"
 version = "0.1.0"
-description = "Small realtime ASR -> translation -> TTS web app."
+description = "Mobile-first realtime ASR -> LLM translation -> Kokoro TTS web app."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [

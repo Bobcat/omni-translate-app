@@ -24,6 +24,7 @@ const LANGUAGE_FLAGS = {
   en: '🇬🇧',
   es: '🇪🇸',
   fr: '🇫🇷',
+  hi: '🇮🇳',
   it: '🇮🇹',
   ja: '🇯🇵',
   ko: '🇰🇷',
@@ -886,13 +887,7 @@ function renderHistorySettings() {
 }
 
 function renderTtsOutputState(tts) {
-  let label = 'off';
-  if (!tts?.enabled) {
-    label = 'off';
-  } else {
-    const backend = String(tts.backend || '').trim();
-    label = backend ? `on (${backend})` : 'on';
-  }
+  const label = tts?.enabled ? 'on' : 'off';
   els.ttsOutputState.textContent = label;
   els.ttsOutputDetail.textContent = label;
 }
@@ -1254,7 +1249,7 @@ function codeForLanguage(name) {
 
 function flagForLanguage(name) {
   const match = languages.find((item) => item.name === name);
-  return LANGUAGE_FLAGS[match?.asr] || '';
+  return match?.flag || LANGUAGE_FLAGS[match?.asr] || '';
 }
 
 function setupAutoFollow(el) {

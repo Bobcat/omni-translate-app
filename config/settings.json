@@ -46,8 +46,8 @@
         }
       },
       "vad": {
-        "enabled": true,
-        "venv": "/home/gunnar/whisperx/.venv",
+        "enabled": false,
+        "venv": "",
         "threshold": 0.35,
         "max_speech_duration_s": 12.0,
         "min_speech_ms": 120,
@@ -77,8 +77,9 @@
     "prompt": "You are a translation engine. Translate the user's text from {{source_lang}} into {{target_lang}}. Return only the translation."
   },
   "tts": {
-    "enabled": true,
-    "backend": "dev_tone",
-    "kokoro_model_root": "/home/gunnar/.cache/llm-workbench/tts-models/kokoro-82m"
+    "enabled": false,
+    "kokoro_model_root": "",
+    "warmup_language": "English",
+    "warmup_text": "Ready."
   }
 }

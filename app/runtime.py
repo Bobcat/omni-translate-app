@@ -27,16 +27,19 @@ from app.protocol import event
 from app.sessions import ConversationSession
 from app.sessions import SESSIONS
 from app.translation_bridge import TranslationBridge
-from app.tts_bridge import TTSBridge
+from app.tts_bridge import get_tts_bridge
 
 
 _ASR_LANGUAGE_CODES = {
     "arabic": "ar",
+    "brazilian portuguese": "pt",
+    "british english": "en",
     "chinese": "zh",
     "dutch": "nl",
     "english": "en",
     "french": "fr",
     "german": "de",
+    "hindi": "hi",
     "italian": "it",
     "japanese": "ja",
     "korean": "ko",
@@ -127,7 +130,7 @@ class ConversationRuntime:
             sample_rate_hz=self.sample_rate_hz,
             channels=self.channels,
         )
-        self.tts_bridge = TTSBridge()
+        self.tts_bridge = get_tts_bridge()
         self.lanes = {
             "a_to_b": self._build_lane(
                 lane_id="a_to_b",
@@ -851,53 +854,12 @@ class ConversationRuntime:
         )
 
     def _build_asr_runner(self, *, asr_language: str | None) -> LiveASRRunner:
-        audio_format = AudioFormat(
+        return _build_live_asr_runner(
             sample_rate_hz=self.sample_rate_hz,
             channels=self.channels,
             sample_width_bytes=self.sample_width_bytes,
+            asr_language=asr_language,
         )
-        settings = LiveASRRunnerSettings.from_live_config(
-            {
-                "timing": {
-                    "emit_min_ms": get_int("live.timing.emit_min_ms", 120, min_value=0),
-                },
-                "rolling": {
-                    "min_infer_audio_ms": get_int("live.rolling.min_infer_audio_ms", 500, min_value=200),
-                    "single_segment_commit_min_ms": get_int("live.rolling.single_segment_commit_min_ms", 12000, min_value=1000),
-                    "force_commit_repeats": get_int("live.rolling.force_commit_repeats", 3, min_value=1),
-                    "max_uncommitted_ms": get_int("live.rolling.max_uncommitted_ms", 30000, min_value=1000),
-                    "hard_clip_keep_tail_ms": get_int("live.rolling.hard_clip_keep_tail_ms", 5000, min_value=1000),
-                    "max_decode_window_ms": get_int("live.rolling.max_decode_window_ms", 12000, min_value=1000),
-                    "buffer_trim_threshold_ms": get_int("live.rolling.buffer_trim_threshold_ms", 30000, min_value=5000),
-                    "buffer_trim_drop_ms": get_int("live.rolling.buffer_trim_drop_ms", 20000, min_value=1000),
-                    "min_new_audio_ms": get_int("live.rolling.min_new_audio_ms", 500, min_value=0),
-                    "pacing": {
-                        "base_emit_ms": get_int("live.rolling.pacing.base_emit_ms", 250, min_value=1),
-                        "startup": {
-                            "duration_ms": get_int("live.rolling.pacing.startup.duration_ms", 1200, min_value=0),
-                            "emit_ms": get_int("live.rolling.pacing.startup.emit_ms", 100, min_value=1),
-                            "min_infer_audio_ms": get_int("live.rolling.pacing.startup.min_infer_audio_ms", 250, min_value=0),
-                            "min_new_audio_ms": get_int("live.rolling.pacing.startup.min_new_audio_ms", 200, min_value=0),
-                        },
-                    },
-                    "vad": {
-                        "enabled": get_bool("live.rolling.vad.enabled", True),
-                        "venv": optional_str("live.rolling.vad.venv"),
-                        "threshold": get_float("live.rolling.vad.threshold", 0.35, min_value=0.0),
-                        "max_speech_duration_s": get_float("live.rolling.vad.max_speech_duration_s", 12.0, min_value=0.1),
-                        "min_speech_ms": get_int("live.rolling.vad.min_speech_ms", 120, min_value=0),
-                        "hangover_ms": get_int("live.rolling.vad.hangover_ms", 600, min_value=0),
-                    },
-                    "speech_gate": {
-                        "silence_enter_ms": get_int("live.rolling.speech_gate.silence_enter_ms", 900, min_value=100),
-                        "rearm_hits": get_int("live.rolling.speech_gate.rearm_hits", 2, min_value=1),
-                        "rearm_window_ms": get_int("live.rolling.speech_gate.rearm_window_ms", 500, min_value=100),
-                        "force_commit_silence_ms": get_int("live.rolling.speech_gate.force_commit_silence_ms", 2500, min_value=100),
-                    },
-                },
-            }
-        )
-        return LiveASRRunner(audio_format=audio_format, settings=settings, language=asr_language)
 
     def _build_translation_runner(self) -> LiveRunner:
         return LiveRunner(
@@ -958,6 +920,75 @@ def _asr_language_for(language: str) -> str | None:
     if not key:
         return None
     return _ASR_LANGUAGE_CODES.get(key) or (key if len(key) == 2 else None)
+
+
+def warm_asr_vad() -> None:
+    runner = _build_live_asr_runner(
+        sample_rate_hz=get_int("live.audio.sample_rate_hz", 16000, min_value=8000),
+        channels=get_int("live.audio.channels", 1, min_value=1),
+        sample_width_bytes=2,
+        asr_language=optional_str("live.asr.language"),
+    )
+    runner.ensure_vad_ready()
+
+
+def _build_live_asr_runner(
+    *,
+    sample_rate_hz: int,
+    channels: int,
+    sample_width_bytes: int,
+    asr_language: str | None,
+) -> LiveASRRunner:
+    audio_format = AudioFormat(
+        sample_rate_hz=int(sample_rate_hz),
+        channels=int(channels),
+        sample_width_bytes=int(sample_width_bytes),
+    )
+    return LiveASRRunner(audio_format=audio_format, settings=_live_asr_runner_settings(), language=asr_language)
+
+
+def _live_asr_runner_settings() -> LiveASRRunnerSettings:
+    return LiveASRRunnerSettings.from_live_config(
+        {
+            "timing": {
+                "emit_min_ms": get_int("live.timing.emit_min_ms", 120, min_value=0),
+            },
+            "rolling": {
+                "min_infer_audio_ms": get_int("live.rolling.min_infer_audio_ms", 500, min_value=200),
+                "single_segment_commit_min_ms": get_int("live.rolling.single_segment_commit_min_ms", 12000, min_value=1000),
+                "force_commit_repeats": get_int("live.rolling.force_commit_repeats", 3, min_value=1),
+                "max_uncommitted_ms": get_int("live.rolling.max_uncommitted_ms", 30000, min_value=1000),
+                "hard_clip_keep_tail_ms": get_int("live.rolling.hard_clip_keep_tail_ms", 5000, min_value=1000),
+                "max_decode_window_ms": get_int("live.rolling.max_decode_window_ms", 12000, min_value=1000),
+                "buffer_trim_threshold_ms": get_int("live.rolling.buffer_trim_threshold_ms", 30000, min_value=5000),
+                "buffer_trim_drop_ms": get_int("live.rolling.buffer_trim_drop_ms", 20000, min_value=1000),
+                "min_new_audio_ms": get_int("live.rolling.min_new_audio_ms", 500, min_value=0),
+                "pacing": {
+                    "base_emit_ms": get_int("live.rolling.pacing.base_emit_ms", 250, min_value=1),
+                    "startup": {
+                        "duration_ms": get_int("live.rolling.pacing.startup.duration_ms", 1200, min_value=0),
+                        "emit_ms": get_int("live.rolling.pacing.startup.emit_ms", 100, min_value=1),
+                        "min_infer_audio_ms": get_int("live.rolling.pacing.startup.min_infer_audio_ms", 250, min_value=0),
+                        "min_new_audio_ms": get_int("live.rolling.pacing.startup.min_new_audio_ms", 200, min_value=0),
+                    },
+                },
+                "vad": {
+                    "enabled": get_bool("live.rolling.vad.enabled", True),
+                    "venv": optional_str("live.rolling.vad.venv"),
+                    "threshold": get_float("live.rolling.vad.threshold", 0.35, min_value=0.0),
+                    "max_speech_duration_s": get_float("live.rolling.vad.max_speech_duration_s", 12.0, min_value=0.1),
+                    "min_speech_ms": get_int("live.rolling.vad.min_speech_ms", 120, min_value=0),
+                    "hangover_ms": get_int("live.rolling.vad.hangover_ms", 600, min_value=0),
+                },
+                "speech_gate": {
+                    "silence_enter_ms": get_int("live.rolling.speech_gate.silence_enter_ms", 900, min_value=100),
+                    "rearm_hits": get_int("live.rolling.speech_gate.rearm_hits", 2, min_value=1),
+                    "rearm_window_ms": get_int("live.rolling.speech_gate.rearm_window_ms", 500, min_value=100),
+                    "force_commit_silence_ms": get_int("live.rolling.speech_gate.force_commit_silence_ms", 2500, min_value=100),
+                },
+            },
+        }
+    )
 
 
 def _part_payload(part: TurnPart) -> dict[str, Any]:

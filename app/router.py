@@ -41,7 +41,6 @@ async def config() -> dict[str, Any]:
         },
         "tts": {
             "enabled": get_bool("tts.enabled", False),
-            "backend": get_str("tts.backend", "dev_tone"),
         },
     }
 

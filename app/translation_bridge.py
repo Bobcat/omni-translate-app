@@ -14,11 +14,14 @@ from app.config import get_str
 
 _TRANSLATION_LANGUAGE_CODES = {
     "arabic": "ar",
+    "brazilian portuguese": "pt",
+    "british english": "en",
     "chinese": "zh",
     "dutch": "nl",
     "english": "en",
     "french": "fr",
     "german": "de",
+    "hindi": "hi",
     "italian": "it",
     "japanese": "ja",
     "korean": "ko",
