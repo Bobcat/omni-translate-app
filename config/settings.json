@@ -89,7 +89,19 @@
   },
   "tts": {
     "enabled": false,
+    "backend": "kokoro",
     "kokoro_model_root": "",
+    "voxcpm2_model": "openbmb/VoxCPM2",
+    "voxcpm2_load_denoiser": false,
+    "voxcpm2_optimize": false,
+    "voxcpm2_startup_warmup": true,
+    "voxcpm2_control": "",
+    "voxcpm2_reference_wav_path": "",
+    "voxcpm2_use_asr_reference_wav": false,
+    "voxcpm2_cfg_value": 2.0,
+    "voxcpm2_inference_timesteps": 10,
+    "voxcpm2_normalize": false,
+    "voxcpm2_denoise": false,
     "warmup_language": "English",
     "warmup_text": "Ready."
   }

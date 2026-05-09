@@ -24,17 +24,36 @@ export const api = {
     return fetchJson('/api/config');
   },
 
-  createSession({ sideALanguage, sideBLanguage }) {
+  createSession({ sideALanguage, sideBLanguage, liveSettings }) {
     return fetchJson('/api/sessions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         side_a_language: sideALanguage,
         side_b_language: sideBLanguage,
+        live_settings: liveSettings || undefined,
       }),
     });
   },
+
+  async getSessionPcExport(sessionId) {
+    const response = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/transcript.pc`, {
+      headers: { Accept: 'text/plain' },
+    });
+    if (!response.ok) {
+      throw new Error(await response.text() || `HTTP ${response.status}`);
+    }
+    return {
+      blob: await response.blob(),
+      filename: filenameFromContentDisposition(response.headers.get('content-disposition')) || `${sessionId}.pc`,
+    };
+  },
 };
+
+function filenameFromContentDisposition(value) {
+  const match = String(value || '').match(/filename="?([^"]+)"?/i);
+  return match ? match[1] : '';
+}
 
 export class SessionSocket {
   constructor(url, onMessage, onClose) {
@@ -82,6 +101,12 @@ export class SessionSocket {
   translateNow() {
     if (!this.isOpen()) return false;
     this.ws.send(JSON.stringify({ type: 'translate_now' }));
+    return true;
+  }
+
+  updateLiveSettings(settings) {
+    if (!this.isOpen()) return false;
+    this.ws.send(JSON.stringify({ type: 'update_live_settings', settings: settings || {} }));
     return true;
   }
 

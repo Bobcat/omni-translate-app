@@ -646,6 +646,13 @@ button {
   transform: translateX(-46px);
 }
 
+#pcExportButton {
+  grid-column: 1 / -1;
+  grid-row: 1;
+  justify-self: center;
+  transform: translateX(-92px);
+}
+
 #finishButton {
   grid-column: 3;
   grid-row: 1;
@@ -699,6 +706,21 @@ button {
   stroke-width: 1.9;
   stroke-linecap: round;
   stroke-linejoin: round;
+}
+
+.round-action-label {
+  font-size: 0.72rem;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: 0;
+}
+
+.pc-export-action {
+  background: #0f766e;
+}
+
+.pc-export-action:active {
+  background: #115e59;
 }
 
 .mic-toggle-action {
@@ -1028,6 +1050,151 @@ button {
   background: var(--surface);
   color: var(--muted);
   font: inherit;
+}
+
+.tuning-settings-groups {
+  display: grid;
+  gap: 8px;
+}
+
+.tuning-group {
+  padding: 0;
+  overflow: hidden;
+}
+
+.tuning-group-toggle {
+  width: 100%;
+  min-height: 46px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-strong);
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 700;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tuning-group-toggle:hover,
+.tuning-group-toggle:focus {
+  background: var(--surface-soft);
+  outline: none;
+}
+
+.tuning-group-title {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.tuning-group-icon {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.tuning-group-icon {
+  width: 14px;
+  height: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+.tuning-group-icon::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(-45deg);
+}
+
+.tuning-group.is-expanded .tuning-group-icon::before {
+  transform: rotate(45deg);
+}
+
+.tuning-group-body {
+  display: grid;
+  gap: 8px;
+  padding: 0 12px 10px;
+}
+
+.tuning-group-body[hidden] {
+  display: none;
+}
+
+.tuning-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(112px, 156px);
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  color: var(--text);
+  font-size: 0.78rem;
+  line-height: 1.25;
+}
+
+.tuning-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.tuning-meta {
+  min-width: 44px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.tuning-value-wrap {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.tuning-row input,
+.tuning-row select {
+  width: 100%;
+  min-height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+
+.tuning-row input[type="checkbox"] {
+  justify-self: end;
+  width: 16px;
+  height: 16px;
+  min-height: 16px;
+  padding: 0;
+}
+
+.tuning-unit {
+  min-width: 20px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.tuning-row input:disabled,
+.tuning-row select:disabled {
+  color: var(--muted);
+  cursor: default;
+  opacity: 0.55;
 }
 
 .audio-reset-button,

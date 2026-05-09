@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>ASR Translate TTS</title>
-    <link rel="stylesheet" href="/styles.css?v=20260508-finish-icon">
+    <link rel="stylesheet" href="/styles.css?v=20260509-pc-export-button">
   </head>
   <body>
     <main class="app is-setup">
@@ -99,6 +99,9 @@
             <path d="M16.1 16h3.8"></path>
           </svg>
         </button>
+        <button class="dock-action round-action pc-export-action" id="pcExportButton" type="button" aria-label="Export PC transcript" title="Export PC" disabled hidden>
+          <span class="round-action-label">PC</span>
+        </button>
         <button class="dock-action round-action speak-action" id="speakNowButton" type="button" aria-label="Speak now" title="Speak now" disabled hidden>
           <svg class="round-action-icon" viewBox="0 0 24 24" aria-hidden="true">
             <path d="M4 9v6h4l5 4V5L8 9H4Z"></path>
@@ -152,6 +155,13 @@
                 </span>
                 <span class="setting-value" id="micSettingsSummary">1.5x, AGC</span>
               </button>
+              <button class="settings-nav-row" id="settingsTuningNav" type="button">
+                <span>
+                  <strong>ASR tuning</strong>
+                  <small>Adjust live transcription behavior</small>
+                </span>
+                <span class="setting-value" id="tuningSettingsSummary">WhisperX</span>
+              </button>
               <button class="settings-nav-row" id="settingsAudioNav" type="button">
                 <span>
                   <strong>Audio output</strong>
@@ -200,6 +210,10 @@
               </section>
             </div>
 
+            <div class="settings-page" id="settingsTuningPage" hidden>
+              <div class="tuning-settings-groups" id="tuningSettingsGroups"></div>
+            </div>
+
             <div class="settings-page" id="settingsAudioPage" hidden>
               <section class="setting-group" aria-label="Audio output">
                 <div class="setting-title-row">
@@ -236,6 +250,6 @@
         </section>
       </div>
     </main>
-    <script type="module" src="/src/app.js?v=20260508-finish-icon"></script>
+    <script type="module" src="/src/app.js?v=20260509-pc-export-button"></script>
   </body>
 </html>

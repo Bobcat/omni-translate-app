@@ -4,10 +4,14 @@ import secrets
 import threading
 import time
 from dataclasses import dataclass
+from dataclasses import field
 from datetime import datetime, timezone
 from typing import Any
 
+from app.asr_pc_export import live_pc_events_to_text
+from app.asr_pc_export import pc_export_path
 from app.config import get_int
+from app.live_settings import default_live_settings
 
 
 def _utc_iso(ts: float) -> str:
@@ -25,6 +29,9 @@ class ConversationSession:
     ws_connected: bool = False
     closed: bool = False
     close_reason: str = ""
+    live_settings: dict[str, Any] = field(default_factory=default_live_settings)
+    pc_events: list[dict[str, Any]] = field(default_factory=list)
+    pc_export_path: str = ""
 
 
 class ConversationSessionManager:
@@ -32,7 +39,13 @@ class ConversationSessionManager:
         self._sessions: dict[str, ConversationSession] = {}
         self._lock = threading.Lock()
 
-    def create_session(self, *, side_a_language: str, side_b_language: str) -> dict[str, Any]:
+    def create_session(
+        self,
+        *,
+        side_a_language: str,
+        side_b_language: str,
+        live_settings: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         now = time.time()
         ttl_s = get_int("live.session_ttl_s", 900, min_value=60)
         session_id = f"conv_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}_{secrets.token_hex(4)}"
@@ -42,6 +55,7 @@ class ConversationSessionManager:
             expires_unix=now + ttl_s,
             side_a_language=str(side_a_language or "Dutch"),
             side_b_language=str(side_b_language or "English"),
+            live_settings=dict(live_settings or default_live_settings()),
         )
         with self._lock:
             self._cleanup_locked(now)
@@ -78,16 +92,41 @@ class ConversationSessionManager:
             sess = self._sessions.get(session_id)
             if sess is None:
                 return
+            export_ttl_s = get_int(
+                "live.session_export_ttl_s",
+                get_int("live.session_ttl_s", 900, min_value=60),
+                min_value=60,
+            )
+            now = time.time()
             sess.closed = True
             sess.ws_connected = False
             sess.state = "ended"
             sess.close_reason = str(reason or "closed")
+            sess.expires_unix = max(sess.expires_unix, now + export_ttl_s)
+            path = pc_export_path(session_id)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(live_pc_events_to_text(sess.pc_events), encoding="utf-8")
+            sess.pc_export_path = str(path)
+
+    def append_pc_event(self, session_id: str, event: dict[str, Any]) -> None:
+        with self._lock:
+            sess = self._sessions.get(session_id)
+            if sess is None:
+                return
+            sess.pc_events.append(dict(event))
+
+    def pc_events(self, session_id: str) -> list[dict[str, Any]]:
+        with self._lock:
+            sess = self._sessions.get(session_id)
+            if sess is None:
+                raise KeyError("session_not_found")
+            return [dict(event) for event in sess.pc_events]
 
     def _cleanup_locked(self, now: float) -> None:
         expired = [
             session_id
             for session_id, sess in self._sessions.items()
-            if sess.closed or now >= sess.expires_unix
+            if now >= sess.expires_unix
         ]
         for session_id in expired:
             self._sessions.pop(session_id, None)
@@ -103,6 +142,9 @@ class ConversationSessionManager:
             "expires_at_utc": _utc_iso(sess.expires_unix),
             "side_a_language": sess.side_a_language,
             "side_b_language": sess.side_b_language,
+            "live_settings": dict(sess.live_settings or {}),
+            "pc_events_count": len(sess.pc_events),
+            "pc_export_path": sess.pc_export_path,
         }
 
 

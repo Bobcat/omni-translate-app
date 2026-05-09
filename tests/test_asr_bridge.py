@@ -79,6 +79,44 @@ class ASRBridgeTests(unittest.TestCase):
         self.assertEqual(request.options.language_detection_threshold, 0.6)
         self.assertEqual(request.options.language_detection_segments, 2)
 
+    def test_enqueue_uses_session_live_settings(self) -> None:
+        live_settings = {
+            "asr": {
+                "backend": "faster_whisper_direct",
+                "beam_size": 3,
+                "chunk_size": 10,
+                "chunk_length": 5,
+                "vad_filter": False,
+            }
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            fake_client = _RecordingPoolClient()
+            bridge = LiveASRPoolBridge(
+                session_id="sess-live",
+                sample_rate_hz=16000,
+                channels=1,
+                live_settings=live_settings,
+            )
+            bridge._client = fake_client
+            bridge.chunks_root = Path(tmp)
+
+            bridge.enqueue_pcm16(
+                lane_id="a_to_b",
+                chunk_index=1,
+                t0_ms=0,
+                t1_ms=200,
+                pcm16le=b"\0\0" * 1600,
+                language="nl",
+            )
+
+        request = fake_client.request
+        self.assertIsNotNone(request)
+        self.assertEqual(request.options.asr_backend, "faster_whisper_direct")
+        self.assertEqual(request.options.beam_size, 3)
+        self.assertIsNone(request.options.chunk_size)
+        self.assertEqual(request.options.chunk_length, 5)
+        self.assertEqual(request.options.vad_filter, False)
+
     def test_terminal_result_prefers_json_segments_over_srt_text(self) -> None:
         bridge = LiveASRPoolBridge(session_id="sess-2", sample_rate_hz=16000, channels=1)
         with bridge._lock:
@@ -89,7 +127,16 @@ class ASRBridgeTests(unittest.TestCase):
                     "result": {
                         "text": "JSON text",
                         "segments": [
-                            {"text": "JSON segment", "start": 0.1, "end": 0.4, "speaker": "SPEAKER_01"}
+                            {
+                                "text": "JSON segment",
+                                "start": 0.1,
+                                "end": 0.4,
+                                "speaker": "SPEAKER_01",
+                                "avg_logprob": -0.25,
+                                "compression_ratio": 1.2,
+                                "no_speech_prob": 0.03,
+                                "temperature": 0.0,
+                            }
                         ],
                         "srt_text": "1\n00:00:00,000 --> 00:00:00,100\nSRT segment\n",
                     }
@@ -109,6 +156,12 @@ class ASRBridgeTests(unittest.TestCase):
                     "t0_ms": 1100,
                     "t1_ms": 1400,
                     "speaker": "SPEAKER_01",
+                    "asr_debug": {
+                        "temperature": 0.0,
+                        "avg_logprob": -0.25,
+                        "compression_ratio": 1.2,
+                        "no_speech_prob": 0.03,
+                    },
                 }
             ],
         )

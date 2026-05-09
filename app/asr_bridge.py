@@ -4,6 +4,7 @@ import re
 import threading
 import time
 import wave
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -21,12 +22,25 @@ from asr_pool_api import (
     ASRSubmitRequest,
 )
 
-from app.config import REPO_ROOT, get_bool, get_int, get_setting, get_str, optional_str
+from app.config import REPO_ROOT, get_setting, get_str
+from app.live_settings import get_live_setting
 
 
 _SPEAKER_PREFIX_RE = re.compile(
     r"^\s*\[?\s*((?:speaker[_ ]?\d+|spk[_ ]?\d+))\s*\]?\s*[:\-]",
     re.IGNORECASE,
+)
+
+_SEGMENT_DEBUG_KEYS = (
+    "id",
+    "seek",
+    "temperature",
+    "avg_logprob",
+    "compression_ratio",
+    "no_speech_prob",
+    "language",
+    "language_probability",
+    "words",
 )
 
 
@@ -35,6 +49,7 @@ class ASRJob:
     request_id: str
     t0_ms: int
     t1_ms: int
+    wav_path: Path
 
 
 @dataclass(frozen=True)
@@ -45,14 +60,23 @@ class ASRJobResult:
     state: str
     text: str = ""
     segments: list[dict[str, Any]] | None = None
+    asr_backend: str = ""
     error: str = ""
 
 
 class LiveASRPoolBridge:
-    def __init__(self, *, session_id: str, sample_rate_hz: int, channels: int) -> None:
+    def __init__(
+        self,
+        *,
+        session_id: str,
+        sample_rate_hz: int,
+        channels: int,
+        live_settings: Mapping[str, Any] | None = None,
+    ) -> None:
         self.session_id = str(session_id)
         self.sample_rate_hz = int(sample_rate_hz)
         self.channels = int(channels)
+        self.live_settings = live_settings
         self.chunks_root = (REPO_ROOT / "data" / "asr_chunks" / _safe_token(session_id)).resolve()
         self.consumer_id = f"conv_{_safe_token(session_id)[:96]}"
         self._client = ASRPoolClient(
@@ -147,14 +171,31 @@ class LiveASRPoolBridge:
         speaker_mode = "none"
         min_speakers = None
         max_speakers = None
-        if get_bool("live.asr.diarize_enabled", False):
-            mode = get_str("live.asr.diarize_speaker_mode", "fixed").strip().lower()
+        if _bool_live_setting(self.live_settings, "asr.diarize_enabled", "live.asr.diarize_enabled", False):
+            mode = _str_live_setting(
+                self.live_settings,
+                "asr.diarize_speaker_mode",
+                "live.asr.diarize_speaker_mode",
+                "fixed",
+            ).strip().lower()
             speaker_mode = mode if mode in {"auto", "fixed"} else "fixed"
             if speaker_mode == "fixed":
-                min_speakers = get_int("live.asr.diarize_min_speakers", 1, min_value=1)
-                max_speakers = get_int("live.asr.diarize_max_speakers", 4, min_value=1)
+                min_speakers = _int_live_setting(
+                    self.live_settings,
+                    "asr.diarize_min_speakers",
+                    "live.asr.diarize_min_speakers",
+                    1,
+                    min_value=1,
+                )
+                max_speakers = _int_live_setting(
+                    self.live_settings,
+                    "asr.diarize_max_speakers",
+                    "live.asr.diarize_max_speakers",
+                    4,
+                    min_value=1,
+                )
 
-        asr_backend = optional_str("live.asr.backend")
+        asr_backend = _optional_str_live_setting(self.live_settings, "asr.backend", "live.asr.backend")
         use_direct_fw = str(asr_backend or "").strip().lower() == "faster_whisper_direct"
         submit = ASRSubmitRequest(
             request_id=request_id,
@@ -170,25 +211,37 @@ class LiveASRPoolBridge:
             ),
             options=ASRRequestOptions(
                 language=_normalize_language(language),
-                align_enabled=get_bool("live.asr.align_enabled", False),
+                align_enabled=_bool_live_setting(self.live_settings, "asr.align_enabled", "live.asr.align_enabled", False),
                 diarize_enabled=speaker_mode != "none",
                 speaker_mode=speaker_mode,
                 min_speakers=min_speakers,
                 max_speakers=max_speakers,
-                beam_size=_optional_int_setting("live.asr.beam_size"),
-                chunk_size=None if use_direct_fw else _optional_int_setting("live.asr.chunk_size"),
+                beam_size=_optional_int_live_setting(self.live_settings, "asr.beam_size", "live.asr.beam_size"),
+                chunk_size=None if use_direct_fw else _optional_int_live_setting(self.live_settings, "asr.chunk_size", "live.asr.chunk_size"),
                 asr_backend=asr_backend,
-                chunk_length=_optional_int_setting("live.asr.chunk_length"),
-                vad_filter=_optional_bool_setting("live.asr.vad_filter"),
+                chunk_length=_optional_int_live_setting(self.live_settings, "asr.chunk_length", "live.asr.chunk_length"),
+                vad_filter=_optional_bool_live_setting(self.live_settings, "asr.vad_filter", "live.asr.vad_filter"),
                 vad_parameters=_optional_dict_setting("live.asr.vad_parameters"),
-                word_timestamps=_optional_bool_setting("live.asr.word_timestamps"),
-                max_new_tokens=_optional_int_setting("live.asr.max_new_tokens"),
-                hotwords=optional_str("live.asr.hotwords"),
-                compression_ratio_threshold=_optional_float_setting("live.asr.compression_ratio_threshold"),
-                log_prob_threshold=_optional_float_setting("live.asr.log_prob_threshold"),
-                no_speech_threshold=_optional_float_setting("live.asr.no_speech_threshold"),
-                language_detection_threshold=_optional_float_setting("live.asr.language_detection_threshold"),
-                language_detection_segments=_optional_int_setting("live.asr.language_detection_segments"),
+                word_timestamps=_optional_bool_live_setting(self.live_settings, "asr.word_timestamps", "live.asr.word_timestamps"),
+                max_new_tokens=_optional_int_live_setting(self.live_settings, "asr.max_new_tokens", "live.asr.max_new_tokens"),
+                hotwords=_optional_str_live_setting(self.live_settings, "asr.hotwords", "live.asr.hotwords"),
+                compression_ratio_threshold=_optional_float_live_setting(
+                    self.live_settings,
+                    "asr.compression_ratio_threshold",
+                    "live.asr.compression_ratio_threshold",
+                ),
+                log_prob_threshold=_optional_float_live_setting(self.live_settings, "asr.log_prob_threshold", "live.asr.log_prob_threshold"),
+                no_speech_threshold=_optional_float_live_setting(self.live_settings, "asr.no_speech_threshold", "live.asr.no_speech_threshold"),
+                language_detection_threshold=_optional_float_live_setting(
+                    self.live_settings,
+                    "asr.language_detection_threshold",
+                    "live.asr.language_detection_threshold",
+                ),
+                language_detection_segments=_optional_int_live_setting(
+                    self.live_settings,
+                    "asr.language_detection_segments",
+                    "live.asr.language_detection_segments",
+                ),
             ),
             outputs=ASROutputSelection(text=True, segments=True, srt=False, srt_inline=False),
         )
@@ -199,8 +252,9 @@ class LiveASRPoolBridge:
                 "feed_generation": self._feed_generation,
                 "t0_ms": safe_t0,
                 "t1_ms": safe_t1,
+                "asr_backend": str(asr_backend or ""),
             }
-        return ASRJob(request_id=accepted_id, t0_ms=safe_t0, t1_ms=safe_t1)
+        return ASRJob(request_id=accepted_id, t0_ms=safe_t0, t1_ms=safe_t1, wav_path=wav_path)
 
     def has_terminal_result(self, request_id: str) -> bool:
         rid = str(request_id or "").strip()
@@ -267,6 +321,7 @@ class LiveASRPoolBridge:
                 state="done",
                 text=text,
                 segments=segments,
+                asr_backend=str(meta.get("asr_backend") or ""),
             )
 
         err = dict(terminal.get("error") or {})
@@ -300,22 +355,92 @@ class LiveASRPoolBridge:
             notify()
 
 
-def _optional_int_setting(path: str) -> int | None:
-    raw = get_setting(path, None)
+_MISSING = object()
+
+
+def _raw_live_setting(
+    live_settings: Mapping[str, Any] | None,
+    live_path: str,
+    config_path: str,
+    default: Any = None,
+) -> Any:
+    raw = get_live_setting(live_settings, live_path, _MISSING)
+    if raw is not _MISSING:
+        return raw
+    return get_setting(config_path, default)
+
+
+def _optional_str_live_setting(
+    live_settings: Mapping[str, Any] | None,
+    live_path: str,
+    config_path: str,
+) -> str | None:
+    raw = _raw_live_setting(live_settings, live_path, config_path, None)
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    return text or None
+
+
+def _str_live_setting(
+    live_settings: Mapping[str, Any] | None,
+    live_path: str,
+    config_path: str,
+    default: str,
+) -> str:
+    raw = _raw_live_setting(live_settings, live_path, config_path, default)
+    return str(raw or default)
+
+
+def _bool_live_setting(
+    live_settings: Mapping[str, Any] | None,
+    live_path: str,
+    config_path: str,
+    default: bool,
+) -> bool:
+    return bool(_raw_live_setting(live_settings, live_path, config_path, default))
+
+
+def _int_live_setting(
+    live_settings: Mapping[str, Any] | None,
+    live_path: str,
+    config_path: str,
+    default: int,
+    *,
+    min_value: int,
+) -> int:
+    raw = _raw_live_setting(live_settings, live_path, config_path, default)
+    return int(max(int(min_value), int(raw)))
+
+
+def _optional_int_live_setting(
+    live_settings: Mapping[str, Any] | None,
+    live_path: str,
+    config_path: str,
+) -> int | None:
+    raw = _raw_live_setting(live_settings, live_path, config_path, None)
     if raw is None:
         return None
     return int(max(1, int(raw)))
 
 
-def _optional_float_setting(path: str) -> float | None:
-    raw = get_setting(path, None)
+def _optional_float_live_setting(
+    live_settings: Mapping[str, Any] | None,
+    live_path: str,
+    config_path: str,
+) -> float | None:
+    raw = _raw_live_setting(live_settings, live_path, config_path, None)
     if raw is None:
         return None
     return float(raw)
 
 
-def _optional_bool_setting(path: str) -> bool | None:
-    raw = get_setting(path, None)
+def _optional_bool_live_setting(
+    live_settings: Mapping[str, Any] | None,
+    live_path: str,
+    config_path: str,
+) -> bool | None:
+    raw = _raw_live_setting(live_settings, live_path, config_path, None)
     if raw is None:
         return None
     return bool(raw)
@@ -385,16 +510,40 @@ def _pool_json_segments(raw_segments: Any, *, t0_offset_ms: int) -> list[dict[st
                 speaker = str(match.group(1) or "").strip().upper().replace(" ", "_")
         t0_ms = int(max(0, rel_t0_ms + int(max(0, t0_offset_ms))))
         t1_ms = int(max(t0_ms, rel_t1_ms + int(max(0, t0_offset_ms))))
-        out.append(
-            {
-                "segment_id": str(raw.get("segment_id") or f"s{len(out) + 1:04d}"),
-                "text": text,
-                "t0_ms": t0_ms,
-                "t1_ms": t1_ms,
-                "speaker": speaker,
-            }
-        )
+        segment = {
+            "segment_id": str(raw.get("segment_id") or f"s{len(out) + 1:04d}"),
+            "text": text,
+            "t0_ms": t0_ms,
+            "t1_ms": t1_ms,
+            "speaker": speaker,
+        }
+        debug = _segment_debug_payload(raw)
+        if debug:
+            segment["asr_debug"] = debug
+        out.append(segment)
     return out
+
+
+def _segment_debug_payload(raw: dict[str, Any]) -> dict[str, Any]:
+    debug: dict[str, Any] = {}
+    for key in _SEGMENT_DEBUG_KEYS:
+        if key in raw and raw.get(key) is not None:
+            debug[key] = _json_safe(raw.get(key))
+    return debug
+
+
+def _json_safe(value: Any) -> Any:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, Mapping):
+        return {
+            str(key): _json_safe(item)
+            for key, item in value.items()
+            if item is not None
+        }
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    return str(value)
 
 
 def _srt_ts_to_ms(token: str) -> int:

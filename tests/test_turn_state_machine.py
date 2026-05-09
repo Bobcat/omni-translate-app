@@ -9,9 +9,11 @@ from unittest.mock import patch
 
 from realtime_translation_engine import SourceEvent
 
+from app.asr_pc_export import pc_export_path
 from app.runtime import ConversationRuntime
 from app.runtime import TurnPart
 from app.sessions import ConversationSession
+from app.sessions import SESSIONS
 
 
 class FakeWebSocket:
@@ -32,7 +34,7 @@ class FastTTS:
     def __init__(self) -> None:
         self.count = 0
 
-    def synthesize(self, *, session_id: str, text: str, language: str) -> dict:
+    def synthesize(self, *, session_id: str, text: str, language: str, reference_wav_path: str | None = None) -> dict:
         self.count += 1
         return {
             "artifact_id": f"artifact_{self.count}",
@@ -46,7 +48,7 @@ class FastTTS:
 class SlowTTS:
     enabled = True
 
-    def synthesize(self, *, session_id: str, text: str, language: str) -> dict:
+    def synthesize(self, *, session_id: str, text: str, language: str, reference_wav_path: str | None = None) -> dict:
         time.sleep(0.2)
         return {
             "artifact_id": "late_artifact",
@@ -189,6 +191,84 @@ class TurnStateMachineTests(unittest.IsolatedAsyncioTestCase):
             if event["type"] == "turn_update" and event["reason"] == "translation_update"
         )
         self.assertTrue(translation_update["current_turn"]["can_speak_now"])
+
+    async def test_source_commits_insert_missing_word_boundary_space(self) -> None:
+        runtime, _websocket = self.make_runtime(FastTTS())
+        lane = runtime._current_lane()
+        lane.translation_runner = SimpleNamespace(
+            on_source_event=lambda _event, _state: SimpleNamespace(dispatch_request=None)
+        )
+
+        await runtime._source_event(lane, kind="c", text="Hallo")
+        await runtime._source_event(lane, kind="c", text="wereld")
+
+        part = runtime.current_turn.parts[0]
+        self.assertEqual(part.source_committed_text, "Hallo wereld")
+        self.assertEqual(runtime._turn_payload(runtime.current_turn)["source_text"], "Hallo wereld")
+
+    async def test_source_commits_do_not_insert_space_before_punctuation(self) -> None:
+        runtime, _websocket = self.make_runtime(FastTTS())
+        lane = runtime._current_lane()
+        lane.translation_runner = SimpleNamespace(
+            on_source_event=lambda _event, _state: SimpleNamespace(dispatch_request=None)
+        )
+
+        await runtime._source_event(lane, kind="c", text="Hallo")
+        await runtime._source_event(lane, kind="c", text=".")
+
+        part = runtime.current_turn.parts[0]
+        self.assertEqual(part.source_committed_text, "Hallo.")
+
+    async def test_source_preview_normalizes_whitespace_and_reads_after_committed_text(self) -> None:
+        runtime, _websocket = self.make_runtime(FastTTS())
+        lane = runtime._current_lane()
+        lane.translation_runner = SimpleNamespace(
+            on_source_event=lambda _event, _state: SimpleNamespace(dispatch_request=None)
+        )
+
+        await runtime._source_event(lane, kind="c", text="Hallo")
+        await runtime._source_event(lane, kind="p", text="wereld\nnieuw")
+
+        part = runtime.current_turn.parts[0]
+        self.assertEqual(part.source_preview_text, "wereld nieuw")
+        self.assertEqual(runtime._turn_payload(runtime.current_turn)["source_text"], "Hallo wereld nieuw")
+
+    async def test_source_event_records_pc_export_event(self) -> None:
+        session_payload = SESSIONS.create_session(
+            side_a_language="Dutch",
+            side_b_language="English",
+        )
+        session_id = session_payload["session_id"]
+        session = SESSIONS.open_websocket(session_id)
+        websocket = FakeWebSocket()
+        runtime = ConversationRuntime(websocket=websocket, session=session)
+        self.runtimes = [*getattr(self, "runtimes", []), runtime]
+        path = pc_export_path(session_id)
+        try:
+            await runtime._source_event(
+                runtime._current_lane(),
+                kind="p",
+                text="Hallo wereld",
+                speech_start_ms=100,
+                speech_end_ms=900,
+                asr_debug={
+                    "backend": "faster_whisper_direct",
+                    "request_id": "req-1",
+                    "segments": [{"segment_id": "s0001", "avg_logprob": -0.2}],
+                },
+                pc_reason="preview_applied",
+            )
+
+            events = SESSIONS.pc_events(session_id)
+            self.assertEqual(len(events), 1)
+            self.assertEqual(events[0]["kind"], "p")
+            self.assertEqual(events[0]["text"], "Hallo wereld")
+            self.assertEqual(events[0]["speech_start_ms"], 100)
+            self.assertEqual(events[0]["asr_debug"]["backend"], "faster_whisper_direct")
+        finally:
+            await runtime._cleanup()
+            self.runtimes = [item for item in getattr(self, "runtimes", []) if item is not runtime]
+            path.unlink(missing_ok=True)
 
     async def test_clear_turn_while_tts_is_pending_discards_turn_and_drops_late_audio(self) -> None:
         runtime, websocket = self.make_runtime(SlowTTS())

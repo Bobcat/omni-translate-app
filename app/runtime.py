@@ -3,8 +3,10 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import time
+from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import StrEnum
+from pathlib import Path
 from typing import Any
 
 from fastapi import WebSocket, status
@@ -23,6 +25,10 @@ from realtime_translation_engine.types import LiveDispatchRequest
 from app.asr_bridge import ASRJob
 from app.asr_bridge import LiveASRPoolBridge
 from app.config import get_bool, get_float, get_int, optional_str
+from app.live_settings import default_live_settings
+from app.live_settings import live_runner_config
+from app.live_settings import merge_live_settings
+from app.live_settings import normalize_live_settings_delta
 from app.protocol import event
 from app.sessions import ConversationSession
 from app.sessions import SESSIONS
@@ -114,6 +120,10 @@ class ConversationLane:
     last_target_committed: str = ""
     line_number: int = 0
     pending_tts: dict[str, Any] | None = None
+    last_asr_segments: list[dict[str, Any]] = field(default_factory=list)
+    last_asr_request_id: str = ""
+    last_asr_backend: str = ""
+    last_asr_wav_path: str = ""
 
 
 class ConversationRuntime:
@@ -126,10 +136,12 @@ class ConversationRuntime:
         self.sample_width_bytes = 2
         self.side_a_language = session.side_a_language
         self.side_b_language = session.side_b_language
+        self.live_settings = merge_live_settings(default_live_settings(), session.live_settings or {})
         self.asr_bridge = LiveASRPoolBridge(
             session_id=self.session_id,
             sample_rate_hz=self.sample_rate_hz,
             channels=self.channels,
+            live_settings=self.live_settings,
         )
         self.tts_bridge = get_tts_bridge()
         self.lanes = {
@@ -178,6 +190,7 @@ class ConversationRuntime:
                 },
                 side_a_language=self.side_a_language,
                 side_b_language=self.side_b_language,
+                live_settings=deepcopy(self.live_settings),
                 lanes={lane_id: self._lane_payload(lane) for lane_id, lane in self.lanes.items()},
                 current_turn=self._turn_payload(self.current_turn),
             )
@@ -264,11 +277,34 @@ class ConversationRuntime:
         if msg_type == "translate_now":
             await self._translate_now()
             return True
+        if msg_type == "update_live_settings":
+            await self._update_live_settings(payload)
+            return True
         if msg_type == "tts_playback_complete":
             await self._tts_playback_complete(payload)
             return True
         await self._send(event("error", self.session_id, code="unsupported_control", message=msg_type))
         return True
+
+    async def _update_live_settings(self, payload: dict[str, Any]) -> None:
+        delta, errors = normalize_live_settings_delta(payload.get("settings"), live_update=True)
+        if errors:
+            await self._send(
+                event(
+                    "error",
+                    self.session_id,
+                    code="invalid_live_settings",
+                    message="; ".join(errors),
+                )
+            )
+            return
+        if not delta:
+            await self._send(event("live_settings", self.session_id, live_settings=deepcopy(self.live_settings)))
+            return
+        self.live_settings = merge_live_settings(self.live_settings, delta)
+        self.asr_bridge.live_settings = self.live_settings
+        self._apply_live_runner_settings()
+        await self._send(event("live_settings", self.session_id, live_settings=deepcopy(self.live_settings)))
 
     async def _handle_audio(self, raw_bytes: bytes) -> None:
         if not self.listening:
@@ -310,6 +346,12 @@ class ConversationRuntime:
 
         is_current_turn = inflight.turn_id == self.current_turn.turn_id
         if result.ok:
+            result_segments = [dict(seg) for seg in (result.segments or []) if isinstance(seg, dict)]
+            result_backend = str(result.asr_backend or _live_settings_asr_backend(self.live_settings))
+            lane.last_asr_segments = list(result_segments)
+            lane.last_asr_request_id = str(result.request_id or job.request_id)
+            lane.last_asr_backend = result_backend
+            lane.last_asr_wav_path = str(job.wav_path)
             apply = lane.asr_runner.apply_result(
                 ASRResult(
                     sequence_id=self._sequence_from_request(job.request_id),
@@ -319,8 +361,7 @@ class ConversationRuntime:
                     text=result.text,
                     segments=tuple(
                         TranscriptSegment.from_dict(seg)
-                        for seg in (result.segments or [])
-                        if isinstance(seg, dict)
+                        for seg in result_segments
                     ),
                 )
             )
@@ -332,7 +373,22 @@ class ConversationRuntime:
             ):
                 text = " ".join(seg.text.strip() for seg in apply.committed_segments if seg.text.strip()).strip()
                 if text:
-                    await self._source_event(lane, kind="c", text=text)
+                    start_ms, end_ms = _segment_span(apply.committed_segments)
+                    await self._source_event(
+                        lane,
+                        kind="c",
+                        text=text,
+                        speech_start_ms=start_ms,
+                        speech_end_ms=end_ms,
+                        asr_debug=_asr_debug_for_interval(
+                            backend=result_backend,
+                            request_id=str(result.request_id or job.request_id),
+                            segments=result_segments,
+                            speech_start_ms=start_ms,
+                            speech_end_ms=end_ms,
+                        ),
+                        pc_reason=str(apply.commit_reason or apply.reason or ""),
+                    )
             preview_text = str(apply.preview.text or "").strip()
             if (
                 is_current_turn
@@ -340,7 +396,23 @@ class ConversationRuntime:
                 and apply.reason in {"preview_applied", "commit_applied"}
                 and preview_text
             ):
-                await self._source_event(lane, kind="p", text=preview_text)
+                preview_start_ms = _preview_start_ms(lane)
+                preview_end_ms = int(max(preview_start_ms, int(apply.preview.audio_end_ms or 0)))
+                await self._source_event(
+                    lane,
+                    kind="p",
+                    text=preview_text,
+                    speech_start_ms=preview_start_ms,
+                    speech_end_ms=preview_end_ms,
+                    asr_debug=_asr_debug_for_interval(
+                        backend=result_backend,
+                        request_id=str(result.request_id or job.request_id),
+                        segments=result_segments,
+                        speech_start_ms=preview_start_ms,
+                        speech_end_ms=preview_end_ms,
+                    ),
+                    pc_reason=str(apply.reason or ""),
+                )
         else:
             lane.asr_runner.apply_result(
                 ASRResult(
@@ -449,7 +521,21 @@ class ConversationRuntime:
             return
         text = str(segment.text or "").strip()
         if text:
-            await self._source_event(lane, kind="c", text=text)
+            await self._source_event(
+                lane,
+                kind="c",
+                text=text,
+                speech_start_ms=int(max(0, segment.t0_ms)),
+                speech_end_ms=int(max(0, segment.t1_ms)),
+                asr_debug=_asr_debug_for_interval(
+                    backend=lane.last_asr_backend or _live_settings_asr_backend(self.live_settings),
+                    request_id=lane.last_asr_request_id,
+                    segments=lane.last_asr_segments,
+                    speech_start_ms=int(max(0, segment.t0_ms)),
+                    speech_end_ms=int(max(0, segment.t1_ms)),
+                ),
+                pc_reason="speech_gate_tail_commit" if speech_gate_forced else "rolling_context_tail_commit",
+            )
 
     async def _next_turn(self, *, lane_id: Any) -> None:
         next_lane_id = str(lane_id or "").strip()
@@ -550,9 +636,27 @@ class ConversationRuntime:
         if not commit_text.strip():
             await self._send_translation_status(state="skipped", reason="empty_source_preview", message="No preview yet")
             return
+        preview_start_ms = _preview_start_ms(lane)
+        preview_end_ms = _preview_end_ms(lane, fallback_t1_ms=preview_start_ms)
+        asr_debug = _asr_debug_for_interval(
+            backend=lane.last_asr_backend or _live_settings_asr_backend(self.live_settings),
+            request_id=lane.last_asr_request_id,
+            segments=lane.last_asr_segments,
+            speech_start_ms=preview_start_ms,
+            speech_end_ms=preview_end_ms,
+        )
         self._close_asr_scope_for_turn(lane)
         await self._retire_translation_work(lane)
-        await self._source_event(lane, kind="c", text=commit_text, reason="translate_now")
+        await self._source_event(
+            lane,
+            kind="c",
+            text=commit_text,
+            reason="translate_now",
+            speech_start_ms=preview_start_ms,
+            speech_end_ms=preview_end_ms,
+            asr_debug=asr_debug,
+            pc_reason="translate_now",
+        )
 
     async def _run_tts(self, lane_id: str, turn_id: str, text: str, speaking_part_ids: list[str]) -> None:
         lane = self.lanes[lane_id]
@@ -563,6 +667,7 @@ class ConversationRuntime:
                 session_id=self.session_id,
                 text=text,
                 language=lane.target_language,
+                reference_wav_path=_tts_reference_wav_path(lane),
             )
         except asyncio.CancelledError:
             raise
@@ -638,14 +743,32 @@ class ConversationRuntime:
         kind: str,
         text: str,
         reason: str | None = None,
+        speech_start_ms: int | None = None,
+        speech_end_ms: int | None = None,
+        asr_debug: dict[str, Any] | None = None,
+        pc_reason: str | None = None,
     ) -> None:
         if lane.lane_id != self.current_turn.lane_id or not is_open_turn(self.current_turn.state):
             return
         if self.current_turn.state == TurnState.OPEN_SPEAKING:
             return
+        text = _asr_event_text(lane, kind=kind, text=text)
+        if not text.strip():
+            return
         turn_id = self.current_turn.turn_id
         lane.line_number += 1
         source_event = SourceEvent(kind=kind, text=text, line_number=lane.line_number)
+        self._record_pc_event(
+            lane,
+            kind=kind,
+            text=text,
+            turn_id=turn_id,
+            line_number=lane.line_number,
+            speech_start_ms=speech_start_ms,
+            speech_end_ms=speech_end_ms,
+            asr_debug=asr_debug,
+            reason=pc_reason or reason or f"source_{kind}",
+        )
         lane.source_state.apply_event(source_event)
         part = self._current_writable_part()
 
@@ -661,6 +784,36 @@ class ConversationRuntime:
         step = lane.translation_runner.on_source_event(source_event, lane.source_state)
         if step.dispatch_request is not None:
             self._schedule_translation(lane, step.dispatch_request, turn_id=turn_id)
+
+    def _record_pc_event(
+        self,
+        lane: ConversationLane,
+        *,
+        kind: str,
+        text: str,
+        turn_id: str,
+        line_number: int,
+        speech_start_ms: int | None,
+        speech_end_ms: int | None,
+        asr_debug: dict[str, Any] | None,
+        reason: str,
+    ) -> None:
+        safe_kind = str(kind or "").strip().lower()
+        if safe_kind not in {"p", "c"}:
+            return
+        payload: dict[str, Any] = {
+            "kind": safe_kind,
+            "speech_start_ms": int(max(0, speech_start_ms or 0)),
+            "speech_end_ms": int(max(0, speech_end_ms or speech_start_ms or 0)),
+            "text": str(text or "").strip(),
+            "reason": str(reason or ""),
+            "lane_id": lane.lane_id,
+            "turn_id": turn_id,
+            "line_number": int(max(0, line_number)),
+        }
+        if asr_debug:
+            payload["asr_debug"] = deepcopy(asr_debug)
+        SESSIONS.append_pc_event(self.session_id, payload)
 
     async def _retire_translation_work(self, lane: ConversationLane) -> None:
         lane.translation_generation += 1
@@ -926,7 +1079,14 @@ class ConversationRuntime:
             channels=self.channels,
             sample_width_bytes=self.sample_width_bytes,
             asr_language=asr_language,
+            live_settings=self.live_settings,
         )
+
+    def _apply_live_runner_settings(self) -> None:
+        settings = _live_asr_runner_settings(self.live_settings)
+        for lane in self.lanes.values():
+            lane.asr_runner.settings = settings
+            lane.asr_runner.core.settings = settings.rolling
 
     def _build_translation_runner(self) -> LiveRunner:
         return LiveRunner(
@@ -996,6 +1156,7 @@ def warm_asr_vad() -> None:
         channels=get_int("live.audio.channels", 1, min_value=1),
         sample_width_bytes=2,
         asr_language=optional_str("live.asr.language"),
+        live_settings=default_live_settings(),
     )
     runner.ensure_vad_ready()
 
@@ -1006,56 +1167,164 @@ def _build_live_asr_runner(
     channels: int,
     sample_width_bytes: int,
     asr_language: str | None,
+    live_settings: dict[str, Any] | None = None,
 ) -> LiveASRRunner:
     audio_format = AudioFormat(
         sample_rate_hz=int(sample_rate_hz),
         channels=int(channels),
         sample_width_bytes=int(sample_width_bytes),
     )
-    return LiveASRRunner(audio_format=audio_format, settings=_live_asr_runner_settings(), language=asr_language)
+    return LiveASRRunner(
+        audio_format=audio_format,
+        settings=_live_asr_runner_settings(live_settings),
+        language=asr_language,
+    )
 
 
-def _live_asr_runner_settings() -> LiveASRRunnerSettings:
-    return LiveASRRunnerSettings.from_live_config(
-        {
-            "timing": {
-                "emit_min_ms": get_int("live.timing.emit_min_ms", 120, min_value=0),
-            },
-            "rolling": {
-                "min_infer_audio_ms": get_int("live.rolling.min_infer_audio_ms", 500, min_value=200),
-                "single_segment_commit_min_ms": get_int("live.rolling.single_segment_commit_min_ms", 12000, min_value=1000),
-                "force_commit_repeats": get_int("live.rolling.force_commit_repeats", 3, min_value=1),
-                "max_uncommitted_ms": get_int("live.rolling.max_uncommitted_ms", 30000, min_value=1000),
-                "hard_clip_keep_tail_ms": get_int("live.rolling.hard_clip_keep_tail_ms", 5000, min_value=1000),
-                "max_decode_window_ms": get_int("live.rolling.max_decode_window_ms", 12000, min_value=1000),
-                "buffer_trim_threshold_ms": get_int("live.rolling.buffer_trim_threshold_ms", 30000, min_value=5000),
-                "buffer_trim_drop_ms": get_int("live.rolling.buffer_trim_drop_ms", 20000, min_value=1000),
-                "min_new_audio_ms": get_int("live.rolling.min_new_audio_ms", 500, min_value=0),
-                "pacing": {
-                    "base_emit_ms": get_int("live.rolling.pacing.base_emit_ms", 250, min_value=1),
-                    "startup": {
-                        "duration_ms": get_int("live.rolling.pacing.startup.duration_ms", 1200, min_value=0),
-                        "emit_ms": get_int("live.rolling.pacing.startup.emit_ms", 100, min_value=1),
-                        "min_infer_audio_ms": get_int("live.rolling.pacing.startup.min_infer_audio_ms", 250, min_value=0),
-                        "min_new_audio_ms": get_int("live.rolling.pacing.startup.min_new_audio_ms", 200, min_value=0),
-                    },
-                },
-                "vad": {
-                    "enabled": get_bool("live.rolling.vad.enabled", True),
-                    "venv": optional_str("live.rolling.vad.venv"),
-                    "threshold": get_float("live.rolling.vad.threshold", 0.35, min_value=0.0),
-                    "max_speech_duration_s": get_float("live.rolling.vad.max_speech_duration_s", 12.0, min_value=0.1),
-                    "min_speech_ms": get_int("live.rolling.vad.min_speech_ms", 120, min_value=0),
-                    "hangover_ms": get_int("live.rolling.vad.hangover_ms", 600, min_value=0),
-                },
-                "speech_gate": {
-                    "silence_enter_ms": get_int("live.rolling.speech_gate.silence_enter_ms", 900, min_value=100),
-                    "rearm_hits": get_int("live.rolling.speech_gate.rearm_hits", 2, min_value=1),
-                    "rearm_window_ms": get_int("live.rolling.speech_gate.rearm_window_ms", 500, min_value=100),
-                    "force_commit_silence_ms": get_int("live.rolling.speech_gate.force_commit_silence_ms", 2500, min_value=100),
-                },
-            },
-        }
+def _live_asr_runner_settings(live_settings: dict[str, Any] | None = None) -> LiveASRRunnerSettings:
+    settings = live_settings if isinstance(live_settings, dict) else default_live_settings()
+    return LiveASRRunnerSettings.from_live_config(live_runner_config(settings))
+
+
+def _live_settings_asr_backend(live_settings: dict[str, Any] | None) -> str:
+    if not isinstance(live_settings, dict):
+        return ""
+    asr = live_settings.get("asr")
+    if not isinstance(asr, dict):
+        return ""
+    return str(asr.get("backend") or "")
+
+
+def _tts_reference_wav_path(lane: ConversationLane) -> str | None:
+    if not get_bool("tts.voxcpm2_use_asr_reference_wav", False):
+        return None
+    path = str(lane.last_asr_wav_path or "").strip()
+    if not path:
+        return None
+    return path if Path(path).exists() else None
+
+
+def _segment_span(segments: tuple[TranscriptSegment, ...]) -> tuple[int, int]:
+    if not segments:
+        return 0, 0
+    start_ms = min(int(max(0, seg.t0_ms)) for seg in segments)
+    end_ms = max(int(max(0, seg.t1_ms)) for seg in segments)
+    return start_ms, max(start_ms, end_ms)
+
+
+def _preview_start_ms(lane: ConversationLane) -> int:
+    history = lane.asr_runner.preview_history
+    source_t0_ms = int(max(0, int(getattr(history, "last_preview_source_t0_ms", 0) or 0)))
+    return int(max(0, lane.asr_runner.processed_offset_ms, source_t0_ms))
+
+
+def _preview_end_ms(lane: ConversationLane, *, fallback_t1_ms: int) -> int:
+    preview = lane.asr_runner.transcript_state.preview
+    end_ms = int(max(0, int(getattr(preview, "audio_end_ms", 0) or 0)))
+    if end_ms <= 0:
+        history = lane.asr_runner.preview_history
+        end_ms = int(max(0, int(getattr(history, "last_preview_audio_end_fallback_ms", 0) or 0)))
+    return int(max(fallback_t1_ms, end_ms))
+
+
+def _asr_debug_for_interval(
+    *,
+    backend: str,
+    request_id: str,
+    segments: list[dict[str, Any]],
+    speech_start_ms: int,
+    speech_end_ms: int,
+) -> dict[str, Any]:
+    safe_start = int(max(0, speech_start_ms))
+    safe_end = int(max(safe_start, speech_end_ms))
+    selected = [
+        segment
+        for segment in segments
+        if _segment_overlaps(segment, speech_start_ms=safe_start, speech_end_ms=safe_end)
+    ]
+    if not selected and segments:
+        selected = list(segments)
+    return {
+        "backend": str(backend or ""),
+        "request_id": str(request_id or ""),
+        "segments": [_pc_segment_payload(segment) for segment in selected],
+    }
+
+
+def _segment_overlaps(segment: dict[str, Any], *, speech_start_ms: int, speech_end_ms: int) -> bool:
+    try:
+        segment_t0 = int(segment.get("t0_ms") or 0)
+        segment_t1 = int(segment.get("t1_ms") or segment_t0)
+    except Exception:
+        return False
+    if speech_end_ms <= speech_start_ms:
+        return segment_t1 >= speech_start_ms
+    return segment_t1 > speech_start_ms and segment_t0 < speech_end_ms
+
+
+def _pc_segment_payload(segment: dict[str, Any]) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "segment_id": str(segment.get("segment_id") or ""),
+        "text": str(segment.get("text") or ""),
+        "t0_ms": int(max(0, int(segment.get("t0_ms") or 0))),
+        "t1_ms": int(max(0, int(segment.get("t1_ms") or 0))),
+    }
+    speaker = str(segment.get("speaker") or "")
+    if speaker:
+        payload["speaker"] = speaker
+    debug = segment.get("asr_debug") if isinstance(segment.get("asr_debug"), dict) else {}
+    for key, value in debug.items():
+        payload[str(key)] = deepcopy(value)
+    return payload
+
+
+def _asr_event_text(lane: ConversationLane, *, kind: str, text: str) -> str:
+    safe_text = _normalize_asr_visible_text(text)
+    if str(kind or "").strip().lower() != "c" or not safe_text:
+        return safe_text
+    committed_text = str(lane.source_state.source_committed_text or "")
+    return _with_boundary_space(committed_text, safe_text)
+
+
+def _normalize_asr_visible_text(text: str) -> str:
+    return " ".join(str(text or "").split())
+
+
+def _with_boundary_space(left: str, right: str) -> str:
+    left_text = str(left or "")
+    right_text = str(right or "")
+    if not left_text or not right_text:
+        return right_text
+    if not _needs_boundary_space(left_text, right_text):
+        return right_text
+    return f" {right_text}"
+
+
+def _needs_boundary_space(left: str, right: str) -> bool:
+    left_char = str(left or "")[-1:]
+    right_char = str(right or "")[:1]
+    if not left_char or not right_char:
+        return False
+    if left_char.isspace() or right_char.isspace():
+        return False
+    if right_char in ".,?!:;)]}%":
+        return False
+    if left_char in "([{":
+        return False
+    if _is_cjk(left_char) or _is_cjk(right_char):
+        return False
+    return True
+
+
+def _is_cjk(char: str) -> bool:
+    if not char:
+        return False
+    code = ord(char)
+    return (
+        0x3040 <= code <= 0x30FF
+        or 0x3400 <= code <= 0x4DBF
+        or 0x4E00 <= code <= 0x9FFF
+        or 0xAC00 <= code <= 0xD7AF
     )
 
 
