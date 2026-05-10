@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import base64
 import copy
+import io
 import json
 import logging
 import shutil
 import threading
 import time
 import uuid
+import wave
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError
@@ -121,6 +123,10 @@ VOXCPM2_VOICE_PRESETS = {
     },
 }
 VOXCPM2_REFERENCE_PROMPT = "Match the speaking pace, rhythm, and articulation of the reference audio."
+VOXCPM2_REFERENCE_MATCH_OPTIONS = (
+    ("voice", "Voice only"),
+    ("voice_and_pace", "Voice + pace"),
+)
 
 
 class TTSBridge:
@@ -149,7 +155,7 @@ class TTSBridge:
         path = artifact_path(session_id, artifact_id)
         path.parent.mkdir(parents=True, exist_ok=True)
 
-        request_payload = _tts_pool_request_payload(
+        request_payload, request_metrics, request_metadata = _tts_pool_request_payload(
             text=safe_text,
             language=language,
             reference_wav_path=reference_wav_path,
@@ -172,6 +178,7 @@ class TTSBridge:
         total_wall_ms = (time.perf_counter() - call_started) * 1000.0
 
         metrics = _numeric_dict(response.get("metrics"))
+        metrics.update(request_metrics)
         metrics.update(
             {
                 "tts_pool_request_wall_ms": request_wall_ms,
@@ -182,6 +189,7 @@ class TTSBridge:
             }
         )
         metadata = dict(response.get("metadata") or {})
+        metadata.update(request_metadata)
         metadata.update(
             {
                 "tts_pool_response_id": str(response.get("id") or ""),
@@ -224,6 +232,7 @@ def tts_settings_payload() -> dict[str, Any]:
             for key, value in VOXCPM2_VOICE_PRESETS.items()
         ),
         "voxcpm2_reference_prompt": VOXCPM2_REFERENCE_PROMPT,
+        "voxcpm2_reference_match_options": _options_payload(VOXCPM2_REFERENCE_MATCH_OPTIONS),
     }
     return payload
 
@@ -255,10 +264,12 @@ def _tts_pool_request_payload(
     text: str,
     language: str,
     reference_wav_path: str | None,
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], dict[str, float], dict[str, Any]]:
     settings = _current_tts_settings()
     backend = settings["backend"]
     voice: dict[str, Any] = {}
+    request_metrics: dict[str, float] = {}
+    request_metadata: dict[str, Any] = {}
     if backend == "kokoro":
         preset = _kokoro_voice_for_language(language)
         if preset:
@@ -267,10 +278,14 @@ def _tts_pool_request_payload(
         preset = str(_lookup_language_value(settings["voxcpm2"]["voice_presets"], language) or "configured")
         voice["preset"] = preset
         if settings["voxcpm2"]["use_input_audio_reference"] and reference_wav_path:
-            voice["reference_audio"] = _reference_audio_payload(
+            reference_audio, reference_metrics, reference_metadata = _reference_audio_payload(
                 reference_wav_path,
                 max_duration_s=settings["voxcpm2"]["reference_max_duration_s"],
             )
+            voice["reference_audio"] = reference_audio
+            voice["reference_audio_match"] = settings["voxcpm2"]["reference_match"]
+            request_metrics.update(reference_metrics)
+            request_metadata.update(reference_metadata)
     else:
         raise ValueError(f"unsupported tts.backend: {backend!r}")
     return {
@@ -280,16 +295,61 @@ def _tts_pool_request_payload(
         "voice": voice,
         "format": {"type": "wav"},
         "stream": False,
-    }
+    }, request_metrics, request_metadata
 
 
-def _reference_audio_payload(reference_wav_path: str, *, max_duration_s: float) -> dict[str, Any]:
+def _reference_audio_payload(reference_wav_path: str, *, max_duration_s: float) -> tuple[dict[str, Any], dict[str, float], dict[str, Any]]:
+    started = time.perf_counter()
     path = Path(reference_wav_path).expanduser().resolve()
+    source_duration_ms = _wav_duration_ms(path)
+    max_duration_ms = int(max_duration_s * 1000)
+    if source_duration_ms > max_duration_ms:
+        audio_bytes, duration_ms = _copy_wav_tail_to_bytes(path, max_duration_s=max_duration_s)
+        clipped = True
+    else:
+        audio_bytes = path.read_bytes()
+        duration_ms = source_duration_ms
+        clipped = False
+    prepare_wall_ms = (time.perf_counter() - started) * 1000.0
     return {
         "mime_type": "audio/wav",
-        "data_base64": base64.b64encode(path.read_bytes()).decode("ascii"),
+        "data_base64": base64.b64encode(audio_bytes).decode("ascii"),
         "max_duration_s": float(max_duration_s),
+    }, {
+        "tts_reference_prepare_wall_ms": prepare_wall_ms,
+        "tts_reference_payload_bytes": float(len(audio_bytes)),
+    }, {
+        "reference_client_source_duration_ms": source_duration_ms,
+        "reference_client_duration_ms": duration_ms,
+        "reference_client_clipped": clipped,
     }
+
+
+def _wav_duration_ms(path: Path) -> int:
+    with wave.open(str(path), "rb") as reader:
+        framerate = reader.getframerate()
+        frames = reader.getnframes()
+        if framerate <= 0:
+            raise ValueError("reference wav has invalid framerate")
+        return int((frames / framerate) * 1000)
+
+
+def _copy_wav_tail_to_bytes(source_path: Path, *, max_duration_s: float) -> tuple[bytes, int]:
+    with wave.open(str(source_path), "rb") as reader:
+        framerate = reader.getframerate()
+        if framerate <= 0:
+            raise ValueError("reference wav has invalid framerate")
+        total_frames = reader.getnframes()
+        keep_frames = min(total_frames, max(1, int(max_duration_s * framerate)))
+        start_frame = max(0, total_frames - keep_frames)
+        reader.setpos(start_frame)
+        frames = reader.readframes(keep_frames)
+        params = reader.getparams()
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as writer:
+        writer.setparams(params)
+        writer.writeframes(frames)
+    return buffer.getvalue(), int((keep_frames / framerate) * 1000)
 
 
 def _post_json(url: str, payload: dict[str, Any], *, timeout_s: float) -> dict[str, Any]:
@@ -378,6 +438,7 @@ def _current_tts_settings() -> dict[str, Any]:
             "voice_presets": _configured_voxcpm2_voice_presets(),
             "use_input_audio_reference": get_bool("tts.voxcpm2_use_asr_reference_wav", False),
             "reference_max_duration_s": _configured_voxcpm2_reference_max_duration_s(),
+            "reference_match": _configured_voxcpm2_reference_match(),
         },
     }
     with _TTS_SETTINGS_LOCK:
@@ -418,6 +479,10 @@ def _configured_voxcpm2_reference_max_duration_s() -> float:
     return _clamped_float(get_setting("tts.voxcpm2_reference_max_duration_s", 8.0), default=8.0, min_value=1.0, max_value=60.0)
 
 
+def _configured_voxcpm2_reference_match() -> str:
+    return _normalized_reference_match(get_setting("tts.voxcpm2_reference_match", "voice"))
+
+
 def _normalize_tts_settings_delta(delta: dict[str, Any]) -> tuple[dict[str, Any], dict[str, str]]:
     if not isinstance(delta, dict):
         return {}, {"settings": "must be an object"}
@@ -451,6 +516,11 @@ def _normalize_tts_settings_delta(delta: dict[str, Any]) -> tuple[dict[str, Any]
             if "reference_max_duration_s" in voxcpm2:
                 normalized_voxcpm2["reference_max_duration_s"] = _normalize_reference_max_duration(
                     voxcpm2.get("reference_max_duration_s"),
+                    errors,
+                )
+            if "reference_match" in voxcpm2:
+                normalized_voxcpm2["reference_match"] = _normalize_reference_match(
+                    voxcpm2.get("reference_match"),
                     errors,
                 )
             if "voice_presets" in voxcpm2:
@@ -501,6 +571,19 @@ def _normalize_reference_max_duration(value: Any, errors: dict[str, str]) -> flo
     except (TypeError, ValueError):
         errors["voxcpm2.reference_max_duration_s"] = "must be a number"
         return 8.0
+
+
+def _normalize_reference_match(value: Any, errors: dict[str, str]) -> str:
+    text = str(value or "").strip()
+    if text in {option[0] for option in VOXCPM2_REFERENCE_MATCH_OPTIONS}:
+        return text
+    errors["voxcpm2.reference_match"] = "unsupported reference match"
+    return "voice"
+
+
+def _normalized_reference_match(value: Any) -> str:
+    text = str(value or "").strip()
+    return text if text in {option[0] for option in VOXCPM2_REFERENCE_MATCH_OPTIONS} else "voice"
 
 
 def _kokoro_voice_for_language(language: str) -> str | None:

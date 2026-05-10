@@ -96,6 +96,7 @@
     "backend": "kokoro",
     "voxcpm2_use_asr_reference_wav": false,
     "voxcpm2_reference_max_duration_s": 8.0,
+    "voxcpm2_reference_match": "voice",
     "voxcpm2_voice_presets": {
       "Dutch": "configured",
       "English": "configured"

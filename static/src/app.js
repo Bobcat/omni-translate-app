@@ -78,6 +78,7 @@ const DEFAULT_TTS_SETTINGS = {
     voice_presets: {},
     use_input_audio_reference: false,
     reference_max_duration_s: 8,
+    reference_match: 'voice',
   },
 };
 const DEFAULT_TTS_OPTIONS = {
@@ -90,6 +91,10 @@ const DEFAULT_TTS_OPTIONS = {
     { value: 'configured', label: 'Default', prompt: '' },
   ],
   voxcpm2_reference_prompt: 'Match the speaking pace, rhythm, and articulation of the reference audio.',
+  voxcpm2_reference_match_options: [
+    { value: 'voice', label: 'Voice only' },
+    { value: 'voice_and_pace', label: 'Voice + pace' },
+  ],
 };
 const VOXCPM2_EXTRA_INFO_OPTIONS = [
   { value: 'none', label: 'Nothing extra' },
@@ -1409,11 +1414,13 @@ function handleTtsSettingChange(event) {
     state.ttsVoxcpm2ExtraInfoMode = mode;
     state.ttsSettings.voxcpm2.voice_presets = next.voicePresets;
     state.ttsSettings.voxcpm2.use_input_audio_reference = next.useReference;
+    state.ttsSettings.voxcpm2.reference_match = next.referenceMatch;
     renderTtsSettings({ preserveScroll: true });
     submitTtsSettings({
       voxcpm2: {
         voice_presets: next.voicePresets,
         use_input_audio_reference: next.useReference,
+        reference_match: next.referenceMatch,
       },
     }, previous, previousMode);
     return;
@@ -1441,6 +1448,13 @@ function handleTtsSettingChange(event) {
     state.ttsSettings.voxcpm2.reference_max_duration_s = value;
     renderTtsSettings({ preserveScroll: true });
     submitTtsSettings({ voxcpm2: { reference_max_duration_s: value } }, previous);
+    return;
+  }
+  if (kind === 'voxcpm2-reference-match') {
+    const value = validVoxcpm2ReferenceMatch(input.value);
+    state.ttsSettings.voxcpm2.reference_match = value;
+    renderTtsSettings({ preserveScroll: true });
+    submitTtsSettings({ voxcpm2: { reference_match: value } }, previous);
     return;
   }
 }
@@ -1601,6 +1615,15 @@ function voxcpm2TtsRows() {
       kind: 'voxcpm2-sample-source',
       emptyLabel: 'Last speech fragment',
     }));
+    rows.push(createTtsSelectRow({
+      label: 'Sample matches',
+      value: validVoxcpm2ReferenceMatch(state.ttsSettings.voxcpm2.reference_match),
+      options: voxcpm2ReferenceMatchOptions(),
+      disabled,
+      meta: ttsRowMeta({ active, available: true }),
+      kind: 'voxcpm2-reference-match',
+      emptyLabel: 'Voice only',
+    }));
     rows.push(createTtsNumberRow({
       label: 'Max duration',
       value: state.ttsSettings.voxcpm2.reference_max_duration_s || 8,
@@ -1663,7 +1686,7 @@ function createVoxcpm2PromptPreview() {
   sampleLabel.textContent = 'Speech sample';
   const sampleValue = document.createElement('code');
   sampleValue.textContent = state.ttsSettings.voxcpm2.use_input_audio_reference
-    ? `Last speech fragment from this session, max ${state.ttsSettings.voxcpm2.reference_max_duration_s || 8}s`
+    ? `Last speech fragment from this session, max ${state.ttsSettings.voxcpm2.reference_max_duration_s || 8}s, ${voxcpm2ReferenceMatchLabel()}`
     : 'None';
   preview.append(textLabel, textValue, sampleLabel, sampleValue);
   return preview;
@@ -1762,6 +1785,7 @@ function voxcpm2ExtraInfoMode() {
 function ttsSettingsForVoxcpm2Mode(mode) {
   const useDescription = mode === 'description' || mode === 'both';
   const useReference = mode === 'sample' || mode === 'both';
+  const referenceMatch = validVoxcpm2ReferenceMatch(state.ttsSettings.voxcpm2.reference_match);
   const voicePresets = {};
   for (const language of ttsPresetLanguages()) {
     const current = state.ttsSettings.voxcpm2.voice_presets?.[language] || 'configured';
@@ -1773,7 +1797,7 @@ function ttsSettingsForVoxcpm2Mode(mode) {
       voicePresets[language] = useReference ? 'configured' : defaultVoxcpm2DescriptionPreset();
     }
   }
-  return { voicePresets, useReference };
+  return { voicePresets, useReference, referenceMatch };
 }
 
 function voxcpm2DescriptionOptions() {
@@ -1799,10 +1823,27 @@ function voxcpm2TextPromptPreview() {
   const descriptionPrompt = String(option?.prompt || '').trim();
   if (descriptionPrompt) parts.push(descriptionPrompt);
   if (state.ttsSettings.voxcpm2.use_input_audio_reference) {
+    if (validVoxcpm2ReferenceMatch(state.ttsSettings.voxcpm2.reference_match) !== 'voice_and_pace') {
+      return parts.join(' ');
+    }
     const prompt = String(state.ttsOptions.voxcpm2_reference_prompt || DEFAULT_TTS_OPTIONS.voxcpm2_reference_prompt || '').trim();
     if (prompt && !parts.includes(prompt)) parts.push(prompt);
   }
   return parts.join(' ');
+}
+
+function voxcpm2ReferenceMatchOptions() {
+  return state.ttsOptions.voxcpm2_reference_match_options || DEFAULT_TTS_OPTIONS.voxcpm2_reference_match_options;
+}
+
+function validVoxcpm2ReferenceMatch(value) {
+  const text = String(value || '').trim();
+  return voxcpm2ReferenceMatchOptions().some((option) => option.value === text) ? text : 'voice';
+}
+
+function voxcpm2ReferenceMatchLabel() {
+  const value = validVoxcpm2ReferenceMatch(state.ttsSettings.voxcpm2.reference_match);
+  return voxcpm2ReferenceMatchOptions().find((option) => option.value === value)?.label || 'Voice only';
 }
 
 function voxcpm2PresetOption(value) {

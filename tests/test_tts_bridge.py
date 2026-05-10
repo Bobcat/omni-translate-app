@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import base64
+import io
 import shutil
 import unittest
+import wave
 from unittest import mock
 
 from app.tts_bridge import TTSBridge
@@ -101,11 +103,11 @@ class TTSBridgeTests(unittest.TestCase):
         session_root = TTS_ROOT / session_id
         source_path = session_root / "source.wav"
         source_path.parent.mkdir(parents=True, exist_ok=True)
-        source_path.write_bytes(b"reference-wav")
+        source_path.write_bytes(_silent_wav(seconds=3.0))
         self.addCleanup(lambda: shutil.rmtree(session_root, ignore_errors=True))
 
         with mock.patch("app.tts_bridge._post_json", side_effect=fake_pool.post_json):
-            TTSBridge().synthesize(
+            payload = TTSBridge().synthesize(
                 session_id=session_id,
                 text="Hallo",
                 language="Dutch",
@@ -118,7 +120,15 @@ class TTSBridgeTests(unittest.TestCase):
         reference_audio = request["voice"]["reference_audio"]
         self.assertEqual(reference_audio["mime_type"], "audio/wav")
         self.assertEqual(reference_audio["max_duration_s"], 2.0)
-        self.assertEqual(base64.b64decode(reference_audio["data_base64"]), b"reference-wav")
+        self.assertEqual(request["voice"]["reference_audio_match"], "voice")
+        reference_bytes = base64.b64decode(reference_audio["data_base64"])
+        self.assertLess(len(reference_bytes), source_path.stat().st_size)
+        self.assertLessEqual(_wav_duration_ms(reference_bytes), 2000)
+        self.assertTrue(payload["metadata"]["reference_client_clipped"])
+        self.assertEqual(payload["metadata"]["reference_client_source_duration_ms"], 3000)
+        self.assertLessEqual(payload["metadata"]["reference_client_duration_ms"], 2000)
+        self.assertIn("tts_reference_prepare_wall_ms", payload["metrics"])
+        self.assertIn("tts_reference_payload_bytes", payload["metrics"])
 
     def test_voxcpm2_reference_audio_is_omitted_when_disabled(self) -> None:
         update_tts_settings(
@@ -155,6 +165,7 @@ class TTSBridgeTests(unittest.TestCase):
                     "voice_presets": {"Dutch": "warm_female"},
                     "use_input_audio_reference": True,
                     "reference_max_duration_s": 3,
+                    "reference_match": "voice_and_pace",
                 },
             }
         )
@@ -163,6 +174,7 @@ class TTSBridgeTests(unittest.TestCase):
         self.assertEqual(settings["backend"], "voxcpm2")
         self.assertEqual(settings["voxcpm2"]["voice_presets"]["Dutch"], "warm_female")
         self.assertEqual(settings["voxcpm2"]["reference_max_duration_s"], 3.0)
+        self.assertEqual(settings["voxcpm2"]["reference_match"], "voice_and_pace")
         self.assertTrue(tts_uses_asr_reference_wav())
 
     def test_update_tts_settings_rejects_unknown_backend(self) -> None:
@@ -180,10 +192,27 @@ class TTSBridgeTests(unittest.TestCase):
         self.assertIn("English", payload["options"]["kokoro_voices"])
         self.assertIn("voxcpm2_voice_presets", payload["options"])
         self.assertIn("speaking pace", payload["options"]["voxcpm2_reference_prompt"])
+        self.assertIn("voxcpm2_reference_match_options", payload["options"])
 
     def test_synthesize_rejects_empty_text(self) -> None:
         with self.assertRaisesRegex(ValueError, "tts_text_empty"):
             TTSBridge().synthesize(session_id="conv_test_empty", text=" ", language="English")
+
+
+def _silent_wav(*, seconds: float, sample_rate_hz: int = 16000) -> bytes:
+    buffer = io.BytesIO()
+    frames = b"\x00\x00" * int(seconds * sample_rate_hz)
+    with wave.open(buffer, "wb") as writer:
+        writer.setnchannels(1)
+        writer.setsampwidth(2)
+        writer.setframerate(sample_rate_hz)
+        writer.writeframes(frames)
+    return buffer.getvalue()
+
+
+def _wav_duration_ms(data: bytes) -> int:
+    with wave.open(io.BytesIO(data), "rb") as reader:
+        return int((reader.getnframes() / reader.getframerate()) * 1000)
 
 
 if __name__ == "__main__":
