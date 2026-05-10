@@ -9,13 +9,15 @@ from pydantic import BaseModel
 
 from app.asr_pc_export import live_pc_events_to_text
 from app.asr_pc_export import pc_export_filename
-from app.config import get_bool, get_int, get_str, rooted_path
+from app.config import get_int, get_str, rooted_path
 from app.live_settings import default_live_settings
 from app.live_settings import merge_live_settings
 from app.live_settings import normalize_live_settings_delta
 from app.protocol import PROTOCOL_VERSION
 from app.sessions import SESSIONS
 from app.tts_bridge import artifact_path
+from app.tts_bridge import tts_settings_payload
+from app.tts_bridge import update_tts_settings
 
 
 api_router = APIRouter(prefix="/api")
@@ -25,6 +27,10 @@ class CreateSessionRequest(BaseModel):
     side_a_language: str | None = None
     side_b_language: str | None = None
     live_settings: dict[str, Any] | None = None
+
+
+class UpdateTTSSettingsRequest(BaseModel):
+    settings: dict[str, Any]
 
 
 @api_router.get("/health")
@@ -45,11 +51,17 @@ async def config() -> dict[str, Any]:
             "side_a_language": get_str("translation.source_language", "Dutch"),
             "side_b_language": get_str("translation.target_language", "English"),
         },
-        "tts": {
-            "enabled": get_bool("tts.enabled", False),
-        },
+        "tts": tts_settings_payload(),
         "live_settings": default_live_settings(),
     }
+
+
+@api_router.post("/tts-settings")
+async def set_tts_settings(payload: UpdateTTSSettingsRequest) -> dict[str, Any]:
+    settings, errors = update_tts_settings(payload.settings)
+    if errors:
+        raise HTTPException(status_code=422, detail={"tts": errors})
+    return {"tts": settings}
 
 
 @api_router.post("/sessions")

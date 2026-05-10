@@ -6,6 +6,10 @@
     "base_url": "http://127.0.0.1:8090",
     "token": ""
   },
+  "tts_pool": {
+    "base_url": "http://127.0.0.1:8020",
+    "timeout_s": 300
+  },
   "live": {
     "session_ttl_s": 900,
     "audio": {
@@ -90,19 +94,11 @@
   "tts": {
     "enabled": false,
     "backend": "kokoro",
-    "kokoro_model_root": "",
-    "voxcpm2_model": "openbmb/VoxCPM2",
-    "voxcpm2_load_denoiser": false,
-    "voxcpm2_optimize": false,
-    "voxcpm2_startup_warmup": true,
-    "voxcpm2_control": "",
-    "voxcpm2_reference_wav_path": "",
     "voxcpm2_use_asr_reference_wav": false,
-    "voxcpm2_cfg_value": 2.0,
-    "voxcpm2_inference_timesteps": 10,
-    "voxcpm2_normalize": false,
-    "voxcpm2_denoise": false,
-    "warmup_language": "English",
-    "warmup_text": "Ready."
+    "voxcpm2_reference_max_duration_s": 8.0,
+    "voxcpm2_voice_presets": {
+      "Dutch": "configured",
+      "English": "configured"
+    }
   }
 }

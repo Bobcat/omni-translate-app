@@ -68,6 +68,39 @@ const DEFAULT_TUNING_SETTINGS = {
     },
   },
 };
+const DEFAULT_TTS_SETTINGS = {
+  enabled: false,
+  backend: 'kokoro',
+  kokoro: {
+    voices: {},
+  },
+  voxcpm2: {
+    voice_presets: {},
+    use_input_audio_reference: false,
+    reference_max_duration_s: 8,
+  },
+};
+const DEFAULT_TTS_OPTIONS = {
+  backends: [
+    { value: 'kokoro', label: 'Kokoro' },
+    { value: 'voxcpm2', label: 'VoxCPM2' },
+  ],
+  kokoro_voices: {},
+  voxcpm2_voice_presets: [
+    { value: 'configured', label: 'Default', prompt: '' },
+  ],
+  voxcpm2_reference_prompt: 'Match the speaking pace, rhythm, and articulation of the reference audio.',
+};
+const VOXCPM2_EXTRA_INFO_OPTIONS = [
+  { value: 'none', label: 'Nothing extra' },
+  { value: 'description', label: 'Voice description' },
+  { value: 'sample', label: 'Speech sample' },
+  { value: 'both', label: 'Description + speech sample' },
+];
+const VOXCPM2_SAMPLE_SOURCE_OPTIONS = [
+  { value: 'last_speech', label: 'Last speech fragment' },
+  { value: 'own_wav', label: 'Own WAV (later)', disabled: true },
+];
 const TUNING_CONTROLS = [
   { group: 'Backend selection', key: 'asr.backend', label: 'Backend', type: 'select', options: [['whisperx', 'WhisperX'], ['faster_whisper_direct', 'Faster Whisper']] },
   { group: 'Common decode', key: 'asr.beam_size', label: 'Beam size', type: 'number', min: 1, max: 16, step: 1 },
@@ -190,7 +223,9 @@ const els = {
   micLevelFill: document.querySelector('#micLevelFill'),
   audioSettingsReset: document.querySelector('#audioSettingsReset'),
   ttsOutputState: document.querySelector('#ttsOutputState'),
-  ttsOutputDetail: document.querySelector('#ttsOutputDetail'),
+  ttsEnabled: document.querySelector('#ttsEnabled'),
+  ttsBackendSelect: document.querySelector('#ttsBackendSelect'),
+  ttsSettingsGroups: document.querySelector('#ttsSettingsGroups'),
 };
 
 const initialLanes = buildLocalLanes('Dutch', 'English');
@@ -222,6 +257,12 @@ const state = {
   },
   tuningSettings: cloneSettings(DEFAULT_TUNING_SETTINGS),
   tuningExpandedGroups: new Set(),
+  ttsSettings: cloneSettings(DEFAULT_TTS_SETTINGS),
+  ttsOptions: cloneSettings(DEFAULT_TTS_OPTIONS),
+  ttsExpandedGroups: new Set(),
+  ttsVoxcpm2ExtraInfoMode: null,
+  ttsPromptInspectOpen: false,
+  ttsUpdateBusy: false,
   debugSettings: {
     showStatusLine: false,
   },
@@ -275,7 +316,7 @@ async function init() {
   state.lanes = buildLocalLanes(state.sideALanguage, state.sideBLanguage);
   state.audioInputSampleRate = config.audio_input?.sample_rate_hz || 16000;
   state.tuningSettings = mergeSettings(DEFAULT_TUNING_SETTINGS, config.live_settings || {});
-  renderTtsOutputState(config.tts);
+  applyTtsConfig(config.tts || {});
 
   els.startButton.addEventListener('click', handleStartButton);
   els.micToggleButton.addEventListener('click', handleMicToggle);
@@ -302,6 +343,10 @@ async function init() {
   els.audioSettingsReset.addEventListener('click', resetAudioSettings);
   els.showStatusLine.addEventListener('change', handleShowStatusLineChange);
   els.tuningSettingsGroups.addEventListener('change', handleTuningSettingChange);
+  els.ttsEnabled.addEventListener('change', handleTtsEnabledChange);
+  els.ttsBackendSelect.addEventListener('change', handleTtsBackendChange);
+  els.ttsSettingsGroups.addEventListener('change', handleTtsSettingChange);
+  els.ttsSettingsGroups.addEventListener('click', handleTtsSettingsClick);
   els.settingsSheetScrim.addEventListener('click', closeSettingsSheet);
   document.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape') return;
@@ -315,6 +360,7 @@ async function init() {
   renderTranscript();
   renderAudioSettings();
   renderTuningSettings();
+  renderTtsSettings();
   renderHistorySettings();
   renderDebugSettings();
   updateActionButtons();
@@ -653,6 +699,7 @@ function applyReady(msg) {
   enableTranscriptAutoFollow();
   renderLanguageControls();
   renderTranscript();
+  renderTtsSettings();
   updateActionButtons();
   els.miniStatus.textContent = directionLabel();
   if (state.requestedStartLaneId !== currentLaneId()) {
@@ -887,6 +934,7 @@ function openSettingsSheet() {
   setSettingsPage('home');
   renderAudioSettings();
   renderTuningSettings();
+  renderTtsSettings();
   renderHistorySettings();
   renderDebugSettings();
 }
@@ -907,6 +955,7 @@ function setSettingsPage(page) {
   state.settingsPage = ['microphone', 'tuning', 'audio', 'history', 'debug'].includes(page) ? page : 'home';
   renderSettingsPage();
   if (state.settingsPage === 'tuning') renderTuningSettings();
+  if (state.settingsPage === 'audio') renderTtsSettings();
 }
 
 function renderSettingsPage() {
@@ -927,7 +976,7 @@ function renderSettingsPage() {
   } else if (page === 'tuning') {
     els.settingsSheetTitle.textContent = 'ASR tuning';
   } else if (page === 'audio') {
-    els.settingsSheetTitle.textContent = 'Audio output';
+    els.settingsSheetTitle.textContent = 'TTS options';
   } else if (page === 'history') {
     els.settingsSheetTitle.textContent = 'History';
   } else if (page === 'debug') {
@@ -952,6 +1001,7 @@ function setVisibleLanguage(role, value) {
   state.currentTurn = createLocalTurn(currentLaneId(), state.lanes);
   renderLanguageControls();
   renderTranscript();
+  renderTtsSettings();
   updateActionButtons();
   els.miniStatus.textContent = directionLabel();
 }
@@ -965,6 +1015,7 @@ function swapSetupLanguages() {
   state.currentTurn = createLocalTurn(currentLaneId(), state.lanes);
   renderLanguageControls();
   renderTranscript();
+  renderTtsSettings();
   updateActionButtons();
   els.miniStatus.textContent = directionLabel();
 }
@@ -1320,10 +1371,483 @@ function renderHistorySettings() {
   els.historyRetentionDays.disabled = true;
 }
 
-function renderTtsOutputState(tts) {
-  const label = tts?.enabled ? 'on' : 'off';
-  els.ttsOutputState.textContent = label;
-  els.ttsOutputDetail.textContent = label;
+function applyTtsConfig(tts) {
+  const settings = cloneSettings(tts || {});
+  const options = cloneSettings(settings.options || {});
+  delete settings.options;
+  state.ttsSettings = mergeSettings(DEFAULT_TTS_SETTINGS, settings);
+  state.ttsOptions = mergeSettings(DEFAULT_TTS_OPTIONS, options);
+  renderTtsSettings();
+}
+
+function handleTtsEnabledChange() {
+  const previous = cloneSettings(state.ttsSettings);
+  const enabled = Boolean(els.ttsEnabled.checked);
+  state.ttsSettings.enabled = enabled;
+  renderTtsSettings({ preserveScroll: true });
+  submitTtsSettings({ enabled }, previous);
+}
+
+function handleTtsBackendChange() {
+  const previous = cloneSettings(state.ttsSettings);
+  const backend = String(els.ttsBackendSelect.value || 'kokoro');
+  state.ttsSettings.backend = backend;
+  renderTtsSettings({ preserveScroll: true });
+  submitTtsSettings({ backend }, previous);
+}
+
+function handleTtsSettingChange(event) {
+  const input = event.target;
+  if (!input || input.disabled) return;
+  const previous = cloneSettings(state.ttsSettings);
+  const kind = input.dataset.ttsKind || '';
+  const language = input.dataset.ttsLanguage || '';
+  if (kind === 'voxcpm2-extra-info') {
+    const previousMode = state.ttsVoxcpm2ExtraInfoMode;
+    const mode = String(input.value || 'none');
+    const next = ttsSettingsForVoxcpm2Mode(mode);
+    state.ttsVoxcpm2ExtraInfoMode = mode;
+    state.ttsSettings.voxcpm2.voice_presets = next.voicePresets;
+    state.ttsSettings.voxcpm2.use_input_audio_reference = next.useReference;
+    renderTtsSettings({ preserveScroll: true });
+    submitTtsSettings({
+      voxcpm2: {
+        voice_presets: next.voicePresets,
+        use_input_audio_reference: next.useReference,
+      },
+    }, previous, previousMode);
+    return;
+  }
+  if (kind === 'voxcpm2-sample-source') {
+    input.value = 'last_speech';
+    return;
+  }
+  if (kind === 'kokoro-voice' && language) {
+    const value = String(input.value || '');
+    state.ttsSettings.kokoro.voices[language] = value;
+    renderTtsSettings({ preserveScroll: true });
+    submitTtsSettings({ kokoro: { voices: { [language]: value } } }, previous);
+    return;
+  }
+  if (kind === 'voxcpm2-preset' && language) {
+    const value = String(input.value || 'configured');
+    state.ttsSettings.voxcpm2.voice_presets[language] = value;
+    renderTtsSettings({ preserveScroll: true });
+    submitTtsSettings({ voxcpm2: { voice_presets: { [language]: value } } }, previous);
+    return;
+  }
+  if (kind === 'voxcpm2-reference-max-duration') {
+    const value = normalizeTtsNumber(input.value, state.ttsSettings.voxcpm2.reference_max_duration_s || 8, 1, 60);
+    state.ttsSettings.voxcpm2.reference_max_duration_s = value;
+    renderTtsSettings({ preserveScroll: true });
+    submitTtsSettings({ voxcpm2: { reference_max_duration_s: value } }, previous);
+    return;
+  }
+}
+
+function handleTtsSettingsClick(event) {
+  const button = event.target?.closest?.('[data-tts-action]');
+  if (!button) return;
+  if (button.dataset.ttsAction === 'toggle-prompt-preview') {
+    state.ttsPromptInspectOpen = !state.ttsPromptInspectOpen;
+    renderTtsSettings({ preserveScroll: true });
+  }
+}
+
+async function submitTtsSettings(delta, previousSettings, previousVoxcpm2Mode = state.ttsVoxcpm2ExtraInfoMode) {
+  state.ttsUpdateBusy = true;
+  renderTtsSettings({ preserveScroll: true });
+  try {
+    const payload = await api.updateTtsSettings(delta);
+    applyTtsConfig(payload.tts || {});
+    els.miniStatus.textContent = 'Voice settings updated';
+  } catch (error) {
+    state.ttsSettings = previousSettings;
+    state.ttsVoxcpm2ExtraInfoMode = previousVoxcpm2Mode;
+    setStatus('error', error.message || 'Voice settings failed');
+  } finally {
+    state.ttsUpdateBusy = false;
+    renderTtsSettings({ preserveScroll: true });
+  }
+}
+
+function toggleTtsGroup(groupName) {
+  if (!groupName) return;
+  if (state.ttsExpandedGroups.has(groupName)) {
+    state.ttsExpandedGroups.delete(groupName);
+  } else {
+    state.ttsExpandedGroups.add(groupName);
+  }
+  renderTtsSettings({ preserveScroll: true });
+}
+
+function renderTtsSettings({ preserveScroll = false } = {}) {
+  els.ttsOutputState.textContent = ttsSummary();
+  if (!els.ttsEnabled || !els.ttsBackendSelect) return;
+  els.ttsEnabled.checked = Boolean(state.ttsSettings.enabled);
+  els.ttsEnabled.disabled = state.ttsUpdateBusy;
+  renderTtsBackendSelect();
+  if (!els.ttsSettingsGroups || els.settingsSheet.hidden || state.settingsPage !== 'audio') return;
+  const scrollEl = preserveScroll ? tuningScrollElement() : null;
+  const scrollTop = scrollEl?.scrollTop || 0;
+  const groups = [
+    { name: 'Kokoro', backend: 'kokoro', rows: kokoroTtsRows() },
+    { name: 'VoxCPM2', backend: 'voxcpm2', rows: voxcpm2TtsRows() },
+  ];
+  const fragment = document.createDocumentFragment();
+  for (const group of groups) {
+    const expanded = state.ttsExpandedGroups.has(group.name);
+    const section = document.createElement('section');
+    section.className = 'setting-group tuning-group';
+    section.setAttribute('aria-label', group.name);
+    section.classList.toggle('is-expanded', expanded);
+    const title = document.createElement('button');
+    title.className = 'tuning-group-toggle';
+    title.type = 'button';
+    title.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    title.addEventListener('click', () => toggleTtsGroup(group.name));
+    const titleText = document.createElement('span');
+    titleText.className = 'tuning-group-title';
+    titleText.textContent = group.name;
+    const icon = document.createElement('span');
+    icon.className = 'tuning-group-icon';
+    icon.setAttribute('aria-hidden', 'true');
+    title.append(titleText, icon);
+    const body = document.createElement('div');
+    body.className = 'tuning-group-body';
+    body.hidden = !expanded;
+    if (expanded) {
+      for (const row of group.rows) body.append(row);
+    }
+    section.append(title, body);
+    fragment.append(section);
+  }
+  els.ttsSettingsGroups.replaceChildren(fragment);
+  if (scrollEl) scrollEl.scrollTop = scrollTop;
+}
+
+function renderTtsBackendSelect() {
+  const current = String(state.ttsSettings.backend || 'kokoro');
+  const options = state.ttsOptions.backends?.length ? state.ttsOptions.backends : DEFAULT_TTS_OPTIONS.backends;
+  const existing = Array.from(els.ttsBackendSelect.options).map((option) => option.value).join('|');
+  const next = options.map((option) => option.value).join('|');
+  if (existing !== next) {
+    els.ttsBackendSelect.replaceChildren();
+    for (const option of options) {
+      const el = document.createElement('option');
+      el.value = option.value;
+      el.textContent = option.label;
+      els.ttsBackendSelect.append(el);
+    }
+  }
+  els.ttsBackendSelect.value = current;
+  els.ttsBackendSelect.disabled = state.ttsUpdateBusy;
+}
+
+function kokoroTtsRows() {
+  const active = state.ttsSettings.backend === 'kokoro';
+  return ttsPresetLanguages().map((language) => {
+    const options = state.ttsOptions.kokoro_voices?.[language] || [];
+    const disabled = state.ttsUpdateBusy || !active || options.length === 0;
+    const value = state.ttsSettings.kokoro.voices?.[language] || options[0]?.value || '';
+    return createTtsSelectRow({
+      label: `${language} voice`,
+      value,
+      options,
+      disabled,
+      meta: ttsRowMeta({ active, available: options.length > 0 }),
+      kind: 'kokoro-voice',
+      language,
+      emptyLabel: 'Unsupported',
+    });
+  });
+}
+
+function voxcpm2TtsRows() {
+  const active = state.ttsSettings.backend === 'voxcpm2';
+  const disabled = state.ttsUpdateBusy || !active;
+  const mode = voxcpm2ExtraInfoMode();
+  const rows = [createTtsSelectRow({
+    label: 'Voice instructions',
+    value: mode,
+    options: VOXCPM2_EXTRA_INFO_OPTIONS,
+    disabled,
+    meta: ttsRowMeta({ active, available: true }),
+    kind: 'voxcpm2-extra-info',
+    emptyLabel: 'Nothing extra',
+  })];
+  if (mode === 'description' || mode === 'both') {
+    for (const language of ttsPresetLanguages()) {
+      const value = state.ttsSettings.voxcpm2.voice_presets?.[language] || defaultVoxcpm2DescriptionPreset();
+      rows.push(createTtsSelectRow({
+        label: `${language} description`,
+        value,
+        options: voxcpm2DescriptionOptions(),
+        disabled,
+        meta: ttsRowMeta({ active, available: true }),
+        kind: 'voxcpm2-preset',
+        language,
+        emptyLabel: 'Neutral clear',
+      }));
+    }
+  }
+  if (mode === 'sample' || mode === 'both') {
+    rows.push(createTtsSelectRow({
+      label: 'Speech sample',
+      value: 'last_speech',
+      options: VOXCPM2_SAMPLE_SOURCE_OPTIONS,
+      disabled,
+      meta: ttsRowMeta({ active, available: true }),
+      kind: 'voxcpm2-sample-source',
+      emptyLabel: 'Last speech fragment',
+    }));
+    rows.push(createTtsNumberRow({
+      label: 'Max duration',
+      value: state.ttsSettings.voxcpm2.reference_max_duration_s || 8,
+      min: 1,
+      max: 60,
+      step: 1,
+      unit: 's',
+      disabled,
+      meta: ttsRowMeta({ active, available: true }),
+      kind: 'voxcpm2-reference-max-duration',
+    }));
+    rows.push(createTtsStaticRow({
+      label: 'Own WAV',
+      value: 'Not selectable yet',
+      meta: 'later',
+    }));
+  }
+  rows.push(createTtsPromptInspectRows(active));
+  return rows;
+}
+
+function createTtsPromptInspectRows(active) {
+  const fragment = document.createDocumentFragment();
+  const row = document.createElement('div');
+  row.className = 'tuning-row tts-action-row';
+  const label = document.createElement('span');
+  label.className = 'tuning-label';
+  label.textContent = 'Prompt';
+  const meta = document.createElement('span');
+  meta.className = 'tuning-meta';
+  meta.textContent = active ? 'inspect' : 'inactive';
+  const button = document.createElement('button');
+  button.className = 'tts-inspect-button';
+  button.type = 'button';
+  button.dataset.ttsAction = 'toggle-prompt-preview';
+  button.disabled = !active;
+  button.textContent = state.ttsPromptInspectOpen ? 'Hide prompt' : 'Inspect prompt';
+  const valueWrap = document.createElement('span');
+  valueWrap.className = 'tuning-value-wrap';
+  valueWrap.append(button);
+  row.append(label, meta, valueWrap);
+  fragment.append(row);
+  if (state.ttsPromptInspectOpen && active) {
+    fragment.append(createVoxcpm2PromptPreview());
+  }
+  return fragment;
+}
+
+function createVoxcpm2PromptPreview() {
+  const targetLanguage = currentTtsTargetLanguage();
+  const preview = document.createElement('div');
+  preview.className = 'tts-prompt-preview';
+  const textLabel = document.createElement('span');
+  textLabel.className = 'tts-prompt-preview-label';
+  textLabel.textContent = `Text instruction for ${targetLanguage}`;
+  const textValue = document.createElement('code');
+  textValue.textContent = voxcpm2TextPromptPreview() || 'None';
+  const sampleLabel = document.createElement('span');
+  sampleLabel.className = 'tts-prompt-preview-label';
+  sampleLabel.textContent = 'Speech sample';
+  const sampleValue = document.createElement('code');
+  sampleValue.textContent = state.ttsSettings.voxcpm2.use_input_audio_reference
+    ? `Last speech fragment from this session, max ${state.ttsSettings.voxcpm2.reference_max_duration_s || 8}s`
+    : 'None';
+  preview.append(textLabel, textValue, sampleLabel, sampleValue);
+  return preview;
+}
+
+function createTtsSelectRow({ label, value, options, disabled, meta, kind, language, emptyLabel }) {
+  const row = document.createElement('label');
+  row.className = 'tuning-row';
+  const labelEl = document.createElement('span');
+  labelEl.className = 'tuning-label';
+  labelEl.textContent = label;
+  const metaEl = document.createElement('span');
+  metaEl.className = 'tuning-meta';
+  metaEl.textContent = meta;
+  const select = document.createElement('select');
+  select.dataset.ttsKind = kind;
+  select.dataset.ttsLanguage = language;
+  select.disabled = disabled;
+  const safeOptions = options.length ? options : [{ value: '', label: emptyLabel }];
+  for (const option of safeOptions) {
+    const optionEl = document.createElement('option');
+    optionEl.value = option.value;
+    optionEl.textContent = option.label;
+    optionEl.disabled = option.disabled === true;
+    select.append(optionEl);
+  }
+  select.value = value;
+  const valueWrap = document.createElement('span');
+  valueWrap.className = 'tuning-value-wrap';
+  valueWrap.append(select);
+  row.append(labelEl, metaEl, valueWrap);
+  return row;
+}
+
+function createTtsNumberRow({ label, value, min, max, step, unit, disabled, meta, kind }) {
+  const row = document.createElement('label');
+  row.className = 'tuning-row';
+  const labelEl = document.createElement('span');
+  labelEl.className = 'tuning-label';
+  labelEl.textContent = label;
+  const metaEl = document.createElement('span');
+  metaEl.className = 'tuning-meta';
+  metaEl.textContent = meta;
+  const input = document.createElement('input');
+  input.type = 'number';
+  input.dataset.ttsKind = kind;
+  input.min = String(min);
+  input.max = String(max);
+  input.step = String(step);
+  input.value = String(value);
+  input.disabled = disabled;
+  const valueWrap = document.createElement('span');
+  valueWrap.className = 'tuning-value-wrap';
+  valueWrap.append(input);
+  if (unit) {
+    const unitEl = document.createElement('span');
+    unitEl.className = 'tuning-unit';
+    unitEl.textContent = unit;
+    valueWrap.append(unitEl);
+  }
+  row.append(labelEl, metaEl, valueWrap);
+  return row;
+}
+
+function createTtsStaticRow({ label, value, meta }) {
+  const row = document.createElement('div');
+  row.className = 'tuning-row';
+  const labelEl = document.createElement('span');
+  labelEl.className = 'tuning-label';
+  labelEl.textContent = label;
+  const metaEl = document.createElement('span');
+  metaEl.className = 'tuning-meta';
+  metaEl.textContent = meta;
+  const valueEl = document.createElement('span');
+  valueEl.className = 'tts-static-value';
+  valueEl.textContent = value;
+  row.append(labelEl, metaEl, valueEl);
+  return row;
+}
+
+function voxcpm2ExtraInfoMode() {
+  if (VOXCPM2_EXTRA_INFO_OPTIONS.some((option) => option.value === state.ttsVoxcpm2ExtraInfoMode)) {
+    return state.ttsVoxcpm2ExtraInfoMode;
+  }
+  const hasDescription = ttsPresetLanguages().some((language) => {
+    const preset = state.ttsSettings.voxcpm2.voice_presets?.[language] || 'configured';
+    return preset !== 'configured';
+  });
+  const hasSample = Boolean(state.ttsSettings.voxcpm2.use_input_audio_reference);
+  if (hasDescription && hasSample) return 'both';
+  if (hasDescription) return 'description';
+  if (hasSample) return 'sample';
+  return 'none';
+}
+
+function ttsSettingsForVoxcpm2Mode(mode) {
+  const useDescription = mode === 'description' || mode === 'both';
+  const useReference = mode === 'sample' || mode === 'both';
+  const voicePresets = {};
+  for (const language of ttsPresetLanguages()) {
+    const current = state.ttsSettings.voxcpm2.voice_presets?.[language] || 'configured';
+    if (!useDescription) {
+      voicePresets[language] = 'configured';
+    } else if (current !== 'configured') {
+      voicePresets[language] = current;
+    } else {
+      voicePresets[language] = useReference ? 'configured' : defaultVoxcpm2DescriptionPreset();
+    }
+  }
+  return { voicePresets, useReference };
+}
+
+function voxcpm2DescriptionOptions() {
+  const options = state.ttsOptions.voxcpm2_voice_presets || DEFAULT_TTS_OPTIONS.voxcpm2_voice_presets;
+  if (voxcpm2ExtraInfoMode() !== 'both') {
+    return options.filter((option) => option.value !== 'configured');
+  }
+  return options.map((option) => {
+    if (option.value !== 'configured') return option;
+    return { ...option, label: 'From speech sample' };
+  });
+}
+
+function defaultVoxcpm2DescriptionPreset() {
+  return voxcpm2DescriptionOptions()[0]?.value || 'neutral_clear';
+}
+
+function voxcpm2TextPromptPreview() {
+  const parts = [];
+  const language = currentTtsTargetLanguage();
+  const presetKey = state.ttsSettings.voxcpm2.voice_presets?.[language] || 'configured';
+  const option = voxcpm2PresetOption(presetKey);
+  const descriptionPrompt = String(option?.prompt || '').trim();
+  if (descriptionPrompt) parts.push(descriptionPrompt);
+  if (state.ttsSettings.voxcpm2.use_input_audio_reference) {
+    const prompt = String(state.ttsOptions.voxcpm2_reference_prompt || DEFAULT_TTS_OPTIONS.voxcpm2_reference_prompt || '').trim();
+    if (prompt && !parts.includes(prompt)) parts.push(prompt);
+  }
+  return parts.join(' ');
+}
+
+function voxcpm2PresetOption(value) {
+  const options = state.ttsOptions.voxcpm2_voice_presets || DEFAULT_TTS_OPTIONS.voxcpm2_voice_presets;
+  return options.find((option) => option.value === value);
+}
+
+function normalizeTtsNumber(value, fallback, min, max) {
+  const raw = Number(value);
+  if (!Number.isFinite(raw)) return fallback;
+  return Math.min(max, Math.max(min, raw));
+}
+
+function ttsPresetLanguages() {
+  const seen = new Set();
+  const out = [];
+  for (const language of [state.sideALanguage, state.sideBLanguage]) {
+    const normalized = normalizeLanguageName(language);
+    const key = normalized.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(normalized);
+  }
+  return out;
+}
+
+function currentTtsTargetLanguage() {
+  return normalizeLanguageName(currentLane().targetLanguage || state.sideBLanguage);
+}
+
+function ttsRowMeta({ active, available }) {
+  if (!available) return 'unavailable';
+  if (!active) return 'inactive';
+  return 'live';
+}
+
+function ttsSummary() {
+  if (!state.ttsSettings.enabled) return 'off';
+  return ttsBackendLabel(state.ttsSettings.backend);
+}
+
+function ttsBackendLabel(backend) {
+  const options = state.ttsOptions.backends?.length ? state.ttsOptions.backends : DEFAULT_TTS_OPTIONS.backends;
+  const match = options.find((option) => option.value === backend);
+  return match?.label || String(backend || '');
 }
 
 function handleVadState(msg) {

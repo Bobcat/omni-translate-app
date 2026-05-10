@@ -1043,13 +1043,27 @@ button {
 }
 
 .select-row select {
+  min-width: 0;
   min-height: 30px;
-  padding: 0 8px;
+  max-width: 100%;
+  padding: 0 26px 0 8px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--surface);
   color: var(--muted);
   font: inherit;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.voice-output-main {
+  display: grid;
+  gap: 8px;
+}
+
+.voice-output-main + .tuning-settings-groups {
+  margin-top: 8px;
 }
 
 .tuning-settings-groups {
@@ -1164,14 +1178,23 @@ button {
 
 .tuning-row input,
 .tuning-row select {
+  min-width: 0;
   width: 100%;
   min-height: 30px;
+  max-width: 100%;
   padding: 0 8px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--surface);
   color: var(--text);
   font: inherit;
+}
+
+.tuning-row select {
+  padding-right: 26px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tuning-row input[type="checkbox"] {
@@ -1195,6 +1218,56 @@ button {
   color: var(--muted);
   cursor: default;
   opacity: 0.55;
+}
+
+.tts-static-value {
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 500;
+}
+
+.tts-inspect-button {
+  width: 100%;
+  min-height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.tts-inspect-button:disabled {
+  color: var(--muted);
+  cursor: default;
+  opacity: 0.55;
+}
+
+.tts-prompt-preview {
+  display: grid;
+  gap: 5px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-soft);
+}
+
+.tts-prompt-preview-label {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.tts-prompt-preview code {
+  color: var(--text);
+  font-family: inherit;
+  font-size: 0.74rem;
+  line-height: 1.35;
+  white-space: pre-wrap;
 }
 
 .audio-reset-button,

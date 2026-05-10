@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>ASR Translate TTS</title>
-    <link rel="stylesheet" href="/styles.css?v=20260509-pc-export-button">
+    <link rel="stylesheet" href="/styles.css?v=20260510-tts-options-spacing">
   </head>
   <body>
     <main class="app is-setup">
@@ -164,8 +164,8 @@
               </button>
               <button class="settings-nav-row" id="settingsAudioNav" type="button">
                 <span>
-                  <strong>Audio output</strong>
-                  <small>Speech output status</small>
+                  <strong>TTS options</strong>
+                  <small>Speech engine and voice</small>
                 </span>
                 <span class="setting-value" id="ttsOutputState">off</span>
               </button>
@@ -215,12 +215,17 @@
             </div>
 
             <div class="settings-page" id="settingsAudioPage" hidden>
-              <section class="setting-group" aria-label="Audio output">
-                <div class="setting-title-row">
-                  <span>Status</span>
-                  <span class="setting-value" id="ttsOutputDetail">off</span>
-                </div>
+              <section class="setting-group voice-output-main" aria-label="TTS options">
+                <label class="toggle-row" for="ttsEnabled">
+                  <input id="ttsEnabled" type="checkbox">
+                  <span>Voice output</span>
+                </label>
+                <label class="select-row" for="ttsBackendSelect">
+                  <span>Engine</span>
+                  <select id="ttsBackendSelect"></select>
+                </label>
               </section>
+              <div class="tuning-settings-groups" id="ttsSettingsGroups"></div>
             </div>
 
             <div class="settings-page" id="settingsHistoryPage" hidden>
@@ -250,6 +255,6 @@
         </section>
       </div>
     </main>
-    <script type="module" src="/src/app.js?v=20260509-pc-export-button"></script>
+    <script type="module" src="/src/app.js?v=20260510-voxcpm2-ref-duration"></script>
   </body>
 </html>

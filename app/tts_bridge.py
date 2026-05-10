@@ -1,22 +1,25 @@
 from __future__ import annotations
 
-import asyncio
-import io
+import base64
+import copy
 import json
 import logging
 import shutil
 import threading
 import time
 import uuid
-import wave
 from pathlib import Path
 from typing import Any
+from urllib.error import HTTPError
+from urllib.error import URLError
+from urllib.request import Request
+from urllib.request import urlopen
 
-from realtime_tts_engine import TTSEngine
-from realtime_tts_engine import TTSRequest
-from realtime_tts_engine import TTSResult
-
-from app.config import REPO_ROOT, get_bool, get_float, get_int, get_str
+from app.config import REPO_ROOT
+from app.config import get_bool
+from app.config import get_float
+from app.config import get_setting
+from app.config import get_str
 from app.config import rooted_path
 
 
@@ -24,19 +27,106 @@ TTS_ROOT = (REPO_ROOT / "data" / "tts").resolve()
 LOGGER = logging.getLogger("asr_translate_tts.tts_metrics")
 _TTS_BRIDGE: TTSBridge | None = None
 _TTS_BRIDGE_LOCK = threading.Lock()
-VOXCPM2_DEFAULT_MODEL_ID = "openbmb/VoxCPM2"
+_TTS_SETTINGS_LOCK = threading.Lock()
+_TTS_RUNTIME_OVERRIDES: dict[str, Any] = {}
+TTS_BACKEND_OPTIONS = (
+    ("kokoro", "Kokoro"),
+    ("voxcpm2", "VoxCPM2"),
+)
+KOKORO_VOICE_OPTIONS = {
+    "English": (
+        ("af_heart", "Heart"),
+        ("af_sarah", "Sarah"),
+        ("af_nicole", "Nicole"),
+        ("af_nova", "Nova"),
+        ("am_adam", "Adam"),
+        ("am_michael", "Michael"),
+        ("am_puck", "Puck"),
+    ),
+    "British English": (
+        ("bf_emma", "Emma"),
+        ("bf_alice", "Alice"),
+        ("bf_isabella", "Isabella"),
+        ("bm_daniel", "Daniel"),
+        ("bm_fable", "Fable"),
+        ("bm_george", "George"),
+        ("bm_lewis", "Lewis"),
+    ),
+    "Spanish": (
+        ("ef_dora", "Dora"),
+        ("em_alex", "Alex"),
+        ("em_santa", "Santa"),
+    ),
+    "French": (
+        ("ff_siwis", "Siwis"),
+    ),
+    "Hindi": (
+        ("hf_alpha", "Alpha"),
+        ("hf_beta", "Beta"),
+        ("hm_omega", "Omega"),
+        ("hm_psi", "Psi"),
+    ),
+    "Italian": (
+        ("if_sara", "Sara"),
+        ("im_nicola", "Nicola"),
+    ),
+    "Portuguese": (
+        ("pf_dora", "Dora"),
+        ("pm_alex", "Alex"),
+        ("pm_santa", "Santa"),
+    ),
+    "Brazilian Portuguese": (
+        ("pf_dora", "Dora"),
+        ("pm_alex", "Alex"),
+        ("pm_santa", "Santa"),
+    ),
+    "Chinese": (
+        ("zf_xiaobei", "Xiaobei"),
+        ("zf_xiaoxiao", "Xiaoxiao"),
+        ("zf_xiaoyi", "Xiaoyi"),
+        ("zf_xiaoni", "Xiaoni"),
+        ("zm_yunjian", "Yunjian"),
+        ("zm_yunxi", "Yunxi"),
+        ("zm_yunxia", "Yunxia"),
+        ("zm_yunyang", "Yunyang"),
+    ),
+    "Japanese": (
+        ("jf_alpha", "Alpha"),
+        ("jf_gongitsune", "Gongitsune"),
+        ("jf_nezumi", "Nezumi"),
+        ("jf_tebukuro", "Tebukuro"),
+        ("jm_kumo", "Kumo"),
+    ),
+}
+VOXCPM2_VOICE_PRESETS = {
+    "configured": {
+        "label": "Default",
+        "prompt": "",
+    },
+    "neutral_clear": {
+        "label": "Neutral clear",
+        "prompt": "Use a clear, neutral adult voice with steady articulation.",
+    },
+    "warm_female": {
+        "label": "Warm female",
+        "prompt": "Use a warm adult female voice with natural intonation.",
+    },
+    "calm_male": {
+        "label": "Calm male",
+        "prompt": "Use a calm adult male voice with measured delivery.",
+    },
+    "focused_narrator": {
+        "label": "Focused narrator",
+        "prompt": "Use a focused narrator voice with crisp diction.",
+    },
+}
+VOXCPM2_REFERENCE_PROMPT = "Match the speaking pace, rhythm, and articulation of the reference audio."
 
 
 class TTSBridge:
-    def __init__(self) -> None:
-        self.backend = _tts_backend()
-        self.synthesizer = _build_synthesizer(self.backend)
-        self.engine = TTSEngine(self.synthesizer)
-        self._synthesis_lock = threading.Lock()
-
     @property
     def enabled(self) -> bool:
-        return get_bool("tts.enabled", True)
+        return _tts_enabled()
 
     def clear_session(self, session_id: str) -> None:
         path = (TTS_ROOT / _safe_token(session_id)).resolve()
@@ -58,40 +148,52 @@ class TTSBridge:
         artifact_id = f"tts_{uuid.uuid4().hex}"
         path = artifact_path(session_id, artifact_id)
         path.parent.mkdir(parents=True, exist_ok=True)
-        wait_started = time.perf_counter()
-        self._synthesis_lock.acquire()
-        queue_wait_ms = (time.perf_counter() - wait_started) * 1000.0
-        try:
-            synthesis_started = time.perf_counter()
-            voice = None
-            if getattr(self, "backend", "kokoro") == "voxcpm2":
-                voice = str(reference_wav_path or "").strip() or None
-            result = self.engine.synthesize(TTSRequest(text=safe_text, language=language, voice=voice))
-            synthesis_wall_ms = (time.perf_counter() - synthesis_started) * 1000.0
-        finally:
-            self._synthesis_lock.release()
+
+        request_payload = _tts_pool_request_payload(
+            text=safe_text,
+            language=language,
+            reference_wav_path=reference_wav_path,
+        )
+        request_started = time.perf_counter()
+        response = _post_json(
+            f"{_tts_pool_base_url()}/v1/responses",
+            request_payload,
+            timeout_s=_tts_pool_timeout_s(),
+        )
+        request_wall_ms = (time.perf_counter() - request_started) * 1000.0
+        audio_payload = response.get("audio")
+        if not isinstance(audio_payload, dict):
+            raise ValueError("tts_pool_response_missing_audio")
+        audio_bytes = _decode_audio_payload(audio_payload)
+
         write_started = time.perf_counter()
-        path.write_bytes(result.audio)
+        path.write_bytes(audio_bytes)
         artifact_write_ms = (time.perf_counter() - write_started) * 1000.0
         total_wall_ms = (time.perf_counter() - call_started) * 1000.0
-        metrics = dict(result.timings)
+
+        metrics = _numeric_dict(response.get("metrics"))
         metrics.update(
             {
-                "queue_wait_ms": queue_wait_ms,
-                "tts_synthesis_wall_ms": synthesis_wall_ms,
+                "tts_pool_request_wall_ms": request_wall_ms,
                 "tts_artifact_write_ms": artifact_write_ms,
                 "tts_total_wall_ms": total_wall_ms,
                 "input_chars": float(len(safe_text)),
-                "output_audio_seconds": (float(result.duration_ms or 0) / 1000.0),
+                "output_audio_seconds": float(audio_payload.get("duration_ms") or 0) / 1000.0,
             }
         )
-        metadata = dict(result.metadata)
+        metadata = dict(response.get("metadata") or {})
+        metadata.update(
+            {
+                "tts_pool_response_id": str(response.get("id") or ""),
+                "tts_pool_model": str(response.get("model") or request_payload["model"]),
+            }
+        )
         payload = {
             "artifact_id": artifact_id,
             "url": rooted_path(f"/api/sessions/{_safe_token(session_id)}/tts/{artifact_id}"),
-            "mime_type": result.mime_type,
-            "sample_rate_hz": result.sample_rate_hz,
-            "duration_ms": result.duration_ms,
+            "mime_type": str(audio_payload.get("mime_type") or "audio/wav"),
+            "sample_rate_hz": audio_payload.get("sample_rate_hz"),
+            "duration_ms": audio_payload.get("duration_ms"),
             "metrics": metrics,
             "metadata": metadata,
             "chars": len(safe_text),
@@ -99,166 +201,6 @@ class TTSBridge:
         }
         _log_tts_metrics(session_id=session_id, artifact_id=artifact_id, payload=payload)
         return payload
-
-    def warmup(self) -> None:
-        if not self.enabled:
-            return
-        if not _startup_warmup_enabled(getattr(self, "backend", "kokoro")):
-            return
-        with self._synthesis_lock:
-            for language in _warmup_languages(self.synthesizer):
-                self.engine.synthesize(TTSRequest(text=_warmup_text(language), language=language))
-
-
-class VoxCPM2Synthesizer:
-    def __init__(
-        self,
-        *,
-        model_id: str,
-        load_denoiser: bool,
-        optimize: bool,
-        cfg_value: float,
-        inference_timesteps: int,
-        normalize: bool,
-        denoise: bool,
-        control: str,
-        reference_wav_path: str,
-    ) -> None:
-        if denoise and not load_denoiser:
-            raise ValueError("tts.voxcpm2_denoise requires tts.voxcpm2_load_denoiser")
-        self.model_id = str(model_id or VOXCPM2_DEFAULT_MODEL_ID).strip() or VOXCPM2_DEFAULT_MODEL_ID
-        self.load_denoiser = bool(load_denoiser)
-        self.optimize = bool(optimize)
-        self.cfg_value = float(cfg_value)
-        self.inference_timesteps = int(max(1, inference_timesteps))
-        self.normalize = bool(normalize)
-        self.denoise = bool(denoise)
-        self.control = str(control or "").strip()
-        self.reference_wav_path = str(reference_wav_path or "").strip()
-        self._model: Any | None = None
-
-    def synthesize(self, request: TTSRequest) -> TTSResult:
-        start = time.perf_counter()
-        model = self._model_instance()
-        text = _voxcpm2_text(request.text, self.control)
-        reference_wav_path = str(request.voice or self.reference_wav_path or "").strip()
-        if not reference_wav_path:
-            reference_wav_path = None
-        generate_started = time.perf_counter()
-        wav = model.generate(
-            text=text,
-            reference_wav_path=reference_wav_path,
-            cfg_value=self.cfg_value,
-            inference_timesteps=self.inference_timesteps,
-            normalize=self.normalize,
-            denoise=self.denoise,
-        )
-        generate_wall_ms = (time.perf_counter() - generate_started) * 1000.0
-
-        encode_started = time.perf_counter()
-        sample_rate_hz = int(getattr(model.tts_model, "sample_rate", 0) or 0)
-        if sample_rate_hz <= 0:
-            raise ValueError("VoxCPM2 model did not expose a valid sample rate")
-        wav_bytes, duration_ms, audio_seconds = _wav_bytes(wav, sample_rate_hz=sample_rate_hz)
-        wav_encode_ms = (time.perf_counter() - encode_started) * 1000.0
-        total_wall_ms = (time.perf_counter() - start) * 1000.0
-        return TTSResult(
-            audio=wav_bytes,
-            mime_type="audio/wav",
-            sample_rate_hz=sample_rate_hz,
-            duration_ms=duration_ms,
-            timings={
-                "voxcpm2_total_wall_ms": total_wall_ms,
-                "voxcpm2_generate_wall_ms": generate_wall_ms,
-                "voxcpm2_wav_encode_ms": wav_encode_ms,
-                "input_chars": float(len(request.text)),
-                "output_audio_seconds": audio_seconds,
-                "realtime_factor": (total_wall_ms / 1000.0) / audio_seconds if audio_seconds > 0 else 0.0,
-            },
-            metadata={
-                "engine": "voxcpm2",
-                "model_id": self.model_id,
-                "language": request.language,
-                "device": _voxcpm2_device(model),
-                "load_denoiser": self.load_denoiser,
-                "optimize": self.optimize,
-                "cfg_value": self.cfg_value,
-                "inference_timesteps": self.inference_timesteps,
-                "normalize": self.normalize,
-                "denoise": self.denoise,
-                "control": self.control,
-                "reference_wav_path": reference_wav_path or "",
-            },
-        )
-
-    def supports_language(self, language: str) -> bool:
-        key = str(language or "").strip().lower().replace("_", "-")
-        return key in {
-            "ar",
-            "arabic",
-            "burmese",
-            "chinese",
-            "da",
-            "danish",
-            "de",
-            "dutch",
-            "en",
-            "english",
-            "fi",
-            "finnish",
-            "fr",
-            "french",
-            "german",
-            "greek",
-            "hebrew",
-            "hi",
-            "hindi",
-            "id",
-            "indonesian",
-            "it",
-            "italian",
-            "ja",
-            "japanese",
-            "khmer",
-            "ko",
-            "korean",
-            "lao",
-            "malay",
-            "nl",
-            "no",
-            "norwegian",
-            "pl",
-            "polish",
-            "portuguese",
-            "pt",
-            "ru",
-            "russian",
-            "spanish",
-            "swahili",
-            "sv",
-            "swedish",
-            "tagalog",
-            "thai",
-            "tr",
-            "turkish",
-            "vi",
-            "vietnamese",
-            "zh",
-        }
-
-    def _model_instance(self) -> Any:
-        if self._model is None:
-            try:
-                from voxcpm import VoxCPM
-            except ImportError as exc:
-                raise RuntimeError("Install voxcpm to use tts.backend=voxcpm2") from exc
-
-            kwargs: dict[str, Any] = {
-                "load_denoiser": self.load_denoiser,
-                "optimize": self.optimize,
-            }
-            self._model = VoxCPM.from_pretrained(self.model_id, **kwargs)
-        return self._model
 
 
 def get_tts_bridge() -> TTSBridge:
@@ -269,97 +211,362 @@ def get_tts_bridge() -> TTSBridge:
         return _TTS_BRIDGE
 
 
-async def warm_tts_bridge() -> None:
-    await asyncio.to_thread(get_tts_bridge().warmup)
+def tts_settings_payload() -> dict[str, Any]:
+    payload = _current_tts_settings()
+    payload["options"] = {
+        "backends": _options_payload(TTS_BACKEND_OPTIONS),
+        "kokoro_voices": {
+            language: _options_payload(options)
+            for language, options in KOKORO_VOICE_OPTIONS.items()
+        },
+        "voxcpm2_voice_presets": _options_payload(
+            (key, str(value["label"]), str(value["prompt"] or ""))
+            for key, value in VOXCPM2_VOICE_PRESETS.items()
+        ),
+        "voxcpm2_reference_prompt": VOXCPM2_REFERENCE_PROMPT,
+    }
+    return payload
 
 
-def _tts_backend() -> str:
-    backend = get_str("tts.backend", "kokoro").strip().lower()
-    if backend not in {"kokoro", "voxcpm2"}:
-        raise ValueError(f"unsupported tts.backend: {backend!r}")
-    return backend
+def update_tts_settings(delta: dict[str, Any]) -> tuple[dict[str, Any], dict[str, str]]:
+    normalized, errors = _normalize_tts_settings_delta(delta)
+    if errors:
+        return tts_settings_payload(), errors
+    with _TTS_SETTINGS_LOCK:
+        _merge_settings_into(_TTS_RUNTIME_OVERRIDES, normalized)
+    return tts_settings_payload(), {}
 
 
-def _build_synthesizer(backend: str) -> Any:
-    if backend == "kokoro":
-        return _build_kokoro_synthesizer()
-    if backend == "voxcpm2":
-        return _build_voxcpm2_synthesizer()
-    raise ValueError(f"unsupported tts.backend: {backend!r}")
+def clear_tts_runtime_overrides() -> None:
+    with _TTS_SETTINGS_LOCK:
+        _TTS_RUNTIME_OVERRIDES.clear()
 
 
-def _build_kokoro_synthesizer() -> Any:
-    from realtime_tts_engine.kokoro import KokoroSynthesizer
-
-    return KokoroSynthesizer(model_root=Path(get_str("tts.kokoro_model_root")))
-
-
-def _build_voxcpm2_synthesizer() -> VoxCPM2Synthesizer:
-    return VoxCPM2Synthesizer(
-        model_id=get_str("tts.voxcpm2_model", VOXCPM2_DEFAULT_MODEL_ID),
-        load_denoiser=get_bool("tts.voxcpm2_load_denoiser", False),
-        optimize=get_bool("tts.voxcpm2_optimize", False),
-        cfg_value=get_float("tts.voxcpm2_cfg_value", 2.0, min_value=0.1),
-        inference_timesteps=get_int("tts.voxcpm2_inference_timesteps", 10, min_value=1),
-        normalize=get_bool("tts.voxcpm2_normalize", False),
-        denoise=get_bool("tts.voxcpm2_denoise", False),
-        control=get_str("tts.voxcpm2_control", ""),
-        reference_wav_path=get_str("tts.voxcpm2_reference_wav_path", ""),
-    )
-
-
-def _startup_warmup_enabled(backend: str) -> bool:
-    if backend == "voxcpm2":
-        return get_bool("tts.voxcpm2_startup_warmup", True)
-    return get_bool("tts.startup_warmup", True)
+def tts_uses_asr_reference_wav() -> bool:
+    return bool(_current_tts_settings()["voxcpm2"]["use_input_audio_reference"])
 
 
 def artifact_path(session_id: str, artifact_id: str) -> Path:
     return (TTS_ROOT / _safe_token(session_id) / f"{_safe_token(artifact_id)}.wav").resolve()
 
 
-def wav_duration_ms(path: Path) -> int:
-    with wave.open(str(path), "rb") as reader:
-        frames = reader.getnframes()
-        rate = max(1, reader.getframerate())
-    return int(frames / rate * 1000)
+def _tts_pool_request_payload(
+    *,
+    text: str,
+    language: str,
+    reference_wav_path: str | None,
+) -> dict[str, Any]:
+    settings = _current_tts_settings()
+    backend = settings["backend"]
+    voice: dict[str, Any] = {}
+    if backend == "kokoro":
+        preset = _kokoro_voice_for_language(language)
+        if preset:
+            voice["preset"] = preset
+    elif backend == "voxcpm2":
+        preset = str(_lookup_language_value(settings["voxcpm2"]["voice_presets"], language) or "configured")
+        voice["preset"] = preset
+        if settings["voxcpm2"]["use_input_audio_reference"] and reference_wav_path:
+            voice["reference_audio"] = _reference_audio_payload(
+                reference_wav_path,
+                max_duration_s=settings["voxcpm2"]["reference_max_duration_s"],
+            )
+    else:
+        raise ValueError(f"unsupported tts.backend: {backend!r}")
+    return {
+        "model": backend,
+        "input": text,
+        "language": str(language or ""),
+        "voice": voice,
+        "format": {"type": "wav"},
+        "stream": False,
+    }
 
 
-def _wav_bytes(audio: Any, *, sample_rate_hz: int) -> tuple[bytes, int, float]:
-    import numpy as np
+def _reference_audio_payload(reference_wav_path: str, *, max_duration_s: float) -> dict[str, Any]:
+    path = Path(reference_wav_path).expanduser().resolve()
+    return {
+        "mime_type": "audio/wav",
+        "data_base64": base64.b64encode(path.read_bytes()).decode("ascii"),
+        "max_duration_s": float(max_duration_s),
+    }
 
-    samples = np.asarray(audio, dtype=np.float32)
-    if samples.ndim == 2:
-        if 1 in samples.shape:
-            samples = samples.reshape(-1)
+
+def _post_json(url: str, payload: dict[str, Any], *, timeout_s: float) -> dict[str, Any]:
+    data = json.dumps(payload, ensure_ascii=True).encode("utf-8")
+    request = Request(
+        url,
+        data=data,
+        headers={
+            "accept": "application/json",
+            "content-type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=timeout_s) as response:
+            response_bytes = response.read()
+    except HTTPError as exc:
+        detail = _http_error_detail(exc)
+        raise RuntimeError(f"tts_pool_http_{exc.code}: {detail}") from exc
+    except URLError as exc:
+        raise RuntimeError(f"tts_pool_unreachable: {exc.reason}") from exc
+    payload = json.loads(response_bytes.decode("utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("tts_pool_response_must_be_object")
+    return payload
+
+
+def _http_error_detail(exc: HTTPError) -> str:
+    try:
+        body = exc.read().decode("utf-8", errors="replace")
+    except Exception:
+        return str(exc)
+    try:
+        payload = json.loads(body)
+    except Exception:
+        return body.strip() or str(exc)
+    detail = payload.get("detail") if isinstance(payload, dict) else None
+    if isinstance(detail, dict):
+        return json.dumps(detail, ensure_ascii=True, sort_keys=True)
+    if detail is not None:
+        return str(detail)
+    return body.strip() or str(exc)
+
+
+def _decode_audio_payload(audio_payload: dict[str, Any]) -> bytes:
+    data = str(audio_payload.get("data_base64") or "")
+    if not data:
+        raise ValueError("tts_pool_response_missing_audio_data")
+    return base64.b64decode(data, validate=True)
+
+
+def _numeric_dict(value: Any) -> dict[str, float]:
+    if not isinstance(value, dict):
+        return {}
+    metrics: dict[str, float] = {}
+    for key, item in value.items():
+        if item is None:
+            continue
+        try:
+            metrics[str(key)] = float(item)
+        except (TypeError, ValueError):
+            continue
+    return metrics
+
+
+def _tts_pool_base_url() -> str:
+    return (get_str("tts_pool.base_url", "http://127.0.0.1:8020").strip() or "http://127.0.0.1:8020").rstrip("/")
+
+
+def _tts_pool_timeout_s() -> float:
+    return get_float("tts_pool.timeout_s", 300.0, min_value=1.0)
+
+
+def _tts_enabled() -> bool:
+    return bool(_current_tts_settings()["enabled"])
+
+
+def _current_tts_settings() -> dict[str, Any]:
+    settings = {
+        "enabled": get_bool("tts.enabled", True),
+        "backend": _validated_backend(get_str("tts.backend", "kokoro")),
+        "kokoro": {
+            "voices": _configured_kokoro_voices(),
+        },
+        "voxcpm2": {
+            "voice_presets": _configured_voxcpm2_voice_presets(),
+            "use_input_audio_reference": get_bool("tts.voxcpm2_use_asr_reference_wav", False),
+            "reference_max_duration_s": _configured_voxcpm2_reference_max_duration_s(),
+        },
+    }
+    with _TTS_SETTINGS_LOCK:
+        overrides = copy.deepcopy(_TTS_RUNTIME_OVERRIDES)
+    _merge_settings_into(settings, overrides)
+    settings["backend"] = _validated_backend(settings["backend"])
+    return settings
+
+
+def _configured_kokoro_voices() -> dict[str, str]:
+    configured = get_setting("tts.kokoro_voices", {})
+    if not isinstance(configured, dict):
+        configured = {}
+    voices: dict[str, str] = {}
+    for language, options in KOKORO_VOICE_OPTIONS.items():
+        configured_voice = _lookup_language_value(configured, language)
+        values = {value for value, _ in options}
+        voices[language] = str(configured_voice or options[0][0]).strip()
+        if voices[language] not in values:
+            voices[language] = options[0][0]
+    return voices
+
+
+def _configured_voxcpm2_voice_presets() -> dict[str, str]:
+    configured = get_setting("tts.voxcpm2_voice_presets", {})
+    if not isinstance(configured, dict):
+        return {}
+    presets: dict[str, str] = {}
+    for language, value in configured.items():
+        language_key = str(language or "").strip()
+        preset = str(value or "").strip()
+        if language_key and preset in VOXCPM2_VOICE_PRESETS:
+            presets[language_key] = preset
+    return presets
+
+
+def _configured_voxcpm2_reference_max_duration_s() -> float:
+    return _clamped_float(get_setting("tts.voxcpm2_reference_max_duration_s", 8.0), default=8.0, min_value=1.0, max_value=60.0)
+
+
+def _normalize_tts_settings_delta(delta: dict[str, Any]) -> tuple[dict[str, Any], dict[str, str]]:
+    if not isinstance(delta, dict):
+        return {}, {"settings": "must be an object"}
+    normalized: dict[str, Any] = {}
+    errors: dict[str, str] = {}
+    if "enabled" in delta:
+        normalized["enabled"] = bool(delta["enabled"])
+    if "backend" in delta:
+        try:
+            normalized["backend"] = _validated_backend(delta["backend"])
+        except ValueError as exc:
+            errors["backend"] = str(exc)
+    if "kokoro" in delta:
+        kokoro = delta.get("kokoro")
+        if not isinstance(kokoro, dict):
+            errors["kokoro"] = "must be an object"
+        elif "voices" in kokoro:
+            voices = kokoro.get("voices")
+            if not isinstance(voices, dict):
+                errors["kokoro.voices"] = "must be an object"
+            else:
+                normalized.setdefault("kokoro", {})["voices"] = _normalize_kokoro_voices(voices, errors)
+    if "voxcpm2" in delta:
+        voxcpm2 = delta.get("voxcpm2")
+        if not isinstance(voxcpm2, dict):
+            errors["voxcpm2"] = "must be an object"
         else:
-            raise ValueError("VoxCPM2 returned multi-channel audio; expected mono")
-    elif samples.ndim != 1:
-        raise ValueError("VoxCPM2 returned unsupported audio shape")
-    samples = np.nan_to_num(samples, nan=0.0, posinf=1.0, neginf=-1.0)
-    samples = np.clip(samples, -1.0, 1.0)
-    pcm = (samples * 32767.0).astype("<i2")
-    buffer = io.BytesIO()
-    with wave.open(buffer, "wb") as writer:
-        writer.setnchannels(1)
-        writer.setsampwidth(2)
-        writer.setframerate(int(sample_rate_hz))
-        writer.writeframes(pcm.tobytes())
-    audio_seconds = float(len(pcm)) / float(sample_rate_hz)
-    return buffer.getvalue(), int(audio_seconds * 1000), audio_seconds
+            normalized_voxcpm2 = normalized.setdefault("voxcpm2", {})
+            if "use_input_audio_reference" in voxcpm2:
+                normalized_voxcpm2["use_input_audio_reference"] = bool(voxcpm2["use_input_audio_reference"])
+            if "reference_max_duration_s" in voxcpm2:
+                normalized_voxcpm2["reference_max_duration_s"] = _normalize_reference_max_duration(
+                    voxcpm2.get("reference_max_duration_s"),
+                    errors,
+                )
+            if "voice_presets" in voxcpm2:
+                presets = voxcpm2.get("voice_presets")
+                if not isinstance(presets, dict):
+                    errors["voxcpm2.voice_presets"] = "must be an object"
+                else:
+                    normalized_voxcpm2["voice_presets"] = _normalize_voxcpm2_presets(presets, errors)
+    if errors:
+        return {}, errors
+    return normalized, {}
 
 
-def _voxcpm2_device(model: Any) -> str:
-    device = getattr(getattr(model, "tts_model", None), "device", None)
-    return str(device or "auto")
+def _normalize_kokoro_voices(voices: dict[str, Any], errors: dict[str, str]) -> dict[str, str]:
+    normalized: dict[str, str] = {}
+    for language, value in voices.items():
+        language_key = _known_language_key(KOKORO_VOICE_OPTIONS, language)
+        if not language_key:
+            errors[f"kokoro.voices.{language}"] = "unsupported language"
+            continue
+        voice = str(value or "").strip()
+        allowed = {option_value for option_value, _ in KOKORO_VOICE_OPTIONS[language_key]}
+        if voice not in allowed:
+            errors[f"kokoro.voices.{language_key}"] = "unsupported voice"
+            continue
+        normalized[language_key] = voice
+    return normalized
 
 
-def _voxcpm2_text(text: str, control: str) -> str:
-    safe_text = str(text or "").strip()
-    safe_control = str(control or "").strip()
-    if not safe_control:
-        return safe_text
-    return f"({safe_control}){safe_text}"
+def _normalize_voxcpm2_presets(presets: dict[str, Any], errors: dict[str, str]) -> dict[str, str]:
+    normalized: dict[str, str] = {}
+    for language, value in presets.items():
+        language_key = str(language or "").strip()
+        preset = str(value or "").strip()
+        if not language_key:
+            errors["voxcpm2.voice_presets"] = "language is required"
+            continue
+        if preset not in VOXCPM2_VOICE_PRESETS:
+            errors[f"voxcpm2.voice_presets.{language_key}"] = "unsupported preset"
+            continue
+        normalized[language_key] = preset
+    return normalized
+
+
+def _normalize_reference_max_duration(value: Any, errors: dict[str, str]) -> float:
+    try:
+        return _clamped_float(value, default=8.0, min_value=1.0, max_value=60.0)
+    except (TypeError, ValueError):
+        errors["voxcpm2.reference_max_duration_s"] = "must be a number"
+        return 8.0
+
+
+def _kokoro_voice_for_language(language: str) -> str | None:
+    language_key = _known_language_key(KOKORO_VOICE_OPTIONS, language)
+    if not language_key:
+        return None
+    voice = _current_tts_settings()["kokoro"]["voices"].get(language_key)
+    return str(voice or "").strip() or None
+
+
+def _validated_backend(value: Any) -> str:
+    backend = str(value or "").strip().lower()
+    if backend not in {"kokoro", "voxcpm2"}:
+        raise ValueError(f"unsupported tts.backend: {backend!r}")
+    return backend
+
+
+def _clamped_float(value: Any, *, default: float, min_value: float, max_value: float) -> float:
+    raw = float(value if value is not None else default)
+    if raw < min_value:
+        return float(min_value)
+    if raw > max_value:
+        return float(max_value)
+    return raw
+
+
+def _known_language_key(options_by_language: dict[str, Any], language: Any) -> str | None:
+    text = str(language or "").strip()
+    if text in options_by_language:
+        return text
+    folded = text.lower()
+    for candidate in options_by_language:
+        if candidate.lower() == folded:
+            return candidate
+    return None
+
+
+def _lookup_language_value(values: dict[str, Any], language: Any) -> Any:
+    text = str(language or "").strip()
+    if text in values:
+        return values[text]
+    folded = text.lower()
+    for candidate, value in values.items():
+        if str(candidate).strip().lower() == folded:
+            return value
+    return None
+
+
+def _merge_settings_into(target: dict[str, Any], override: dict[str, Any]) -> None:
+    for key, value in override.items():
+        existing = target.get(key)
+        if isinstance(existing, dict) and isinstance(value, dict):
+            _merge_settings_into(existing, value)
+        else:
+            target[key] = copy.deepcopy(value)
+
+
+def _options_payload(options: Any) -> list[dict[str, str]]:
+    payload: list[dict[str, str]] = []
+    for option in options:
+        value, label, *extra = option
+        item = {"value": str(value), "label": str(label)}
+        if extra:
+            item["prompt"] = str(extra[0])
+        payload.append(item)
+    return payload
 
 
 def _log_tts_metrics(*, session_id: str, artifact_id: str, payload: dict[str, Any]) -> None:
@@ -372,53 +579,10 @@ def _log_tts_metrics(*, session_id: str, artifact_id: str, payload: dict[str, An
         "voice": metadata.get("voice"),
         "device": metadata.get("device"),
         "model_id": metadata.get("model_id"),
+        "tts_pool_model": metadata.get("tts_pool_model"),
         "metrics": payload.get("metrics") or {},
     }
     LOGGER.info("%s", json.dumps(log_payload, ensure_ascii=True, sort_keys=True))
-
-
-def _warmup_languages(synthesizer: Any) -> list[str]:
-    candidates = [
-        get_str("tts.warmup_language", "English"),
-        get_str("translation.source_language", "Dutch"),
-        get_str("translation.target_language", "English"),
-    ]
-    out: list[str] = []
-    seen: set[str] = set()
-    for candidate in candidates:
-        language = str(candidate or "").strip()
-        key = language.lower()
-        if not language or key in seen:
-            continue
-        seen.add(key)
-        if synthesizer.supports_language(language):
-            out.append(language)
-    return out
-
-
-def _warmup_text(language: str) -> str:
-    key = str(language or "").strip().lower().replace("_", "-")
-    return {
-        "chinese": "准备好了。",
-        "zh": "准备好了。",
-        "zh-cn": "准备好了。",
-        "japanese": "準備できました。",
-        "ja": "準備できました。",
-        "ja-jp": "準備できました。",
-        "french": "Pret.",
-        "fr": "Pret.",
-        "german": "Bereit.",
-        "de": "Bereit.",
-        "spanish": "Listo.",
-        "es": "Listo.",
-        "italian": "Pronto.",
-        "it": "Pronto.",
-        "portuguese": "Pronto.",
-        "pt": "Pronto.",
-        "brazilian portuguese": "Pronto.",
-        "hindi": "Taiyar hai.",
-        "hi": "Taiyar hai.",
-    }.get(key, get_str("tts.warmup_text", "Ready.").strip() or "Ready.")
 
 
 def _safe_token(value: str) -> str:

@@ -24,6 +24,14 @@ export const api = {
     return fetchJson('/api/config');
   },
 
+  updateTtsSettings(settings) {
+    return fetchJson('/api/tts-settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ settings: settings || {} }),
+    });
+  },
+
   createSession({ sideALanguage, sideBLanguage, liveSettings }) {
     return fetchJson('/api/sessions', {
       method: 'POST',

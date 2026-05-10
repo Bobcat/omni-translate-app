@@ -34,6 +34,7 @@ from app.sessions import ConversationSession
 from app.sessions import SESSIONS
 from app.translation_bridge import TranslationBridge
 from app.tts_bridge import get_tts_bridge
+from app.tts_bridge import tts_uses_asr_reference_wav
 
 
 _ASR_LANGUAGE_CODES = {
@@ -1196,7 +1197,7 @@ def _live_settings_asr_backend(live_settings: dict[str, Any] | None) -> str:
 
 
 def _tts_reference_wav_path(lane: ConversationLane) -> str | None:
-    if not get_bool("tts.voxcpm2_use_asr_reference_wav", False):
+    if not tts_uses_asr_reference_wav():
         return None
     path = str(lane.last_asr_wav_path or "").strip()
     if not path:

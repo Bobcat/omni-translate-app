@@ -12,7 +12,6 @@ from app.config import get_str
 from app.router import api_router
 from app.routes import websocket_endpoint
 from app.runtime import warm_asr_vad
-from app.tts_bridge import warm_tts_bridge
 
 
 base_dir = Path(__file__).parent.parent
@@ -24,7 +23,6 @@ root_path = get_str("service.root_path", "")
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     await asyncio.to_thread(warm_asr_vad)
-    await warm_tts_bridge()
     yield
 
 
