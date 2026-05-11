@@ -85,6 +85,7 @@ const DEFAULT_TTS_OPTIONS = {
   backends: [
     { value: 'kokoro', label: 'Kokoro' },
     { value: 'voxcpm2', label: 'VoxCPM2' },
+    { value: 'nanovllm_voxcpm', label: 'NanoVLLM VoxCPM' },
   ],
   kokoro_voices: {},
   voxcpm2_voice_presets: [
@@ -1506,7 +1507,8 @@ function renderTtsSettings({ preserveScroll = false } = {}) {
   const scrollTop = scrollEl?.scrollTop || 0;
   const groups = [
     { name: 'Kokoro', backend: 'kokoro', rows: kokoroTtsRows() },
-    { name: 'VoxCPM2', backend: 'voxcpm2', rows: voxcpm2TtsRows() },
+    { name: 'VoxCPM2', backend: 'voxcpm2', rows: voxcpm2TtsRows('voxcpm2') },
+    { name: 'NanoVLLM VoxCPM', backend: 'nanovllm_voxcpm', rows: voxcpm2TtsRows('nanovllm_voxcpm') },
   ];
   const fragment = document.createDocumentFragment();
   for (const group of groups) {
@@ -1577,8 +1579,8 @@ function kokoroTtsRows() {
   });
 }
 
-function voxcpm2TtsRows() {
-  const active = state.ttsSettings.backend === 'voxcpm2';
+function voxcpm2TtsRows(backend) {
+  const active = state.ttsSettings.backend === backend;
   const disabled = state.ttsUpdateBusy || !active;
   const mode = voxcpm2ExtraInfoMode();
   const rows = [createTtsSelectRow({

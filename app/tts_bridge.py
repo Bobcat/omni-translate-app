@@ -34,6 +34,7 @@ _TTS_RUNTIME_OVERRIDES: dict[str, Any] = {}
 TTS_BACKEND_OPTIONS = (
     ("kokoro", "Kokoro"),
     ("voxcpm2", "VoxCPM2"),
+    ("nanovllm_voxcpm", "NanoVLLM VoxCPM"),
 )
 KOKORO_VOICE_OPTIONS = {
     "English": (
@@ -252,7 +253,8 @@ def clear_tts_runtime_overrides() -> None:
 
 
 def tts_uses_asr_reference_wav() -> bool:
-    return bool(_current_tts_settings()["voxcpm2"]["use_input_audio_reference"])
+    settings = _current_tts_settings()
+    return _is_voxcpm_family_backend(settings["backend"]) and bool(settings["voxcpm2"]["use_input_audio_reference"])
 
 
 def artifact_path(session_id: str, artifact_id: str) -> Path:
@@ -274,7 +276,7 @@ def _tts_pool_request_payload(
         preset = _kokoro_voice_for_language(language)
         if preset:
             voice["preset"] = preset
-    elif backend == "voxcpm2":
+    elif _is_voxcpm_family_backend(backend):
         preset = str(_lookup_language_value(settings["voxcpm2"]["voice_presets"], language) or "configured")
         voice["preset"] = preset
         if settings["voxcpm2"]["use_input_audio_reference"] and reference_wav_path:
@@ -596,9 +598,13 @@ def _kokoro_voice_for_language(language: str) -> str | None:
 
 def _validated_backend(value: Any) -> str:
     backend = str(value or "").strip().lower()
-    if backend not in {"kokoro", "voxcpm2"}:
+    if backend not in {"kokoro", "voxcpm2", "nanovllm_voxcpm"}:
         raise ValueError(f"unsupported tts.backend: {backend!r}")
     return backend
+
+
+def _is_voxcpm_family_backend(backend: Any) -> bool:
+    return str(backend or "").strip().lower() in {"voxcpm2", "nanovllm_voxcpm"}
 
 
 def _clamped_float(value: Any, *, default: float, min_value: float, max_value: float) -> float:

@@ -157,6 +157,39 @@ class TTSBridgeTests(unittest.TestCase):
         self.assertNotIn("reference_audio", request["voice"])
         self.assertFalse(tts_uses_asr_reference_wav())
 
+    def test_synthesize_sends_nanovllm_voxcpm_request_to_tts_pool(self) -> None:
+        update_tts_settings(
+            {
+                "backend": "nanovllm_voxcpm",
+                "voxcpm2": {
+                    "voice_presets": {"Dutch": "configured"},
+                    "use_input_audio_reference": True,
+                    "reference_max_duration_s": 2,
+                },
+            }
+        )
+        fake_pool = FakeTtsPool()
+        session_id = "conv_test_tts_pool_nanovllm_voxcpm"
+        session_root = TTS_ROOT / session_id
+        source_path = session_root / "source.wav"
+        source_path.parent.mkdir(parents=True, exist_ok=True)
+        source_path.write_bytes(_silent_wav(seconds=3.0))
+        self.addCleanup(lambda: shutil.rmtree(session_root, ignore_errors=True))
+
+        with mock.patch("app.tts_bridge._post_json", side_effect=fake_pool.post_json):
+            TTSBridge().synthesize(
+                session_id=session_id,
+                text="Hallo",
+                language="Dutch",
+                reference_wav_path=str(source_path),
+            )
+
+        request = fake_pool.calls[0]["payload"]
+        self.assertEqual(request["model"], "nanovllm_voxcpm")
+        self.assertEqual(request["voice"]["preset"], "configured")
+        self.assertIn("reference_audio", request["voice"])
+        self.assertTrue(tts_uses_asr_reference_wav())
+
     def test_update_tts_settings_applies_user_facing_delta(self) -> None:
         settings, errors = update_tts_settings(
             {
@@ -187,7 +220,7 @@ class TTSBridgeTests(unittest.TestCase):
 
         self.assertEqual(
             [backend["value"] for backend in payload["options"]["backends"]],
-            ["kokoro", "voxcpm2"],
+            ["kokoro", "voxcpm2", "nanovllm_voxcpm"],
         )
         self.assertIn("English", payload["options"]["kokoro_voices"])
         self.assertIn("voxcpm2_voice_presets", payload["options"])
