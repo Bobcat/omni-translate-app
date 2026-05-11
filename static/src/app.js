@@ -91,6 +91,7 @@ const DEFAULT_TTS_OPTIONS = {
   voxcpm2_voice_presets: [
     { value: 'configured', label: 'Default', prompt: '' },
   ],
+  voxcpm2_language_prompt_template: 'Speak in {target_lang}. Pronounce numbers, abbreviations, and short fragments in {target_lang}.',
   voxcpm2_reference_prompt: 'Match the speaking pace, rhythm, and articulation of the reference audio.',
   voxcpm2_reference_match_options: [
     { value: 'voice', label: 'Voice only' },
@@ -1818,8 +1819,8 @@ function defaultVoxcpm2DescriptionPreset() {
 }
 
 function voxcpm2TextPromptPreview() {
-  const parts = [];
   const language = currentTtsTargetLanguage();
+  const parts = [voxcpm2LanguagePrompt(language)];
   const presetKey = state.ttsSettings.voxcpm2.voice_presets?.[language] || 'configured';
   const option = voxcpm2PresetOption(presetKey);
   const descriptionPrompt = String(option?.prompt || '').trim();
@@ -1832,6 +1833,17 @@ function voxcpm2TextPromptPreview() {
     if (prompt && !parts.includes(prompt)) parts.push(prompt);
   }
   return parts.join(' ');
+}
+
+function voxcpm2LanguagePrompt(language) {
+  const safeLanguage = normalizeLanguageName(language);
+  const template = String(
+    state.ttsOptions.voxcpm2_language_prompt_template
+    || DEFAULT_TTS_OPTIONS.voxcpm2_language_prompt_template
+    || ''
+  ).trim();
+  if (template) return template.replaceAll('{target_lang}', safeLanguage);
+  return `Speak in ${safeLanguage}. Pronounce numbers, abbreviations, and short fragments in ${safeLanguage}.`;
 }
 
 function voxcpm2ReferenceMatchOptions() {

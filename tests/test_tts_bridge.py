@@ -116,11 +116,13 @@ class TTSBridgeTests(unittest.TestCase):
 
         request = fake_pool.calls[0]["payload"]
         self.assertEqual(request["model"], "voxcpm2")
-        self.assertEqual(request["voice"]["preset"], "configured")
+        self.assertNotIn("preset", request["voice"])
+        self.assertIn("Speak in Dutch", request["voice"]["instructions"])
+        self.assertNotIn("Match the speaking pace", request["voice"]["instructions"])
         reference_audio = request["voice"]["reference_audio"]
         self.assertEqual(reference_audio["mime_type"], "audio/wav")
         self.assertEqual(reference_audio["max_duration_s"], 2.0)
-        self.assertEqual(request["voice"]["reference_audio_match"], "voice")
+        self.assertNotIn("reference_audio_match", request["voice"])
         reference_bytes = base64.b64decode(reference_audio["data_base64"])
         self.assertLess(len(reference_bytes), source_path.stat().st_size)
         self.assertLessEqual(_wav_duration_ms(reference_bytes), 2000)
@@ -153,7 +155,9 @@ class TTSBridgeTests(unittest.TestCase):
             )
 
         request = fake_pool.calls[0]["payload"]
-        self.assertEqual(request["voice"]["preset"], "warm_female")
+        self.assertNotIn("preset", request["voice"])
+        self.assertIn("Speak in Dutch", request["voice"]["instructions"])
+        self.assertIn("Use a warm adult female voice", request["voice"]["instructions"])
         self.assertNotIn("reference_audio", request["voice"])
         self.assertFalse(tts_uses_asr_reference_wav())
 
@@ -165,6 +169,7 @@ class TTSBridgeTests(unittest.TestCase):
                     "voice_presets": {"Dutch": "configured"},
                     "use_input_audio_reference": True,
                     "reference_max_duration_s": 2,
+                    "reference_match": "voice_and_pace",
                 },
             }
         )
@@ -186,7 +191,9 @@ class TTSBridgeTests(unittest.TestCase):
 
         request = fake_pool.calls[0]["payload"]
         self.assertEqual(request["model"], "nanovllm_voxcpm")
-        self.assertEqual(request["voice"]["preset"], "configured")
+        self.assertNotIn("preset", request["voice"])
+        self.assertIn("Speak in Dutch", request["voice"]["instructions"])
+        self.assertIn("Match the speaking pace", request["voice"]["instructions"])
         self.assertIn("reference_audio", request["voice"])
         self.assertTrue(tts_uses_asr_reference_wav())
 
@@ -224,6 +231,7 @@ class TTSBridgeTests(unittest.TestCase):
         )
         self.assertIn("English", payload["options"]["kokoro_voices"])
         self.assertIn("voxcpm2_voice_presets", payload["options"])
+        self.assertIn("{target_lang}", payload["options"]["voxcpm2_language_prompt_template"])
         self.assertIn("speaking pace", payload["options"]["voxcpm2_reference_prompt"])
         self.assertIn("voxcpm2_reference_match_options", payload["options"])
 

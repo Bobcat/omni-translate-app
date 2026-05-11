@@ -124,6 +124,9 @@ VOXCPM2_VOICE_PRESETS = {
     },
 }
 VOXCPM2_REFERENCE_PROMPT = "Match the speaking pace, rhythm, and articulation of the reference audio."
+VOXCPM2_LANGUAGE_PROMPT_TEMPLATE = (
+    "Speak in {target_lang}. Pronounce numbers, abbreviations, and short fragments in {target_lang}."
+)
 VOXCPM2_REFERENCE_MATCH_OPTIONS = (
     ("voice", "Voice only"),
     ("voice_and_pace", "Voice + pace"),
@@ -232,6 +235,7 @@ def tts_settings_payload() -> dict[str, Any]:
             (key, str(value["label"]), str(value["prompt"] or ""))
             for key, value in VOXCPM2_VOICE_PRESETS.items()
         ),
+        "voxcpm2_language_prompt_template": VOXCPM2_LANGUAGE_PROMPT_TEMPLATE,
         "voxcpm2_reference_prompt": VOXCPM2_REFERENCE_PROMPT,
         "voxcpm2_reference_match_options": _options_payload(VOXCPM2_REFERENCE_MATCH_OPTIONS),
     }
@@ -277,17 +281,23 @@ def _tts_pool_request_payload(
         if preset:
             voice["preset"] = preset
     elif _is_voxcpm_family_backend(backend):
-        preset = str(_lookup_language_value(settings["voxcpm2"]["voice_presets"], language) or "configured")
-        voice["preset"] = preset
-        if settings["voxcpm2"]["use_input_audio_reference"] and reference_wav_path:
+        has_reference_audio = bool(settings["voxcpm2"]["use_input_audio_reference"] and reference_wav_path)
+        instructions = _voxcpm2_voice_instructions(
+            language,
+            settings["voxcpm2"],
+            reference_audio_available=has_reference_audio,
+        )
+        if instructions:
+            voice["instructions"] = instructions
+        if has_reference_audio:
             reference_audio, reference_metrics, reference_metadata = _reference_audio_payload(
                 reference_wav_path,
                 max_duration_s=settings["voxcpm2"]["reference_max_duration_s"],
             )
             voice["reference_audio"] = reference_audio
-            voice["reference_audio_match"] = settings["voxcpm2"]["reference_match"]
             request_metrics.update(reference_metrics)
             request_metadata.update(reference_metadata)
+            request_metadata["reference_client_match"] = settings["voxcpm2"]["reference_match"]
     else:
         raise ValueError(f"unsupported tts.backend: {backend!r}")
     return {
@@ -298,6 +308,32 @@ def _tts_pool_request_payload(
         "format": {"type": "wav"},
         "stream": False,
     }, request_metrics, request_metadata
+
+
+def _voxcpm2_voice_instructions(
+    language: str,
+    settings: dict[str, Any],
+    *,
+    reference_audio_available: bool,
+) -> str:
+    fragments: list[str] = []
+    target_lang = str(language or "").strip()
+    _append_prompt_fragment(
+        fragments,
+        VOXCPM2_LANGUAGE_PROMPT_TEMPLATE.replace("{target_lang}", target_lang),
+    )
+    preset = str(_lookup_language_value(settings["voice_presets"], language) or "configured")
+    preset_prompt = str(VOXCPM2_VOICE_PRESETS.get(preset, {}).get("prompt") or "")
+    _append_prompt_fragment(fragments, preset_prompt)
+    if reference_audio_available and settings["reference_match"] == "voice_and_pace":
+        _append_prompt_fragment(fragments, VOXCPM2_REFERENCE_PROMPT)
+    return " ".join(fragments).strip()
+
+
+def _append_prompt_fragment(fragments: list[str], value: str) -> None:
+    clean = str(value or "").strip()
+    if clean and clean not in fragments:
+        fragments.append(clean)
 
 
 def _reference_audio_payload(reference_wav_path: str, *, max_duration_s: float) -> tuple[dict[str, Any], dict[str, float], dict[str, Any]]:
