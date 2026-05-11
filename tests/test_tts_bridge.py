@@ -52,6 +52,14 @@ class FakeTtsPool:
 
 
 class TTSBridgeTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.loaded_models_patcher = mock.patch(
+            "app.tts_bridge._tts_pool_loaded_models",
+            return_value={"kokoro", "voxcpm2", "nanovllm_voxcpm"},
+        )
+        self.loaded_models = self.loaded_models_patcher.start()
+        self.addCleanup(self.loaded_models_patcher.stop)
+
     def tearDown(self) -> None:
         clear_tts_runtime_overrides()
 
@@ -234,6 +242,16 @@ class TTSBridgeTests(unittest.TestCase):
         self.assertIn("{target_lang}", payload["options"]["voxcpm2_language_prompt_template"])
         self.assertIn("speaking pace", payload["options"]["voxcpm2_reference_prompt"])
         self.assertIn("voxcpm2_reference_match_options", payload["options"])
+
+    def test_settings_payload_exposes_only_loaded_tts_pool_models(self) -> None:
+        self.loaded_models.return_value = {"kokoro", "nanovllm_voxcpm"}
+
+        payload = tts_settings_payload()
+
+        self.assertEqual(
+            [backend["value"] for backend in payload["options"]["backends"]],
+            ["kokoro", "nanovllm_voxcpm"],
+        )
 
     def test_synthesize_rejects_empty_text(self) -> None:
         with self.assertRaisesRegex(ValueError, "tts_text_empty"):

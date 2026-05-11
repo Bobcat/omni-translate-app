@@ -1397,7 +1397,8 @@ function handleTtsEnabledChange() {
 
 function handleTtsBackendChange() {
   const previous = cloneSettings(state.ttsSettings);
-  const backend = String(els.ttsBackendSelect.value || 'kokoro');
+  const backend = String(els.ttsBackendSelect.value || '');
+  if (!backend) return;
   state.ttsSettings.backend = backend;
   renderTtsSettings({ preserveScroll: true });
   submitTtsSettings({ backend }, previous);
@@ -1506,11 +1507,12 @@ function renderTtsSettings({ preserveScroll = false } = {}) {
   if (!els.ttsSettingsGroups || els.settingsSheet.hidden || state.settingsPage !== 'audio') return;
   const scrollEl = preserveScroll ? tuningScrollElement() : null;
   const scrollTop = scrollEl?.scrollTop || 0;
+  const availableBackends = new Set(ttsBackendOptions().map((option) => option.value));
   const groups = [
     { name: 'Kokoro', backend: 'kokoro', rows: kokoroTtsRows() },
     { name: 'VoxCPM2', backend: 'voxcpm2', rows: voxcpm2TtsRows('voxcpm2') },
     { name: 'NanoVLLM VoxCPM', backend: 'nanovllm_voxcpm', rows: voxcpm2TtsRows('nanovllm_voxcpm') },
-  ];
+  ].filter((group) => availableBackends.has(group.backend));
   const fragment = document.createDocumentFragment();
   for (const group of groups) {
     const expanded = state.ttsExpandedGroups.has(group.name);
@@ -1545,7 +1547,7 @@ function renderTtsSettings({ preserveScroll = false } = {}) {
 
 function renderTtsBackendSelect() {
   const current = String(state.ttsSettings.backend || 'kokoro');
-  const options = state.ttsOptions.backends?.length ? state.ttsOptions.backends : DEFAULT_TTS_OPTIONS.backends;
+  const options = ttsBackendOptions();
   const existing = Array.from(els.ttsBackendSelect.options).map((option) => option.value).join('|');
   const next = options.map((option) => option.value).join('|');
   if (existing !== next) {
@@ -1558,7 +1560,7 @@ function renderTtsBackendSelect() {
     }
   }
   els.ttsBackendSelect.value = current;
-  els.ttsBackendSelect.disabled = state.ttsUpdateBusy;
+  els.ttsBackendSelect.disabled = state.ttsUpdateBusy || options.length === 0;
 }
 
 function kokoroTtsRows() {
@@ -1896,13 +1898,18 @@ function ttsRowMeta({ active, available }) {
 
 function ttsSummary() {
   if (!state.ttsSettings.enabled) return 'off';
+  if (!ttsBackendOptions().length) return 'none loaded';
   return ttsBackendLabel(state.ttsSettings.backend);
 }
 
 function ttsBackendLabel(backend) {
-  const options = state.ttsOptions.backends?.length ? state.ttsOptions.backends : DEFAULT_TTS_OPTIONS.backends;
+  const options = ttsBackendOptions();
   const match = options.find((option) => option.value === backend);
   return match?.label || String(backend || '');
+}
+
+function ttsBackendOptions() {
+  return Array.isArray(state.ttsOptions.backends) ? state.ttsOptions.backends : DEFAULT_TTS_OPTIONS.backends;
 }
 
 function handleVadState(msg) {

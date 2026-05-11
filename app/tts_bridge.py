@@ -36,6 +36,7 @@ TTS_BACKEND_OPTIONS = (
     ("voxcpm2", "VoxCPM2"),
     ("nanovllm_voxcpm", "NanoVLLM VoxCPM"),
 )
+TTS_BACKEND_OPTION_BY_VALUE = {value: (value, label) for value, label in TTS_BACKEND_OPTIONS}
 KOKORO_VOICE_OPTIONS = {
     "English": (
         ("af_heart", "Heart"),
@@ -225,8 +226,11 @@ def get_tts_bridge() -> TTSBridge:
 
 def tts_settings_payload() -> dict[str, Any]:
     payload = _current_tts_settings()
+    backend_options = _loaded_tts_backend_options()
+    if backend_options and payload["backend"] not in {option[0] for option in backend_options}:
+        payload["backend"] = backend_options[0][0]
     payload["options"] = {
-        "backends": _options_payload(TTS_BACKEND_OPTIONS),
+        "backends": _options_payload(backend_options),
         "kokoro_voices": {
             language: _options_payload(options)
             for language, options in KOKORO_VOICE_OPTIONS.items()
@@ -415,6 +419,22 @@ def _post_json(url: str, payload: dict[str, Any], *, timeout_s: float) -> dict[s
     return payload
 
 
+def _get_json(url: str, *, timeout_s: float) -> dict[str, Any]:
+    request = Request(url, headers={"accept": "application/json"}, method="GET")
+    try:
+        with urlopen(request, timeout=timeout_s) as response:
+            response_bytes = response.read()
+    except HTTPError as exc:
+        detail = _http_error_detail(exc)
+        raise RuntimeError(f"tts_pool_http_{exc.code}: {detail}") from exc
+    except URLError as exc:
+        raise RuntimeError(f"tts_pool_unreachable: {exc.reason}") from exc
+    payload = json.loads(response_bytes.decode("utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("tts_pool_response_must_be_object")
+    return payload
+
+
 def _http_error_detail(exc: HTTPError) -> str:
     try:
         body = exc.read().decode("utf-8", errors="replace")
@@ -459,6 +479,30 @@ def _tts_pool_base_url() -> str:
 
 def _tts_pool_timeout_s() -> float:
     return get_float("tts_pool.timeout_s", 300.0, min_value=1.0)
+
+
+def _tts_pool_models_timeout_s() -> float:
+    return get_float("tts_pool.models_timeout_s", 2.0, min_value=0.1)
+
+
+def _tts_pool_loaded_models() -> set[str]:
+    try:
+        payload = _get_json(
+            f"{_tts_pool_base_url()}/v1/models",
+            timeout_s=_tts_pool_models_timeout_s(),
+        )
+    except (RuntimeError, ValueError, json.JSONDecodeError) as exc:
+        LOGGER.warning("TTS pool model list unavailable: %s", exc)
+        return set()
+    models = payload.get("models")
+    if not isinstance(models, list):
+        return set()
+    return {str(model or "").strip() for model in models if str(model or "").strip()}
+
+
+def _loaded_tts_backend_options() -> tuple[tuple[str, str], ...]:
+    loaded = _tts_pool_loaded_models()
+    return tuple(TTS_BACKEND_OPTION_BY_VALUE[value] for value, _ in TTS_BACKEND_OPTIONS if value in loaded)
 
 
 def _tts_enabled() -> bool:
