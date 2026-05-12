@@ -16,7 +16,7 @@
   --danger: hsl(0, 84%, 60%);
   --error-text: hsl(0, 70%, 35%);
   --error-bg: hsl(0, 93%, 94%);
-  --mode-active: hsl(220, 13%, 91%);
+
   --success-bg: hsl(138, 76%, 93%);
   --success-text: hsl(150, 60%, 24%);
   --success-accent: hsl(142, 71%, 45%);
@@ -64,7 +64,7 @@
     --danger: hsl(0, 72%, 55%);
     --error-text: hsl(0, 60%, 68%);
     --error-bg: hsl(0, 40%, 15%);
-    --mode-active: hsl(220, 12%, 20%);
+
     --success-bg: hsl(150, 30%, 14%);
     --success-text: hsl(150, 40%, 65%);
     --success-accent: hsl(142, 60%, 42%);
@@ -152,26 +152,8 @@ button {
   overflow: hidden;
 }
 
-.mode-toggle {
-  width: max-content;
-  justify-self: start;
-  display: inline-flex;
-  align-items: center;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  overflow: hidden;
-  background: var(--surface);
-  box-shadow: none;
-  transition: border-color 0.15s ease;
-}
-
-.mode-toggle button {
-  margin-right: 0;
-}
-
 .language-select,
 .session-status-pill,
-.mode-button,
 .settings-button,
 .icon-action,
 .link-row {
@@ -180,28 +162,6 @@ button {
   background: var(--surface);
   color: var(--text);
   cursor: pointer;
-}
-
-.mode-button {
-  border: 0;
-  background: transparent;
-  padding: 6px 10px;
-  color: var(--text);
-  cursor: pointer;
-  font: inherit;
-  line-height: 1;
-  transition: background-color 0.15s ease, color 0.15s ease;
-}
-
-.mode-button.is-active {
-  background: var(--mode-active);
-  font-weight: 600;
-}
-
-.mode-button:disabled {
-  cursor: default;
-  opacity: 1;
-  color: var(--muted);
 }
 
 .language-select {
