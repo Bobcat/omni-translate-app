@@ -749,7 +749,9 @@ button {
 
 .round-action:disabled {
   cursor: default;
-  opacity: 0.46;
+  background: var(--muted);
+  opacity: 0.32;
+  transform: none;
 }
 
 .round-action.is-busy {
