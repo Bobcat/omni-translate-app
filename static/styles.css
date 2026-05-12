@@ -380,6 +380,42 @@ button {
   overflow: hidden;
 }
 
+.app.is-running .text-stream {
+  animation: pane-in 0.35s ease both;
+}
+
+@keyframes pane-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.app.is-running .dock-action {
+  animation: dock-btn-in 0.3s ease both;
+}
+
+.app.is-running .dock-action:nth-child(1) { animation-delay: 0.04s; }
+.app.is-running .dock-action:nth-child(2) { animation-delay: 0.08s; }
+.app.is-running .dock-action:nth-child(3) { animation-delay: 0.12s; }
+.app.is-running .dock-action:nth-child(4) { animation-delay: 0.16s; }
+.app.is-running .dock-action:nth-child(5) { animation-delay: 0.20s; }
+
+@keyframes dock-btn-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 .source-pane,
 .source-pane .pane-body,
 .source-pane .setup-start-panel,
@@ -659,6 +695,14 @@ button {
 
 .turn-part {
   animation: turn-part-in 0.3s ease both;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: var(--surface-soft);
+  transition: background-color 0.15s ease;
+}
+
+.turn-part:active {
+  background: var(--border);
 }
 
 @keyframes turn-part-in {
@@ -670,6 +714,14 @@ button {
     opacity: 1;
     transform: translateY(0);
   }
+}
+
+.source-pane .turn-part {
+  background: var(--surface);
+}
+
+.source-pane .turn-part:active {
+  background: var(--surface-soft);
 }
 
 .turn-part.is-spoken {
@@ -690,10 +742,10 @@ button {
 
 .action-dock {
   position: relative;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  display: flex;
   align-items: center;
-  gap: 8px;
+  justify-content: space-between;
+  gap: 6px;
   padding: 7px 8px;
   padding-bottom: max(8px, env(safe-area-inset-bottom));
   background: var(--dock-bg);
@@ -711,45 +763,20 @@ button {
   min-width: 0;
 }
 
-.dock-icon-button {
-  grid-column: 1;
-  grid-row: 1;
-  justify-self: start;
-  z-index: 1;
+.dock-start {
+  flex: 0 0 auto;
 }
 
-#speakNowButton {
-  grid-column: 1 / -1;
-  grid-row: 1;
-  justify-self: center;
+.dock-center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  flex: 1 1 auto;
 }
 
-#translateNowButton {
-  grid-column: 1 / -1;
-  grid-row: 1;
-  justify-self: center;
-  transform: translateX(-46px);
-}
-
-#pcExportButton {
-  grid-column: 1 / -1;
-  grid-row: 1;
-  justify-self: center;
-  transform: translateX(-92px);
-}
-
-#finishButton {
-  grid-column: 3;
-  grid-row: 1;
-  justify-self: end;
-  z-index: 1;
-}
-
-#micToggleButton {
-  grid-column: 1 / -1;
-  grid-row: 1;
-  justify-self: center;
-  transform: translateX(46px);
+.dock-end {
+  flex: 0 0 auto;
 }
 
 .round-action {
@@ -811,11 +838,20 @@ button {
 }
 
 .mic-toggle-action {
+  width: 48px;
+  height: 48px;
+  min-width: 48px;
+  min-height: 48px;
   --mic-toggle-halo-alpha: 0;
   --mic-toggle-halo-color: 59, 130, 246;
   --mic-toggle-halo-size: 0px;
   box-shadow: 0 0 0 var(--mic-toggle-halo-size) rgba(var(--mic-toggle-halo-color), var(--mic-toggle-halo-alpha));
-  transition: box-shadow 80ms linear, background-color 0.2s ease;
+  transition: box-shadow 80ms linear, background-color 0.2s ease, transform 0.15s ease;
+}
+
+.mic-toggle-action .round-action-icon {
+  width: 24px;
+  height: 24px;
 }
 
 .mic-toggle-action.is-clip-risk {
@@ -861,7 +897,7 @@ button {
 }
 
 .mini-status {
-  grid-column: 1 / -1;
+  width: 100%;
   min-height: 18px;
   color: var(--muted);
   font-size: 0.75rem;
