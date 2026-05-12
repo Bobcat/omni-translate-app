@@ -493,29 +493,29 @@ button {
 }
 
 .setup-switch-action {
-  min-height: 38px;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 90px;
+  height: 30px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 7px;
-  padding: 0 12px;
-  border: 0;
+  padding: 0 8px;
+  border: 1px solid var(--border);
   border-radius: 8px;
-  background: var(--surface-soft);
+  background: var(--surface);
   color: var(--muted);
   cursor: pointer;
-  transition: background-color 0.15s ease, color 0.15s ease;
+  transform: translate(-50%, -50%);
 }
 
 .setup-switch-action:hover,
 .setup-switch-action:focus {
   color: var(--text);
-  background: var(--border);
+  background: var(--surface);
   outline: none;
-}
-
-.setup-switch-action:active {
-  transform: scale(0.95);
 }
 
 .setup-switch-action:disabled {
@@ -540,7 +540,7 @@ button {
 .turn-language-label {
   min-width: 20px;
   color: var(--text);
-  font-size: 0.78rem;
+  font-size: 0.7rem;
   font-weight: 700;
   line-height: 1;
   text-align: center;
