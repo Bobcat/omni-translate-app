@@ -162,6 +162,7 @@ button {
   overflow: hidden;
   background: var(--surface);
   box-shadow: none;
+  transition: border-color 0.15s ease;
 }
 
 .mode-toggle button {
@@ -189,6 +190,7 @@ button {
   cursor: pointer;
   font: inherit;
   line-height: 1;
+  transition: background-color 0.15s ease, color 0.15s ease;
 }
 
 .mode-button.is-active {
@@ -262,6 +264,7 @@ button {
   text-transform: uppercase;
   white-space: nowrap;
   cursor: default;
+  transition: color 0.25s ease, background-color 0.25s ease;
 }
 
 .session-status-pill.is-listening {
@@ -449,13 +452,19 @@ button {
   border-radius: 8px;
   color: var(--muted);
   background: transparent;
+  transition: color 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease;
 }
 
-.icon-action:hover,
+.icon-action:hover {
+  color: var(--text);
+  background: var(--surface);
+}
+
 .icon-action:focus {
   color: var(--text);
   background: var(--surface);
   outline: none;
+  box-shadow: 0 0 0 2px rgba(var(--primary-rgb), 0.3);
 }
 
 .icon-action:disabled {
@@ -648,6 +657,21 @@ button {
   margin-top: 0.7rem;
 }
 
+.turn-part {
+  animation: turn-part-in 0.3s ease both;
+}
+
+@keyframes turn-part-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 .turn-part.is-spoken {
   color: var(--muted);
   opacity: 0.76;
@@ -744,10 +768,12 @@ button {
   color: hsl(0, 0%, 100%);
   cursor: pointer;
   box-shadow: none;
+  transition: background-color 0.2s ease, opacity 0.2s ease, transform 0.15s ease;
 }
 
 .round-action:active {
   background: var(--primary-pressed);
+  transform: scale(0.93);
 }
 
 .round-action:disabled {
@@ -822,6 +848,7 @@ button {
 
 .finish-action:active {
   background: var(--finish-pressed);
+  transform: scale(0.93);
 }
 
 .finish-action:disabled {
@@ -864,6 +891,12 @@ button {
   z-index: 20;
   display: grid;
   align-items: end;
+  animation: scrim-in 0.25s ease both;
+}
+
+@keyframes scrim-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
 
 .sheet-scrim {
@@ -887,6 +920,18 @@ button {
   background: var(--surface);
   box-shadow: var(--shadow);
   overflow: hidden;
+  animation: sheet-slide-up 0.32s cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+
+@keyframes sheet-slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(40%);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .sheet-header {
@@ -940,6 +985,7 @@ button {
   color: var(--text);
   cursor: pointer;
   text-align: left;
+  transition: background-color 0.15s ease;
 }
 
 .settings-nav-row + .settings-nav-row {
@@ -947,7 +993,7 @@ button {
 }
 
 .settings-nav-row:hover {
-  background: var(--surface-soft);
+  background: var(--border);
 }
 
 .settings-nav-row strong,
