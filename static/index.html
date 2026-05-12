@@ -44,7 +44,12 @@
             <h1>What is heard</h1>
             <div class="pane-indicators">
               <span class="vad-badge" id="vadBadge" hidden>Speech detected</span>
-              <select class="language-select pane-language-select" id="sourceLanguageSelect" aria-label="Choose source language"></select>
+              <button class="language-pill pane-language-pill" id="sourceLanguagePill" type="button" aria-label="Choose source language">
+                <span class="language-pill-text"></span>
+                <svg class="language-pill-chevron" viewBox="0 0 24 24" aria-hidden="true">
+                  <polyline points="6 9 12 15 18 9"></polyline>
+                </svg>
+              </button>
             </div>
           </div>
           <div class="pane-body">
@@ -64,7 +69,12 @@
           <div class="pane-header">
             <h1>Translation</h1>
             <div class="pane-indicators">
-              <select class="language-select pane-language-select" id="targetLanguageSelect" aria-label="Choose target language"></select>
+              <button class="language-pill pane-language-pill" id="targetLanguagePill" type="button" aria-label="Choose target language">
+                <span class="language-pill-text"></span>
+                <svg class="language-pill-chevron" viewBox="0 0 24 24" aria-hidden="true">
+                  <polyline points="6 9 12 15 18 9"></polyline>
+                </svg>
+              </button>
             </div>
           </div>
           <div class="text-stream" id="targetText" data-empty="No translation yet"></div>
@@ -259,6 +269,23 @@
           </div>
         </section>
       </div>
+      <div class="sheet-layer" id="languageSheet" hidden>
+        <button class="sheet-scrim" id="languageSheetScrim" type="button" aria-label="Close"></button>
+        <div class="bottom-sheet">
+          <div class="sheet-header">
+            <button class="settings-back is-sheet-close" id="closeLanguageSheetButton" type="button" aria-label="Close" title="Close">
+              <svg class="settings-back-icon settings-back-down-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M6 9l6 6 6-6"></path>
+              </svg>
+            </button>
+            <h2 id="languageSheetTitle">Choose language</h2>
+          </div>
+          <div class="sheet-body language-sheet-body" id="languageSheetList">
+            <!-- Language options dynamically inserted here -->
+          </div>
+        </div>
+      </div>
+
     </main>
     <script type="module" src="/src/app.js?v=20260511-loaded-tts-models"></script>
   </body>

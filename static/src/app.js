@@ -182,8 +182,15 @@ const els = {
   pcExportButton: document.querySelector('#pcExportButton'),
   finishButton: document.querySelector('#finishButton'),
   miniStatus: document.querySelector('#miniStatus'),
-  sourceLanguageSelect: document.querySelector('#sourceLanguageSelect'),
-  targetLanguageSelect: document.querySelector('#targetLanguageSelect'),
+  sourceLanguagePill: document.querySelector('#sourceLanguagePill'),
+  sourceLanguagePillText: document.querySelector('#sourceLanguagePill .language-pill-text'),
+  targetLanguagePill: document.querySelector('#targetLanguagePill'),
+  targetLanguagePillText: document.querySelector('#targetLanguagePill .language-pill-text'),
+  languageSheet: document.querySelector('#languageSheet'),
+  languageSheetScrim: document.querySelector('#languageSheetScrim'),
+  languageSheetTitle: document.querySelector('#languageSheetTitle'),
+  closeLanguageSheetButton: document.querySelector('#closeLanguageSheetButton'),
+  languageSheetList: document.querySelector('#languageSheetList'),
   setupSwapButton: document.querySelector('#setupSwapButton'),
   setupSourceLanguage: document.querySelector('#setupSourceLanguage'),
   setupTargetLanguage: document.querySelector('#setupTargetLanguage'),
@@ -276,7 +283,7 @@ const state = {
 };
 
 let audioQueue;
-let languageSelectMeasureCanvas = null;
+
 
 audioQueue = new AudioQueue({
   audio: els.ttsAudio,
@@ -330,8 +337,10 @@ async function init() {
   els.pcExportButton.addEventListener('click', exportPcTranscript);
   els.finishButton.addEventListener('click', handleSessionRightAction);
   els.turnModeButton?.addEventListener('click', () => setViewMode('turn'));
-  els.sourceLanguageSelect.addEventListener('change', () => setVisibleLanguage('source', els.sourceLanguageSelect.value));
-  els.targetLanguageSelect.addEventListener('change', () => setVisibleLanguage('target', els.targetLanguageSelect.value));
+  els.sourceLanguagePill.addEventListener('click', () => openLanguageSheet('source'));
+  els.targetLanguagePill.addEventListener('click', () => openLanguageSheet('target'));
+  els.languageSheetScrim.addEventListener('click', closeLanguageSheet);
+  els.closeLanguageSheetButton.addEventListener('click', closeLanguageSheet);
   els.setupSwapButton.addEventListener('click', swapSetupLanguages);
   els.swapButton.addEventListener('click', swapDirection);
   els.translateNowButton.addEventListener('click', translateNow);
@@ -360,7 +369,7 @@ async function init() {
     closeSettingsSheet();
   });
 
-  renderLanguageSelectOptions();
+
   renderLanguageControls();
   setupAutoFollow(els.sourceText);
   setupAutoFollow(els.targetText);
@@ -1960,52 +1969,58 @@ function renderMicLevel(value) {
   els.micToggleButton.style.setProperty('--mic-toggle-halo-size', `${Math.round(haloLevel * 14)}px`);
 }
 
-function renderLanguageSelectOptions() {
-  const fragment = document.createDocumentFragment();
-  for (const item of languages) {
-    const option = document.createElement('option');
-    option.value = item.name;
-    option.textContent = `${flagForLanguage(item.name)} ${item.name}`;
-    fragment.append(option);
-  }
-  els.sourceLanguageSelect.replaceChildren(fragment.cloneNode(true));
-  els.targetLanguageSelect.replaceChildren(fragment);
-}
-
 function renderLanguageControls() {
   const lane = currentLane();
   const setup = state.sessionState === SESSION_STATES.SETUP;
-  els.sourceLanguageSelect.value = lane.sourceLanguage;
-  els.targetLanguageSelect.value = lane.targetLanguage;
-  fitLanguageSelectToSelectedOption(els.sourceLanguageSelect);
-  fitLanguageSelectToSelectedOption(els.targetLanguageSelect);
-  els.sourceLanguageSelect.hidden = !setup;
-  els.targetLanguageSelect.hidden = !setup;
-  els.sourceLanguageSelect.disabled = state.status === 'connecting';
-  els.targetLanguageSelect.disabled = state.status === 'connecting';
-  els.sourceLanguageSelect.setAttribute('aria-label', `Source language: ${lane.sourceLanguage}`);
-  els.targetLanguageSelect.setAttribute('aria-label', `Target language: ${lane.targetLanguage}`);
+  const isConnecting = state.status === 'connecting';
+  const shouldDisable = !setup || isConnecting;
+
+  els.sourceLanguagePillText.textContent = `${flagForLanguage(lane.sourceLanguage)} ${lane.sourceLanguage}`;
+  els.targetLanguagePillText.textContent = `${flagForLanguage(lane.targetLanguage)} ${lane.targetLanguage}`;
+
+  els.sourceLanguagePill.hidden = !setup;
+  els.targetLanguagePill.hidden = !setup;
+
+  els.sourceLanguagePill.disabled = isConnecting;
+  els.targetLanguagePill.disabled = isConnecting;
+
+  els.sourceLanguagePill.setAttribute('aria-label', `Source language: ${lane.sourceLanguage}`);
+  els.targetLanguagePill.setAttribute('aria-label', `Target language: ${lane.targetLanguage}`);
   renderDirectionLabels(lane);
 }
 
-function fitLanguageSelectToSelectedOption(select) {
-  if (!select) return;
-  const option = select.options?.[Math.max(0, select.selectedIndex)] || null;
-  const text = String(option?.text || '').trim();
-  if (!text || typeof window === 'undefined' || typeof window.getComputedStyle !== 'function') return;
-  try {
-    if (!languageSelectMeasureCanvas) {
-      languageSelectMeasureCanvas = document.createElement('canvas');
-    }
-    const context = languageSelectMeasureCanvas.getContext('2d');
-    if (!context) return;
-    const computed = window.getComputedStyle(select);
-    context.font = `${computed.fontStyle || 'normal'} ${computed.fontWeight || '400'} ${computed.fontSize || '14px'} ${computed.fontFamily || 'system-ui'}`;
-    const textWidth = Math.ceil(context.measureText(text).width);
-    select.style.width = `${Math.max(86, Math.min(220, textWidth + 40))}px`;
-  } catch {
-    // CSS fallback keeps the select usable when measurement is unavailable.
+function openLanguageSheet(side) {
+  const lane = currentLane();
+  const currentLang = side === 'source' ? lane.sourceLanguage : lane.targetLanguage;
+
+  els.languageSheetTitle.textContent = side === 'source' ? 'Source language' : 'Target language';
+  els.languageSheetList.innerHTML = '';
+
+  for (const item of languages) {
+    const isActive = item.name === currentLang;
+    const row = document.createElement('button');
+    row.className = `language-option-row ${isActive ? 'is-active' : ''}`;
+    row.type = 'button';
+    row.innerHTML = `
+      <span>${flagForLanguage(item.name)} ${item.name}</span>
+      ${isActive ? '<svg class="language-option-check" viewBox="0 0 24 24" aria-hidden="true"><polyline points="20 6 9 17 4 12"></polyline></svg>' : ''}
+    `;
+    row.addEventListener('click', () => {
+      setVisibleLanguage(side, item.name);
+      closeLanguageSheet();
+    });
+    els.languageSheetList.appendChild(row);
   }
+
+  els.languageSheet.hidden = false;
+  // Use a tiny timeout to allow display:block to apply before animating transform
+  setTimeout(() => {
+    els.languageSheet.querySelector('.bottom-sheet').style.transform = 'translateY(0)';
+  }, 10);
+}
+
+function closeLanguageSheet() {
+  els.languageSheet.hidden = true;
 }
 
 function renderTranscript() {
