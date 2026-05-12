@@ -1411,25 +1411,6 @@ button {
     height: 100%;
   }
 
-  .pane + .pane {
-    border-left: 1px solid var(--border);
-  }
-
-  .app:not(.is-setup) .text-panels::after {
-    content: "";
-    position: absolute;
-    top: 44px;
-    bottom: 0;
-    left: 50%;
-    z-index: 2;
-    border-left: 1px solid var(--border);
-    pointer-events: none;
-  }
-
-  .app:not(.is-setup) .pane + .pane {
-    border-left: 0;
-  }
-
   .switch-turn-action {
     top: 7px;
   }
