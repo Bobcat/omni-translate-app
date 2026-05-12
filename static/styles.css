@@ -909,7 +909,7 @@ button {
   margin: 0 auto;
   display: flex;
   flex-direction: column;
-  border: 1px solid var(--border);
+  border: 0;
   border-bottom: 0;
   border-radius: var(--dialog-radius) var(--dialog-radius) 0 0;
   background: var(--surface);
@@ -936,7 +936,7 @@ button {
   justify-content: space-between;
   gap: 12px;
   padding: 8px 10px 8px 12px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 0;
   background: var(--sheet-header-bg);
 }
 
