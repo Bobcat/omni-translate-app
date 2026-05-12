@@ -131,25 +131,15 @@ button {
 }
 
 .topbar {
-  min-height: 47px;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  min-height: 44px;
+  display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
+  justify-content: center;
+  padding: 6px 12px;
   background: var(--topbar-bg);
   -webkit-backdrop-filter: blur(12px);
   backdrop-filter: blur(12px);
   font-size: 0.86rem;
-}
-
-.topbar-right {
-  min-width: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-  overflow: hidden;
 }
 
 .language-select,
