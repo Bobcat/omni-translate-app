@@ -3,20 +3,21 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="manifest" href="/manifest.json">
+    <link rel="icon" href="/icon.svg" type="image/svg+xml">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="theme-color" content="#f5f7fa" media="(prefers-color-scheme: light)">
+    <meta name="theme-color" content="#0e1117" media="(prefers-color-scheme: dark)">
     <title>ASR Translate TTS</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
-    <link rel="stylesheet" href="/styles.css?v=20260512-native-feel">
+    <link rel="stylesheet" href="/styles.css?v=20260513-no-topbar-11">
   </head>
   <body>
     <main class="app is-setup">
-      <header class="topbar">
-        <div class="topbar-right">
-          <span class="session-status-pill" id="sessionStatusPill" hidden>Listening</span>
-        </div>
-      </header>
-
       <section class="text-panels" aria-live="polite">
         <div class="turn-header-actions" id="turnHeaderActions" hidden>
           <button class="icon-action clear-turn-action" id="clearTurnButton" type="button" aria-label="Clear turn" title="Clear turn" disabled>
@@ -51,6 +52,7 @@
                 </svg>
               </button>
             </div>
+            <span class="session-status-pill" id="sessionStatusPill" hidden>Mic off</span>
           </div>
           <div class="pane-body">
             <div class="setup-start-panel" id="setupStartPanel">
@@ -114,23 +116,21 @@
               <path d="M16.1 16h3.8"></path>
             </svg>
           </button>
-          <button class="dock-action round-action speak-action" id="speakNowButton" type="button" aria-label="Speak now" title="Speak now" disabled hidden>
-            <svg class="round-action-icon" viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M4 9v6h4l5 4V5L8 9H4Z"></path>
-              <path d="M16 9.5a4 4 0 0 1 0 5"></path>
-              <path d="M18.5 7a7 7 0 0 1 0 10"></path>
-            </svg>
-          </button>
           <button class="dock-action round-action mic-toggle-action is-mic-listening-action" id="micToggleButton" type="button" aria-label="Turn microphone off" title="Mic off" disabled hidden>
             <svg class="round-action-icon mic-toggle-icon mic-toggle-off-icon" viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path>
-              <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
-              <line x1="5" y1="19" x2="19" y2="5"></line>
+              <rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" stroke="none"></rect>
             </svg>
             <svg class="round-action-icon mic-toggle-icon mic-toggle-on-icon" viewBox="0 0 24 24" aria-hidden="true">
               <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path>
               <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
               <line x1="12" y1="19" x2="12" y2="22"></line>
+            </svg>
+          </button>
+          <button class="dock-action round-action speak-action" id="speakNowButton" type="button" aria-label="Speak now" title="Speak now" disabled hidden>
+            <svg class="round-action-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4 9v6h4l5 4V5L8 9H4Z"></path>
+              <path d="M16 9.5a4 4 0 0 1 0 5"></path>
+              <path d="M18.5 7a7 7 0 0 1 0 10"></path>
             </svg>
           </button>
         </div>
@@ -141,7 +141,6 @@
             </svg>
           </button>
         </div>
-        <div class="mini-status" id="miniStatus" hidden></div>
       </footer>
       <button class="hidden-playback-button" id="audioResumeButton" type="button" hidden>Play audio</button>
       <audio id="ttsAudio" preload="auto"></audio>
@@ -170,13 +169,6 @@
                 </span>
                 <span class="setting-value" id="micSettingsSummary">1.5x, AGC</span>
               </button>
-              <button class="settings-nav-row" id="settingsTuningNav" type="button">
-                <span>
-                  <strong>ASR tuning</strong>
-                  <small>Adjust live transcription behavior</small>
-                </span>
-                <span class="setting-value" id="tuningSettingsSummary">WhisperX</span>
-              </button>
               <button class="settings-nav-row" id="settingsAudioNav" type="button">
                 <span>
                   <strong>TTS options</strong>
@@ -193,10 +185,15 @@
               </button>
               <button class="settings-nav-row" id="settingsDebugNav" type="button">
                 <span>
-                  <strong>Debug</strong>
-                  <small>Development display options</small>
+                  <strong>Dev tools</strong>
+                  <small>ASR tuning and development options</small>
                 </span>
-                <span class="setting-value" id="debugSettingsSummary">off</span>
+              </button>
+              <button class="settings-nav-row" id="installAppRow" type="button" hidden>
+                <span>
+                  <strong>Install app</strong>
+                  <small id="installAppHint">Add to home screen</small>
+                </span>
               </button>
             </div>
 
@@ -223,10 +220,6 @@
                 <button class="link-row settings-start-button" id="settingsStartButton" type="button">Start recording</button>
                 <button class="link-row audio-reset-button" id="audioSettingsReset" type="button">Reset audio</button>
               </section>
-            </div>
-
-            <div class="settings-page" id="settingsTuningPage" hidden>
-              <div class="tuning-settings-groups" id="tuningSettingsGroups"></div>
             </div>
 
             <div class="settings-page" id="settingsAudioPage" hidden>
@@ -259,12 +252,21 @@
             </div>
 
             <div class="settings-page" id="settingsDebugPage" hidden>
-              <section class="setting-group" aria-label="Debug">
-                <label class="toggle-row" for="showStatusLine">
-                  <input id="showStatusLine" type="checkbox">
-                  <span>Show status line</span>
-                </label>
-              </section>
+              <button class="settings-nav-row" id="settingsTuningNav" type="button">
+                <span>
+                  <strong>ASR tuning</strong>
+                  <small>Adjust live transcription behavior</small>
+                </span>
+              </button>
+              <label class="settings-nav-row settings-toggle-row" for="debugShowPcExport">
+                <span>
+                  <strong>Show PC export button</strong>
+                </span>
+                <input id="debugShowPcExport" type="checkbox">
+              </label>
+            </div>
+            <div class="settings-page" id="settingsTuningPage" hidden>
+              <div class="tuning-settings-groups" id="tuningSettingsGroups"></div>
             </div>
           </div>
         </section>
@@ -280,13 +282,14 @@
             </button>
             <h2 id="languageSheetTitle">Choose language</h2>
           </div>
-          <div class="sheet-body language-sheet-body" id="languageSheetList">
-            <!-- Language options dynamically inserted here -->
+          <div class="language-search-wrap">
+            <input type="search" id="languageSearch" class="language-search" placeholder="Search languages…" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false">
           </div>
+          <div class="sheet-body language-sheet-body" id="languageSheetList"></div>
         </div>
       </div>
 
     </main>
-    <script type="module" src="/src/app.js?v=20260511-loaded-tts-models"></script>
+    <script type="module" src="/src/app.js?v=20260513-no-topbar-11"></script>
   </body>
 </html>

@@ -34,7 +34,6 @@
   --level-threshold: hsla(0, 0%, 100%, 0.74);
   --scrim: hsla(210, 24%, 12%, 0.36);
   --sheet-header-bg: hsla(210, 40%, 98%, 0.96);
-  --topbar-bg: hsla(210, 40%, 98%, 0.82);
   --dock-bg: hsla(210, 40%, 98%, 0.82);
   --shadow: 0 18px 36px hsla(222, 47%, 11%, 0.15);
   --shadow-soft: 0 1px 3px hsla(222, 47%, 11%, 0.06);
@@ -82,7 +81,6 @@
     --level-threshold: hsla(0, 0%, 100%, 0.2);
     --scrim: hsla(220, 20%, 4%, 0.6);
     --sheet-header-bg: hsla(220, 14%, 13%, 0.96);
-    --topbar-bg: hsla(220, 12%, 14%, 0.82);
     --dock-bg: hsla(220, 12%, 14%, 0.82);
     --shadow: 0 18px 36px hsla(220, 30%, 4%, 0.4);
     --shadow-soft: 0 1px 3px hsla(220, 30%, 4%, 0.15);
@@ -125,31 +123,10 @@ button {
   min-height: 0;
   margin: 0 auto;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: minmax(0, 1fr) auto;
   background: var(--surface);
 }
 
-.topbar {
-  min-height: 47px;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  background: var(--topbar-bg);
-  -webkit-backdrop-filter: blur(12px);
-  backdrop-filter: blur(12px);
-  font-size: 0.86rem;
-}
-
-.topbar-right {
-  min-width: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-  overflow: hidden;
-}
 
 .language-pill,
 .session-status-pill,
@@ -228,9 +205,55 @@ button {
   display: none;
 }
 
+.language-search-wrap {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.language-search {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-soft);
+  color: var(--text);
+  font-size: 0.95rem;
+  font-family: var(--ui-font);
+  outline: none;
+  -webkit-appearance: none;
+  appearance: none;
+  box-sizing: border-box;
+}
+
+.language-search:focus {
+  border-color: var(--primary);
+}
+
 .language-sheet-body {
   overflow: auto;
-  padding: 10px;
+  padding: 0;
+}
+
+.language-section-header {
+  padding: 10px 16px 4px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.language-option-empty {
+  padding: 24px 16px;
+  color: var(--muted);
+  font-size: 0.9rem;
+  text-align: center;
+}
+
+#languageSheet .bottom-sheet {
+  height: 100dvh;
+  max-height: none;
 }
 
 .language-option-row {
@@ -275,7 +298,7 @@ button {
 .session-status-pill {
   min-width: 112px;
   height: 28px;
-  display: inline-flex;
+  display: none;
   align-items: center;
   justify-content: center;
   gap: 8px;
@@ -325,6 +348,7 @@ button {
 }
 
 .session-status-pill.is-mic-off {
+  display: inline-flex;
   color: var(--muted);
   background: var(--surface-soft);
 }
@@ -461,9 +485,6 @@ button {
   background: var(--surface-soft);
 }
 
-.app:not(.is-setup) .pane-header {
-  justify-content: flex-end;
-}
 
 .pane h1 {
   min-width: 0;
@@ -481,6 +502,7 @@ button {
 .pane-indicators {
   flex: 0 0 auto;
   min-height: 30px;
+  margin-left: auto;
   display: inline-flex;
   align-items: center;
   gap: 7px;
@@ -779,10 +801,9 @@ button {
 
 .action-dock {
   position: relative;
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
   align-items: center;
-  justify-content: space-between;
-  gap: 6px;
   padding: 7px 8px;
   padding-bottom: max(8px, env(safe-area-inset-bottom));
   background: var(--dock-bg);
@@ -801,7 +822,8 @@ button {
 }
 
 .dock-start {
-  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
 }
 
 .dock-center {
@@ -809,11 +831,12 @@ button {
   align-items: center;
   justify-content: center;
   gap: 10px;
-  flex: 1 1 auto;
 }
 
 .dock-end {
-  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
 }
 
 .round-action {
@@ -935,17 +958,6 @@ button {
   stroke-width: 2.1;
 }
 
-.mini-status {
-  width: 100%;
-  min-height: 18px;
-  color: var(--muted);
-  font-size: 0.75rem;
-  font-weight: 600;
-  letter-spacing: 0.03em;
-  line-height: 1.2;
-  text-align: center;
-  text-transform: uppercase;
-}
 
 .hidden-playback-button {
   position: fixed;
@@ -1066,6 +1078,18 @@ button {
 
 .settings-nav-row:hover {
   background: var(--border);
+}
+
+.settings-toggle-row {
+  cursor: pointer;
+}
+
+.settings-toggle-row input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  flex-shrink: 0;
+  cursor: pointer;
 }
 
 .settings-nav-row strong,

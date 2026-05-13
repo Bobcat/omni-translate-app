@@ -10,6 +10,52 @@ const TURN_STATES = {
   OPEN_SPEAKING: 'open_speaking',
   OPEN_SPOKEN_IDLE: 'open_spoken_idle',
 };
+let _installPrompt = null;
+
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  _installPrompt = e;
+  if (typeof els !== 'undefined') _updateInstallRow();
+});
+
+window.addEventListener('appinstalled', () => {
+  _installPrompt = null;
+  if (typeof els !== 'undefined') _updateInstallRow();
+});
+
+function _isIosInstallable() {
+  const ua = navigator.userAgent;
+  const isIos = /iphone|ipad|ipod/i.test(ua) && !/crios|fxios/i.test(ua);
+  const isStandalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+  return isIos && !isStandalone;
+}
+
+function _updateInstallRow() {
+  const isStandalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+  const available = !isStandalone && (_installPrompt !== null || _isIosInstallable());
+  els.installAppRow.hidden = !available;
+  if (_isIosInstallable()) {
+    els.installAppHint.textContent = 'Share menu, then Add to Home Screen';
+  } else {
+    els.installAppHint.textContent = 'Experimental, may not work in all browsers';
+  }
+}
+
+async function handleInstallApp() {
+  if (_installPrompt) {
+    const { outcome } = await _installPrompt.prompt();
+    _installPrompt = null;
+    _updateInstallRow();
+    els.installAppHint.textContent = outcome === 'accepted' ? 'Installing…' : 'Cancelled';
+    return;
+  }
+  if (_isIosInstallable()) {
+    closeSettingsSheet();
+    return;
+  }
+  els.installAppHint.textContent = 'Try reloading the page first';
+}
+
 const SESSION_STATES = {
   SETUP: 'setup',
   RUNNING: 'running',
@@ -181,7 +227,6 @@ const els = {
   micToggleButton: document.querySelector('#micToggleButton'),
   pcExportButton: document.querySelector('#pcExportButton'),
   finishButton: document.querySelector('#finishButton'),
-  miniStatus: document.querySelector('#miniStatus'),
   sourceLanguagePill: document.querySelector('#sourceLanguagePill'),
   sourceLanguagePillText: document.querySelector('#sourceLanguagePill .language-pill-text'),
   targetLanguagePill: document.querySelector('#targetLanguagePill'),
@@ -190,12 +235,15 @@ const els = {
   languageSheetScrim: document.querySelector('#languageSheetScrim'),
   languageSheetTitle: document.querySelector('#languageSheetTitle'),
   closeLanguageSheetButton: document.querySelector('#closeLanguageSheetButton'),
+  languageSearch: document.querySelector('#languageSearch'),
   languageSheetList: document.querySelector('#languageSheetList'),
   setupSwapButton: document.querySelector('#setupSwapButton'),
   setupSourceLanguage: document.querySelector('#setupSourceLanguage'),
   setupTargetLanguage: document.querySelector('#setupTargetLanguage'),
   turnSourceLanguage: document.querySelector('#turnSourceLanguage'),
   turnTargetLanguage: document.querySelector('#turnTargetLanguage'),
+  installAppRow: document.querySelector('#installAppRow'),
+  installAppHint: document.querySelector('#installAppHint'),
   vadBadge: document.querySelector('#vadBadge'),
   settingsButton: document.querySelector('#settingsButton'),
   sourceText: document.querySelector('#sourceText'),
@@ -212,22 +260,20 @@ const els = {
   settingsBackButton: document.querySelector('#settingsBackButton'),
   settingsHomePage: document.querySelector('#settingsHomePage'),
   settingsMicrophoneNav: document.querySelector('#settingsMicrophoneNav'),
-  settingsTuningNav: document.querySelector('#settingsTuningNav'),
   settingsAudioNav: document.querySelector('#settingsAudioNav'),
   settingsHistoryNav: document.querySelector('#settingsHistoryNav'),
   settingsDebugNav: document.querySelector('#settingsDebugNav'),
-  settingsMicrophonePage: document.querySelector('#settingsMicrophonePage'),
+  settingsTuningNav: document.querySelector('#settingsTuningNav'),
   settingsTuningPage: document.querySelector('#settingsTuningPage'),
+  debugShowPcExport: document.querySelector('#debugShowPcExport'),
+  settingsMicrophonePage: document.querySelector('#settingsMicrophonePage'),
   settingsAudioPage: document.querySelector('#settingsAudioPage'),
   settingsHistoryPage: document.querySelector('#settingsHistoryPage'),
   settingsDebugPage: document.querySelector('#settingsDebugPage'),
-  tuningSettingsSummary: document.querySelector('#tuningSettingsSummary'),
   tuningSettingsGroups: document.querySelector('#tuningSettingsGroups'),
   historySettingsSummary: document.querySelector('#historySettingsSummary'),
   historySaveSessions: document.querySelector('#historySaveSessions'),
   historyRetentionDays: document.querySelector('#historyRetentionDays'),
-  debugSettingsSummary: document.querySelector('#debugSettingsSummary'),
-  showStatusLine: document.querySelector('#showStatusLine'),
   settingsStartButton: document.querySelector('#settingsStartButton'),
   micPreGain: document.querySelector('#micPreGain'),
   micPreGainValue: document.querySelector('#micPreGainValue'),
@@ -272,14 +318,12 @@ const state = {
   tuningSettings: cloneSettings(DEFAULT_TUNING_SETTINGS),
   tuningExpandedGroups: new Set(),
   ttsSettings: cloneSettings(DEFAULT_TTS_SETTINGS),
+  debugSettings: loadDebugSettings(),
   ttsOptions: cloneSettings(DEFAULT_TTS_OPTIONS),
   ttsExpandedGroups: new Set(),
   ttsVoxcpm2ExtraInfoMode: null,
   ttsPromptInspectOpen: false,
   ttsUpdateBusy: false,
-  debugSettings: {
-    showStatusLine: false,
-  },
 };
 
 let audioQueue;
@@ -291,7 +335,6 @@ audioQueue = new AudioQueue({
   onStatus: (text) => {
     state.audioStatus = text;
     if (text) {
-      els.miniStatus.textContent = text;
       if (text.startsWith('Playing')) renderStatus('speaking');
     } else if (state.sessionState === SESSION_STATES.RUNNING) {
       renderStatus('listening');
@@ -341,6 +384,12 @@ async function init() {
   els.targetLanguagePill.addEventListener('click', () => openLanguageSheet('target'));
   els.languageSheetScrim.addEventListener('click', closeLanguageSheet);
   els.closeLanguageSheetButton.addEventListener('click', closeLanguageSheet);
+  els.languageSearch.addEventListener('input', () => {
+    const lane = currentLane();
+    const currentLang = _languageSheetSide === 'source' ? lane.sourceLanguage : lane.targetLanguage;
+    renderLanguageSheetList(currentLang, els.languageSearch.value.trim());
+  });
+  window.visualViewport?.addEventListener('resize', _onViewportResize);
   els.setupSwapButton.addEventListener('click', swapSetupLanguages);
   els.swapButton.addEventListener('click', swapDirection);
   els.translateNowButton.addEventListener('click', translateNow);
@@ -349,15 +398,16 @@ async function init() {
   els.settingsButton.addEventListener('click', openSettingsSheet);
   els.settingsBackButton.addEventListener('click', handleSettingsBack);
   els.settingsMicrophoneNav.addEventListener('click', () => setSettingsPage('microphone'));
-  els.settingsTuningNav.addEventListener('click', () => setSettingsPage('tuning'));
   els.settingsAudioNav.addEventListener('click', () => setSettingsPage('audio'));
   els.settingsHistoryNav.addEventListener('click', () => setSettingsPage('history'));
   els.settingsDebugNav.addEventListener('click', () => setSettingsPage('debug'));
+  els.settingsTuningNav.addEventListener('click', () => setSettingsPage('tuning'));
+  els.debugShowPcExport.addEventListener('change', handleDebugShowPcExportChange);
+  els.installAppRow.addEventListener('click', handleInstallApp);
   els.settingsStartButton.addEventListener('click', startFromSettings);
   els.micPreGain.addEventListener('input', handlePreGainInput);
   els.micAutoGainControl.addEventListener('change', handleAutoGainControlChange);
   els.audioSettingsReset.addEventListener('click', resetAudioSettings);
-  els.showStatusLine.addEventListener('change', handleShowStatusLineChange);
   els.tuningSettingsGroups.addEventListener('change', handleTuningSettingChange);
   els.ttsEnabled.addEventListener('change', handleTtsEnabledChange);
   els.ttsBackendSelect.addEventListener('change', handleTtsBackendChange);
@@ -378,10 +428,13 @@ async function init() {
   renderTuningSettings();
   renderTtsSettings();
   renderHistorySettings();
-  renderDebugSettings();
   updateActionButtons();
   renderLifecycle();
   setStatus('idle', '');
+  _updateInstallRow();
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/sw.js').catch(() => {});
+  }
 }
 
 async function startListening({ statusDetail = 'Opening connection' } = {}) {
@@ -539,7 +592,6 @@ function speakNow() {
     return;
   }
   if (state.currentTurn.speakableTargetText && state.currentTurn.state !== TURN_STATES.OPEN_SPEAKING && state.socket?.speakNow()) {
-    els.miniStatus.textContent = 'Creating audio';
   }
 }
 
@@ -547,19 +599,16 @@ function translateNow() {
   if (state.sessionState !== SESSION_STATES.RUNNING) return;
   if (!state.currentTurn.canTranslateNow) return;
   if (state.socket?.translateNow()) {
-    els.miniStatus.textContent = 'Translating';
   }
 }
 
 async function exportPcTranscript() {
   if (state.sessionState !== SESSION_STATES.RUNNING || state.micState !== MIC_STATES.OFF || !state.sessionId) return;
   state.pcExportBusy = true;
-  els.miniStatus.textContent = 'Exporting PC';
   updateActionButtons();
   try {
     const { blob, filename } = await api.getSessionPcExport(state.sessionId);
     downloadBlob(blob, filename);
-    els.miniStatus.textContent = 'PC exported';
   } catch (error) {
     setStatus('error', error.message || 'PC export failed');
   } finally {
@@ -572,7 +621,6 @@ function clearTurn() {
   if (state.sessionState !== SESSION_STATES.RUNNING) return;
   if (state.socket?.clearTurn()) {
     audioQueue.clear();
-    els.miniStatus.textContent = 'Clearing turn';
   }
 }
 
@@ -632,7 +680,6 @@ function swapDirection() {
   if (!state.socket?.isOpen()) return;
   audioQueue.clear();
   state.socket.nextTurn(nextLaneId);
-  els.miniStatus.textContent = 'Switching direction';
 }
 
 function handleMessage(msg) {
@@ -663,25 +710,19 @@ function handleMessage(msg) {
         turnId: msg.turn_id,
         artifactId: msg.tts.artifact_id,
       });
-      els.miniStatus.textContent = 'Audio ready';
     }
     updateActionButtons();
     return;
   }
   if (msg.type === 'tts_status') {
-    els.miniStatus.textContent = msg.message || msg.reason || '';
     updateActionButtons();
     return;
   }
   if (msg.type === 'translation_status') {
-    els.miniStatus.textContent = msg.message || msg.reason || '';
     updateActionButtons();
     return;
   }
   if (msg.type === 'asr_status') {
-    if (!els.miniStatus.textContent) {
-      els.miniStatus.textContent = 'Processing speech';
-    }
     return;
   }
   if (msg.type === 'live_settings') {
@@ -717,7 +758,6 @@ function applyReady(msg) {
   renderTranscript();
   renderTtsSettings();
   updateActionButtons();
-  els.miniStatus.textContent = directionLabel();
   if (state.requestedStartLaneId !== currentLaneId()) {
     state.socket?.nextTurn(state.requestedStartLaneId);
   }
@@ -748,17 +788,11 @@ function applyCurrentTurn(payload) {
 function renderTurnStatus(reason) {
   if (state.audioStatus) return;
   if (reason === 'source_c') {
-    els.miniStatus.textContent = 'Translating';
   } else if (reason === 'translate_now') {
-    els.miniStatus.textContent = 'Translating';
   } else if (reason === 'translation_update') {
-    els.miniStatus.textContent = 'Translation ready';
   } else if (reason === 'speak_now') {
-    els.miniStatus.textContent = 'Creating audio';
   } else if (reason === 'clear_turn') {
-    els.miniStatus.textContent = 'Turn cleared';
   } else if (reason === 'next_turn' || reason === 'tts_playback_complete') {
-    els.miniStatus.textContent = directionLabel();
   }
 }
 
@@ -781,7 +815,6 @@ function cleanupClientSession({ keepSocket = false } = {}) {
 function clearAllLanes({ laneId = currentLaneId() } = {}) {
   state.lanes = buildLocalLanes(state.sideALanguage, state.sideBLanguage);
   state.currentTurn = createLocalTurn(laneId, state.lanes);
-  els.miniStatus.textContent = '';
   audioQueue.clear();
   hideVadHint();
   enableTranscriptAutoFollow();
@@ -820,9 +853,8 @@ function renderLifecycle() {
   els.translateNowButton.hidden = !running;
   els.speakNowButton.hidden = !running;
   els.micToggleButton.hidden = !running;
-  els.pcExportButton.hidden = !(running && micOff);
-  els.finishButton.hidden = !running;
-  els.miniStatus.hidden = !state.debugSettings.showStatusLine;
+  els.pcExportButton.hidden = !(running && micOff && state.debugSettings.showPcExport);
+  els.finishButton.hidden = !(running && micOff);
   els.startButton.disabled = state.status === 'connecting';
   els.settingsStartButton.disabled = !(setup || micOff) || state.status === 'connecting';
   els.setupSwapButton.disabled = !setup || state.status === 'connecting';
@@ -911,7 +943,6 @@ function updatePcExportButton() {
 
 function setStatus(status, detail) {
   state.status = String(status || 'idle').toLowerCase();
-  els.miniStatus.textContent = detail || '';
   renderLifecycle();
   updateActionButtons();
 }
@@ -922,9 +953,7 @@ function renderStatus(status) {
     && state.micState === MIC_STATES.OFF
     && normalized !== 'speaking'
     && normalized !== 'error';
-  const visible = state.sessionState !== SESSION_STATES.SETUP
-    || normalized === 'connecting'
-    || normalized === 'error';
+  const visible = micOff || normalized === 'connecting' || normalized === 'error';
   els.sessionStatusPill.hidden = !visible;
   els.sessionStatusPill.className = 'session-status-pill';
   if (normalized === 'connecting') els.sessionStatusPill.classList.add('is-connecting');
@@ -952,7 +981,6 @@ function openSettingsSheet() {
   renderTuningSettings();
   renderTtsSettings();
   renderHistorySettings();
-  renderDebugSettings();
 }
 
 function closeSettingsSheet() {
@@ -964,14 +992,29 @@ function handleSettingsBack() {
     closeSettingsSheet();
     return;
   }
+  if (state.settingsPage === 'tuning') {
+    setSettingsPage('debug');
+    return;
+  }
   setSettingsPage('home');
 }
 
 function setSettingsPage(page) {
-  state.settingsPage = ['microphone', 'tuning', 'audio', 'history', 'debug'].includes(page) ? page : 'home';
+  state.settingsPage = ['microphone', 'audio', 'history', 'debug', 'tuning'].includes(page) ? page : 'home';
   renderSettingsPage();
+  if (state.settingsPage === 'debug') renderDebugSettings();
   if (state.settingsPage === 'tuning') renderTuningSettings();
   if (state.settingsPage === 'audio') renderTtsSettings();
+}
+
+function renderDebugSettings() {
+  els.debugShowPcExport.checked = state.debugSettings.showPcExport;
+}
+
+function handleDebugShowPcExportChange() {
+  state.debugSettings.showPcExport = els.debugShowPcExport.checked;
+  saveDebugSettings();
+  render();
 }
 
 function renderSettingsPage() {
@@ -979,24 +1022,24 @@ function renderSettingsPage() {
   const home = page === 'home';
   els.settingsHomePage.hidden = page !== 'home';
   els.settingsMicrophonePage.hidden = page !== 'microphone';
-  els.settingsTuningPage.hidden = page !== 'tuning';
   els.settingsAudioPage.hidden = page !== 'audio';
   els.settingsHistoryPage.hidden = page !== 'history';
   els.settingsDebugPage.hidden = page !== 'debug';
+  els.settingsTuningPage.hidden = page !== 'tuning';
   els.settingsBackButton.classList.toggle('is-sheet-close', home);
   els.settingsBackButton.classList.toggle('is-subpage-back', !home);
   els.settingsBackButton.setAttribute('aria-label', home ? 'Close settings' : 'Back');
   els.settingsBackButton.title = home ? 'Close settings' : 'Back';
   if (page === 'microphone') {
     els.settingsSheetTitle.textContent = 'Microphone';
-  } else if (page === 'tuning') {
-    els.settingsSheetTitle.textContent = 'ASR tuning';
   } else if (page === 'audio') {
     els.settingsSheetTitle.textContent = 'TTS options';
   } else if (page === 'history') {
     els.settingsSheetTitle.textContent = 'History';
   } else if (page === 'debug') {
-    els.settingsSheetTitle.textContent = 'Debug';
+    els.settingsSheetTitle.textContent = 'Dev tools';
+  } else if (page === 'tuning') {
+    els.settingsSheetTitle.textContent = 'ASR tuning';
   } else {
     els.settingsSheetTitle.textContent = 'Settings';
   }
@@ -1019,7 +1062,6 @@ function setVisibleLanguage(role, value) {
   renderTranscript();
   renderTtsSettings();
   updateActionButtons();
-  els.miniStatus.textContent = directionLabel();
 }
 
 function swapSetupLanguages() {
@@ -1033,7 +1075,6 @@ function swapSetupLanguages() {
   renderTranscript();
   renderTtsSettings();
   updateActionButtons();
-  els.miniStatus.textContent = directionLabel();
 }
 
 function handlePreGainInput() {
@@ -1103,7 +1144,6 @@ async function restartMicrophoneCapture({ statusText = '' } = {}) {
     state.capture = nextCapture;
     state.micState = MIC_STATES.LISTENING;
     state.audioSettings.autoGainControl = nextCapture.autoGainControl;
-    els.miniStatus.textContent = statusText;
   } catch (error) {
     state.audioSettings.preGain = previousSettings.preGain;
     state.audioSettings.autoGainControl = previousSettings.autoGainControl;
@@ -1113,7 +1153,6 @@ async function restartMicrophoneCapture({ statusText = '' } = {}) {
       state.capture = restoredCapture;
       state.micState = MIC_STATES.LISTENING;
       state.audioSettings.autoGainControl = restoredCapture.autoGainControl;
-      els.miniStatus.textContent = 'Auto gain unavailable';
     } catch {
       state.micState = MIC_STATES.OFF;
       setStatus('error', error.message || 'Microphone unavailable');
@@ -1163,7 +1202,6 @@ function toggleTuningGroup(groupName) {
 
 function renderTuningSettings({ preserveScroll = false } = {}) {
   if (!els.tuningSettingsGroups) return;
-  els.tuningSettingsSummary.textContent = tuningSummary();
   if (els.settingsSheet.hidden) return;
   const scrollEl = preserveScroll ? tuningScrollElement() : null;
   const scrollTop = scrollEl?.scrollTop || 0;
@@ -1304,13 +1342,6 @@ function tuningControlMeta(control) {
   return 'live';
 }
 
-function tuningSummary() {
-  const direct = getTuningValue('asr.backend') === 'faster_whisper_direct';
-  const backend = direct ? 'Faster Whisper' : 'WhisperX';
-  const chunkKey = direct ? 'asr.chunk_length' : 'asr.chunk_size';
-  const chunk = getTuningValue(chunkKey);
-  return chunk ? `${backend}, ${chunk}s` : backend;
-}
 
 function nullableBoolSelectValue(value) {
   if (value === null || value === undefined) return '';
@@ -1368,16 +1399,6 @@ function mergeSettingsInto(target, override) {
   }
 }
 
-function handleShowStatusLineChange() {
-  state.debugSettings.showStatusLine = Boolean(els.showStatusLine.checked);
-  renderDebugSettings();
-  renderLifecycle();
-}
-
-function renderDebugSettings() {
-  els.showStatusLine.checked = state.debugSettings.showStatusLine;
-  els.debugSettingsSummary.textContent = state.debugSettings.showStatusLine ? 'on' : 'off';
-}
 
 function renderHistorySettings() {
   els.historySettingsSummary.textContent = 'off';
@@ -1486,7 +1507,6 @@ async function submitTtsSettings(delta, previousSettings, previousVoxcpm2Mode = 
   try {
     const payload = await api.updateTtsSettings(delta);
     applyTtsConfig(payload.tts || {});
-    els.miniStatus.textContent = 'Voice settings updated';
   } catch (error) {
     state.ttsSettings = previousSettings;
     state.ttsVoxcpm2ExtraInfoMode = previousVoxcpm2Mode;
@@ -1989,38 +2009,133 @@ function renderLanguageControls() {
   renderDirectionLabels(lane);
 }
 
+const RECENT_LANGUAGES_KEY = 'recent_languages';
+const DEBUG_SETTINGS_KEY = 'debug_settings';
+
+function loadDebugSettings() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(DEBUG_SETTINGS_KEY) || '{}');
+    return { showPcExport: Boolean(saved.showPcExport) };
+  } catch {
+    return { showPcExport: false };
+  }
+}
+
+function saveDebugSettings() {
+  localStorage.setItem(DEBUG_SETTINGS_KEY, JSON.stringify(state.debugSettings));
+}
+const RECENT_MAX = 4;
+
+function getRecentLanguages() {
+  try {
+    return JSON.parse(localStorage.getItem(RECENT_LANGUAGES_KEY) || '[]');
+  } catch {
+    return [];
+  }
+}
+
+function pushRecentLanguage(name) {
+  const recent = getRecentLanguages().filter((n) => n !== name);
+  recent.unshift(name);
+  localStorage.setItem(RECENT_LANGUAGES_KEY, JSON.stringify(recent.slice(0, RECENT_MAX)));
+}
+
+let _languageSheetSide = 'source';
+
 function openLanguageSheet(side) {
+  _languageSheetSide = side;
   const lane = currentLane();
   const currentLang = side === 'source' ? lane.sourceLanguage : lane.targetLanguage;
-
   els.languageSheetTitle.textContent = side === 'source' ? 'Source language' : 'Target language';
-  els.languageSheetList.innerHTML = '';
-
-  for (const item of languages) {
-    const isActive = item.name === currentLang;
-    const row = document.createElement('button');
-    row.className = `language-option-row ${isActive ? 'is-active' : ''}`;
-    row.type = 'button';
-    row.innerHTML = `
-      <span>${flagForLanguage(item.name)} ${item.name}</span>
-      ${isActive ? '<svg class="language-option-check" viewBox="0 0 24 24" aria-hidden="true"><polyline points="20 6 9 17 4 12"></polyline></svg>' : ''}
-    `;
-    row.addEventListener('click', () => {
-      setVisibleLanguage(side, item.name);
-      closeLanguageSheet();
-    });
-    els.languageSheetList.appendChild(row);
-  }
-
+  els.languageSearch.value = '';
+  renderLanguageSheetList(currentLang, '');
   els.languageSheet.hidden = false;
-  // Use a tiny timeout to allow display:block to apply before animating transform
-  setTimeout(() => {
-    els.languageSheet.querySelector('.bottom-sheet').style.transform = 'translateY(0)';
-  }, 10);
 }
 
 function closeLanguageSheet() {
   els.languageSheet.hidden = true;
+  els.languageSearch.value = '';
+  _resetLanguageSheetPosition();
+}
+
+function _resetLanguageSheetPosition() {
+  const sheet = els.languageSheet.querySelector('.bottom-sheet');
+  if (!sheet) return;
+  sheet.style.marginBottom = '';
+  sheet.style.height = '';
+}
+
+function _onViewportResize() {
+  if (els.languageSheet.hidden) return;
+  const vv = window.visualViewport;
+  if (!vv) return;
+  const kbHeight = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+  const sheet = els.languageSheet.querySelector('.bottom-sheet');
+  if (!sheet) return;
+  if (kbHeight > 50) {
+    sheet.style.marginBottom = `${kbHeight}px`;
+    sheet.style.height = `${vv.height}px`;
+  } else {
+    _resetLanguageSheetPosition();
+  }
+}
+
+function renderLanguageSheetList(currentLang, query) {
+  const fragment = document.createDocumentFragment();
+  const q = query.toLowerCase();
+
+  if (q) {
+    const filtered = languages.filter((l) => l.name.toLowerCase().includes(q));
+    if (!filtered.length) {
+      const empty = document.createElement('div');
+      empty.className = 'language-option-empty';
+      empty.textContent = 'No languages found';
+      fragment.appendChild(empty);
+    } else {
+      for (const item of filtered) fragment.appendChild(_languageRow(item, currentLang));
+    }
+  } else {
+    const recentNames = getRecentLanguages().filter((n) => languages.some((l) => l.name === n));
+    if (recentNames.length) {
+      fragment.appendChild(_sectionHeader('Recent'));
+      for (const name of recentNames) {
+        const item = languages.find((l) => l.name === name);
+        if (item) fragment.appendChild(_languageRow(item, currentLang));
+      }
+    }
+    const groups = {};
+    for (const item of languages) {
+      const letter = item.name[0].toUpperCase();
+      (groups[letter] = groups[letter] || []).push(item);
+    }
+    for (const letter of Object.keys(groups).sort()) {
+      fragment.appendChild(_sectionHeader(letter));
+      for (const item of groups[letter]) fragment.appendChild(_languageRow(item, currentLang));
+    }
+  }
+
+  els.languageSheetList.replaceChildren(fragment);
+}
+
+function _sectionHeader(label) {
+  const el = document.createElement('div');
+  el.className = 'language-section-header';
+  el.textContent = label;
+  return el;
+}
+
+function _languageRow(item, currentLang) {
+  const isActive = item.name === currentLang;
+  const row = document.createElement('button');
+  row.className = `language-option-row${isActive ? ' is-active' : ''}`;
+  row.type = 'button';
+  row.innerHTML = `<span>${flagForLanguage(item.name)} ${item.name}</span>${isActive ? '<svg class="language-option-check" viewBox="0 0 24 24" aria-hidden="true"><polyline points="20 6 9 17 4 12"></polyline></svg>' : ''}`;
+  row.addEventListener('click', () => {
+    pushRecentLanguage(item.name);
+    setVisibleLanguage(_languageSheetSide, item.name);
+    closeLanguageSheet();
+  });
+  return row;
 }
 
 function renderTranscript() {
