@@ -91,11 +91,18 @@ a single key (e.g. `voxcpm2_voice_config`). Reasons:
 - Survives page reloads without backend dependency
 - Simple to read/write synchronously during render
 
-IndexedDB is not needed at this stage. If we later add power-user custom
-prompts that get large, we re-evaluate.
+IndexedDB is not needed for the per-language voice settings themselves. We
+will need it in Phase 4 for the own-voice recording, since audio blobs do
+not belong in localStorage.
 
 The Stable Generated voice library (see below) is stored **server-side**
-because it consists of audio files, not text settings.
+because the samples are TTS-generated and shared across all users of the
+deployment.
+
+The own-voice recording (Phase 4) is **not** kept on the server long-term.
+It lives in IndexedDB on the user's device and is only uploaded for the
+duration of a session when actually needed. See the Phase 4 section for the
+full lifecycle.
 
 ---
 
@@ -492,11 +499,13 @@ data/voice_library/
       female/...
       male/...
     ...
-  own/                    # Phase 4 — see Phasing section
-    audio.wav
-    meta.json
-    latents.json
 ```
+
+The own-voice recording (Phase 4) is **not** stored under `data/voice_library/`.
+Its lifecycle is described in the Phase 4 section: client-owned in IndexedDB,
+uploaded lazily into the session's existing TTS scratch directory
+(`data/tts/<session_id>/own_voice/`), and discarded together with the
+session.
 
 `meta.json` shape:
 
@@ -523,9 +532,10 @@ For NanoVLLM-VoxCPM, `latents.json` caches the `/encode_latents` output so
 we do not re-encode the WAV on every inference call. Latents are derived
 data; if missing, they are recomputed from `audio.wav`.
 
-`data/` is runtime state, not source code. It is gitignored. The
-own-voice recording in `data/voice_library/own/` is irreplaceable user
-data and must be backed up separately if persistence matters.
+`data/` is runtime state, not source code. It is gitignored. Stable
+Generated samples can be regenerated from `config/voice_reference_texts/`
+on demand, so the directory is treated as derivable, not as data that
+must be backed up.
 
 ---
 
@@ -588,13 +598,45 @@ Flow:
    detected — try a quieter spot") and offers a retake. The raw WER number is
    not exposed to the user.
 
+### Storage and lifecycle
+
+The app has no user accounts and we do not want personal recordings sitting
+on the server. The recording is therefore client-owned with a session-scoped
+server cache:
+
+1. **Persistent client storage.** The WAV plus the known script text are
+   stored in **IndexedDB** on the user's device (`voxcpm2_own_voice`).
+   localStorage is unsuitable for binary audio. Nothing personal lives on
+   the server between sessions.
+2. **Lazy server upload.** The recording is uploaded to the backend
+   **on demand**, the first time a synthesize call in this session actually
+   needs `Own voice` as the reference. Sessions where the user never uses
+   own-voice never upload the WAV.
+3. **Session-scoped server cache.** On first use, the backend writes the
+   WAV (and immediately the NanoVLLM-VoxCPM `/encode_latents` output) into
+   the existing session scratch directory at
+   `data/tts/<session_id>/own_voice/`. Subsequent synthesize calls in the
+   same session reuse `prompt_latents_base64` from that cache instead of
+   re-uploading the audio.
+4. **Automatic discard.** The own-voice directory is cleaned up together
+   with the session via the existing `live.session_ttl_s` TTL and the
+   `TTSBridge.clear_session` path. There is no long-term server-side store
+   of personal audio.
+
+A new session means one re-upload + one re-encode. WAVs are large enough
+that we don't want to send them on every synthesize call, but small enough
+that one upload per session is acceptable. Re-encoding for NanoVLLM-VoxCPM
+is also a one-shot cost per session.
+
 UX considerations:
 
 - Make it optional and skippable. Reading aloud is friction.
 - Set expectations clearly: cloning captures voice timbre, not native
   pronunciation. A Dutch user's voice in Italian will still carry a Dutch
   accent.
-- Privacy framing: the sample stays on the user's server; no third party.
+- Privacy framing for the user: "Your voice stays on your device. When you
+  start a translation session and use your voice, a copy is sent to the
+  server for that session only and is deleted when the session ends."
 
 Once set, "Own voice" becomes a selectable option in the Reference audio
 source picker, alongside "Last speech fragment" and "Stable generated".
