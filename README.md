@@ -174,6 +174,10 @@ Common settings:
 - `tts.voxcpm2_voice_presets`: language-specific app-side voice description
   presets for VoxCPM-family backends
 
+The four `tts.voxcpm2_*` keys above describe the **current** behavior. They
+are scheduled to be replaced by a per-language voice configuration in Phase 1
+of the [VoxCPM Options Redesign](docs/voxcpm-options-redesign.md).
+
 ## Development
 
 Create the app environment:
@@ -260,6 +264,12 @@ The repo also includes design notes and trackers in various stages of completion
   Captures the current app-level turn and `turn_part` state model.
 - [View Modes And Session Lifecycle](docs/view-modes-session-lifecycle.md)
   Captures setup, running, mic-off, finished, and view-mode behavior.
+- [Translate Now Design](docs/translate-now-design.md)
+  Defines the manual translation action used in the turn-based workflow.
+- [VoxCPM Options Redesign](docs/voxcpm-options-redesign.md)
+  Design contract for the next phase of VoxCPM2 / NanoVLLM-VoxCPM voice
+  settings: per-language modes, Hi-Fi cloning, Stable Generated library,
+  guided own-voice setup.
 - [Kokoro TTS Baseline](docs/kokoro-tts-baseline.md)
   Historical Kokoro timing baseline.
 
@@ -267,7 +277,7 @@ The repo also includes design notes and trackers in various stages of completion
 
 - [Kokoro](https://github.com/hexgrad/kokoro) for the local TTS model and Python pipeline.
 - [VoxCPM2](https://huggingface.co/openbmb/VoxCPM2) for multilingual reference-audio TTS.
-- [NanoVLLM-VoxCPM](https://github.com/OpenBMB/NanoVLLM-VoxCPM) for high-throughput VoxCPM serving.
+- [NanoVLLM-VoxCPM](https://github.com/a710128/nanovllm-voxcpm) for high-throughput VoxCPM serving.
 
 ## License
 

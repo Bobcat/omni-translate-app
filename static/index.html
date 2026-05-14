@@ -3,39 +3,48 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="manifest" href="/manifest.json">
+    <link rel="icon" href="/icon.svg" type="image/svg+xml">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="theme-color" content="#f5f7fa" media="(prefers-color-scheme: light)">
+    <meta name="theme-color" content="#0e1117" media="(prefers-color-scheme: dark)">
     <title>ASR Translate TTS</title>
-    <link rel="stylesheet" href="/styles.css?v=20260510-tts-options-spacing">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+    <link rel="stylesheet" href="/styles.css?v=20260513-no-topbar-32">
   </head>
   <body>
     <main class="app is-setup">
-      <header class="topbar">
-        <div class="mode-toggle" aria-label="View mode">
-          <button class="mode-button is-active" id="turnModeButton" type="button">Turn</button>
-          <button class="mode-button" id="conversationModeButton" type="button" disabled>Conversation</button>
-        </div>
-        <div class="topbar-right">
-          <span class="session-status-pill" id="sessionStatusPill" hidden>Listening</span>
-        </div>
+      <header class="app-titlebar">
+        <h1 class="app-title"><strong>Another</strong> Translate</h1>
+        <button class="settings-button titlebar-settings-button" id="settingsButton" type="button" aria-label="Open settings" title="Settings">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/>
+            <circle cx="12" cy="12" r="3"/>
+          </svg>
+        </button>
       </header>
-
       <section class="text-panels" aria-live="polite">
         <div class="turn-header-actions" id="turnHeaderActions" hidden>
           <button class="icon-action clear-turn-action" id="clearTurnButton" type="button" aria-label="Clear turn" title="Clear turn" disabled>
             <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M3 6h18"></path>
-              <path d="M8 6V4h8v2"></path>
-              <path d="M6 6l1 15h10l1-15"></path>
-              <path d="M10 11v6"></path>
-              <path d="M14 11v6"></path>
+              <path d="M3 6h18"/>
+              <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/>
+              <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/>
+              <line x1="10" x2="10" y1="11" y2="17"/>
+              <line x1="14" x2="14" y1="11" y2="17"/>
             </svg>
           </button>
           <button class="icon-action switch-turn-action" id="swapButton" type="button" aria-label="Switch turn" title="Switch turn">
             <span class="turn-language-label" id="turnSourceLanguage">NL</span>
             <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M7 7h11l-3-3"></path>
-              <path d="M18 7l-3 3"></path>
-              <path d="M17 17H6l3 3"></path>
-              <path d="M6 17l3-3"></path>
+              <path d="M8 3 4 7l4 4"/>
+              <path d="M4 7h16"/>
+              <path d="m16 21 4-4-4-4"/>
+              <path d="M20 17H4"/>
             </svg>
             <span class="turn-language-label" id="turnTargetLanguage">EN</span>
           </button>
@@ -45,8 +54,8 @@
             <h1>What is heard</h1>
             <div class="pane-indicators">
               <span class="vad-badge" id="vadBadge" hidden>Speech detected</span>
-              <select class="language-select pane-language-select" id="sourceLanguageSelect" aria-label="Choose source language"></select>
             </div>
+            <span class="session-status-pill" id="sessionStatusPill" hidden>Mic off</span>
           </div>
           <div class="pane-body">
             <div class="setup-start-panel" id="setupStartPanel">
@@ -64,69 +73,65 @@
         <article class="pane target-pane">
           <div class="pane-header">
             <h1>Translation</h1>
-            <div class="pane-indicators">
-              <select class="language-select pane-language-select" id="targetLanguageSelect" aria-label="Choose target language"></select>
             </div>
-          </div>
           <div class="text-stream" id="targetText" data-empty="No translation yet"></div>
         </article>
       </section>
 
       <footer class="action-dock">
-        <button class="settings-button dock-icon-button" id="settingsButton" type="button" aria-label="Open settings" title="Settings">
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M12 15.5A3.5 3.5 0 1 0 12 8a3.5 3.5 0 0 0 0 7.5Z"></path>
-            <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 0 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6V21a2 2 0 0 1-4 0v-.1a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1A2 2 0 0 1 4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.6-1H3a2 2 0 0 1 0-4h.1a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.3 7A2 2 0 0 1 7.1 4.2l.1.1a1.7 1.7 0 0 0 1.9.3 1.7 1.7 0 0 0 1-1.6V3a2 2 0 0 1 4 0v.1a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1A2 2 0 0 1 19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.1a2 2 0 0 1 0 4H21a1.7 1.7 0 0 0-1.6 1Z"></path>
-          </svg>
-        </button>
-        <button class="setup-switch-action" id="setupSwapButton" type="button" aria-label="Switch selected languages" title="Switch selected languages" hidden>
-          <span class="turn-language-label" id="setupSourceLanguage">NL</span>
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M7 7h11l-3-3"></path>
-            <path d="M18 7l-3 3"></path>
-            <path d="M17 17H6l3 3"></path>
-            <path d="M6 17l3-3"></path>
-          </svg>
-          <span class="turn-language-label" id="setupTargetLanguage">EN</span>
-        </button>
-        <button class="dock-action round-action translate-action" id="translateNowButton" type="button" aria-label="Translate now" title="Translate now" disabled hidden>
-          <svg class="round-action-icon" viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M4 5h9"></path>
-            <path d="M9 3v2"></path>
-            <path d="M6 9c1.4 2 3.6 3.4 6 4.1"></path>
-            <path d="M12 5c-.5 3.1-2.8 6.2-6 8"></path>
-            <path d="M15 19l3-8 3 8"></path>
-            <path d="M16.1 16h3.8"></path>
-          </svg>
-        </button>
-        <button class="dock-action round-action pc-export-action" id="pcExportButton" type="button" aria-label="Export PC transcript" title="Export PC" disabled hidden>
-          <span class="round-action-label">PC</span>
-        </button>
-        <button class="dock-action round-action speak-action" id="speakNowButton" type="button" aria-label="Speak now" title="Speak now" disabled hidden>
-          <svg class="round-action-icon" viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M4 9v6h4l5 4V5L8 9H4Z"></path>
-            <path d="M16 9.5a4 4 0 0 1 0 5"></path>
-            <path d="M18.5 7a7 7 0 0 1 0 10"></path>
-          </svg>
-        </button>
-        <button class="dock-action round-action mic-toggle-action is-mic-listening-action" id="micToggleButton" type="button" aria-label="Turn microphone off" title="Mic off" disabled hidden>
-          <svg class="round-action-icon mic-toggle-icon mic-toggle-off-icon" viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path>
-            <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
-            <line x1="5" y1="19" x2="19" y2="5"></line>
-          </svg>
-          <svg class="round-action-icon mic-toggle-icon mic-toggle-on-icon" viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path>
-            <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
-            <line x1="12" y1="19" x2="12" y2="22"></line>
-          </svg>
-        </button>
-        <button class="dock-action round-action finish-action" id="finishButton" type="button" aria-label="Finish session" title="Finish" hidden>
-          <svg class="round-action-icon finish-action-icon" viewBox="0 0 24 24" aria-hidden="true">
-            <rect x="8" y="8" width="8" height="8" rx="1.6"></rect>
-          </svg>
-        </button>
-        <div class="mini-status" id="miniStatus" hidden></div>
+        <div class="dock-center">
+          <button class="language-pill" id="sourceLanguagePill" type="button" aria-label="Choose source language">
+            <span class="language-pill-text"></span>
+          </button>
+          <button class="setup-switch-action" id="setupSwapButton" type="button" aria-label="Switch selected languages" title="Switch selected languages" hidden>
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M8 3 4 7l4 4"/>
+              <path d="M4 7h16"/>
+              <path d="m16 21 4-4-4-4"/>
+              <path d="M20 17H4"/>
+            </svg>
+          </button>
+          <button class="language-pill" id="targetLanguagePill" type="button" aria-label="Choose target language">
+            <span class="language-pill-text"></span>
+          </button>
+          <button class="dock-action round-action pc-export-action" id="pcExportButton" type="button" aria-label="Export PC transcript" title="Export PC" disabled hidden>
+            <span class="round-action-label">PC</span>
+          </button>
+          <button class="dock-action round-action translate-action" id="translateNowButton" type="button" aria-label="Translate now" title="Translate now" disabled hidden>
+            <svg class="round-action-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="m5 8 6 6"/>
+              <path d="m4 14 6-6 2-3"/>
+              <path d="M2 5h12"/>
+              <path d="M7 2h1"/>
+              <path d="m22 22-5-10-5 10"/>
+              <path d="M14 18h6"/>
+            </svg>
+          </button>
+          <button class="dock-action round-action mic-toggle-action is-mic-listening-action" id="micToggleButton" type="button" aria-label="Turn microphone off" title="Mic off" disabled hidden>
+            <svg class="round-action-icon mic-toggle-icon mic-toggle-off-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" stroke="none"></rect>
+            </svg>
+            <svg class="round-action-icon mic-toggle-icon mic-toggle-on-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path>
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+              <line x1="12" y1="19" x2="12" y2="22"></line>
+            </svg>
+          </button>
+          <button class="dock-action round-action speak-action" id="speakNowButton" type="button" aria-label="Speak now" title="Speak now" disabled hidden>
+            <svg class="round-action-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+              <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
+              <path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
+            </svg>
+          </button>
+        </div>
+        <div class="dock-end">
+          <button class="dock-action round-action finish-action" id="finishButton" type="button" aria-label="Finish session" title="Finish" hidden>
+            <svg class="round-action-icon finish-action-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <rect x="8" y="8" width="8" height="8" rx="1.6"></rect>
+            </svg>
+          </button>
+        </div>
       </footer>
       <button class="hidden-playback-button" id="audioResumeButton" type="button" hidden>Play audio</button>
       <audio id="ttsAudio" preload="auto"></audio>
@@ -155,13 +160,6 @@
                 </span>
                 <span class="setting-value" id="micSettingsSummary">1.5x, AGC</span>
               </button>
-              <button class="settings-nav-row" id="settingsTuningNav" type="button">
-                <span>
-                  <strong>ASR tuning</strong>
-                  <small>Adjust live transcription behavior</small>
-                </span>
-                <span class="setting-value" id="tuningSettingsSummary">WhisperX</span>
-              </button>
               <button class="settings-nav-row" id="settingsAudioNav" type="button">
                 <span>
                   <strong>TTS options</strong>
@@ -178,10 +176,15 @@
               </button>
               <button class="settings-nav-row" id="settingsDebugNav" type="button">
                 <span>
-                  <strong>Debug</strong>
-                  <small>Development display options</small>
+                  <strong>Dev tools</strong>
+                  <small>ASR tuning and development options</small>
                 </span>
-                <span class="setting-value" id="debugSettingsSummary">off</span>
+              </button>
+              <button class="settings-nav-row" id="installAppRow" type="button" hidden>
+                <span>
+                  <strong>Install app</strong>
+                  <small id="installAppHint">Add to home screen</small>
+                </span>
               </button>
             </div>
 
@@ -208,10 +211,6 @@
                 <button class="link-row settings-start-button" id="settingsStartButton" type="button">Start recording</button>
                 <button class="link-row audio-reset-button" id="audioSettingsReset" type="button">Reset audio</button>
               </section>
-            </div>
-
-            <div class="settings-page" id="settingsTuningPage" hidden>
-              <div class="tuning-settings-groups" id="tuningSettingsGroups"></div>
             </div>
 
             <div class="settings-page" id="settingsAudioPage" hidden>
@@ -244,17 +243,44 @@
             </div>
 
             <div class="settings-page" id="settingsDebugPage" hidden>
-              <section class="setting-group" aria-label="Debug">
-                <label class="toggle-row" for="showStatusLine">
-                  <input id="showStatusLine" type="checkbox">
-                  <span>Show status line</span>
-                </label>
-              </section>
+              <button class="settings-nav-row" id="settingsTuningNav" type="button">
+                <span>
+                  <strong>ASR tuning</strong>
+                  <small>Adjust live transcription behavior</small>
+                </span>
+              </button>
+              <label class="settings-nav-row settings-toggle-row" for="debugShowPcExport">
+                <span>
+                  <strong>Show PC export button</strong>
+                </span>
+                <input id="debugShowPcExport" type="checkbox">
+              </label>
+            </div>
+            <div class="settings-page" id="settingsTuningPage" hidden>
+              <div class="tuning-settings-groups" id="tuningSettingsGroups"></div>
             </div>
           </div>
         </section>
       </div>
+      <div class="sheet-layer" id="languageSheet" hidden>
+        <button class="sheet-scrim" id="languageSheetScrim" type="button" aria-label="Close"></button>
+        <div class="bottom-sheet">
+          <div class="sheet-header">
+            <button class="settings-back is-sheet-close" id="closeLanguageSheetButton" type="button" aria-label="Close" title="Close">
+              <svg class="settings-back-icon settings-back-down-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M6 9l6 6 6-6"></path>
+              </svg>
+            </button>
+            <h2 id="languageSheetTitle">Choose language</h2>
+          </div>
+          <div class="language-search-wrap">
+            <input type="search" id="languageSearch" class="language-search" placeholder="Search languages…" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false">
+          </div>
+          <div class="sheet-body language-sheet-body" id="languageSheetList"></div>
+        </div>
+      </div>
+
     </main>
-    <script type="module" src="/src/app.js?v=20260511-loaded-tts-models"></script>
+    <script type="module" src="/src/app.js?v=20260513-no-topbar-32"></script>
   </body>
 </html>
