@@ -1,5 +1,9 @@
 # VoxCPM Options Redesign
 
+> **Implementation status:** see
+> [voxcpm-options-redesign-implementation-log.md](voxcpm-options-redesign-implementation-log.md)
+> for what has shipped and where reality deviates from this design.
+
 This document describes the redesign of the TTS options for the VoxCPM2 and
 NanoVLLM VoxCPM backends.
 
