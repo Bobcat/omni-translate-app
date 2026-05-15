@@ -1,4 +1,4 @@
-# ASR Translate TTS
+# Omni Translate
 
 A browser app for live, turn-based speech translation.
 

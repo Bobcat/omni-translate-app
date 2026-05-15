@@ -36,7 +36,7 @@ class DevStaticFiles(StaticFiles):
 
 
 app = FastAPI(
-    title="ASR Translate TTS",
+    title="Omni Translate",
     description="Small realtime ASR -> translation -> TTS app.",
     version="0.1.0",
     root_path=root_path,

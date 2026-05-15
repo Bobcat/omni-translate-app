@@ -1,4 +1,4 @@
-# Agent Instructions (ASR Translate TTS Dev)
+# Agent Instructions (Omni Translate Dev)
 
 ## Scope
 

@@ -1,6 +1,6 @@
 {
-  "name": "ASR Translate TTS",
-  "short_name": "Translate",
+  "name": "Omni Translate",
+  "short_name": "Omni Translate",
   "display": "standalone",
   "start_url": "/",
   "background_color": "#f5f7fa",
