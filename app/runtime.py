@@ -64,7 +64,6 @@ class TurnState(StrEnum):
     OPEN_SPEAKING = "open_speaking"
     OPEN_SPOKEN_IDLE = "open_spoken_idle"
     CLOSED = "closed"
-    DISCARDED = "discarded"
 
 
 OPEN_TURN_STATES = {
@@ -160,7 +159,6 @@ class ConversationRuntime:
         self.turn_counter = 1
         self.current_turn = self._new_turn(lane_id="a_to_b")
         self.closed_turns: list[ConversationTurn] = []
-        self.discarded_turns: list[ConversationTurn] = []
         self.asr_ready: asyncio.Event | None = None
         self.loop: asyncio.AbstractEventLoop | None = None
         self.send_lock = asyncio.Lock()
@@ -268,9 +266,6 @@ class ConversationRuntime:
             return False
         if msg_type == "next_turn":
             await self._next_turn(lane_id=payload.get("lane_id"))
-            return True
-        if msg_type == "clear_turn":
-            await self._clear_turn()
             return True
         if msg_type == "speak_now":
             await self._speak_now()
@@ -553,16 +548,10 @@ class ConversationRuntime:
                 )
             )
             return
-        previous_turn = await self._close_current_turn(outcome=TurnState.CLOSED)
+        previous_turn = await self._close_current_turn()
         self.current_turn = self._new_turn(lane_id=next_lane_id)
         self._reset_lane_text_scope(self._current_lane())
         await self._send_turn_update(reason="next_turn", previous_turn=previous_turn)
-
-    async def _clear_turn(self) -> None:
-        previous_turn = await self._close_current_turn(outcome=TurnState.DISCARDED)
-        self.current_turn = self._new_turn(lane_id=previous_turn.lane_id)
-        self._reset_lane_text_scope(self._current_lane())
-        await self._send_turn_update(reason="clear_turn", previous_turn=previous_turn)
 
     async def _speak_now(self) -> None:
         lane = self._current_lane()
@@ -956,7 +945,7 @@ class ConversationRuntime:
             direction=f"{lane.source_language}->{lane.target_language}",
         )
 
-    async def _close_current_turn(self, *, outcome: TurnState) -> ConversationTurn:
+    async def _close_current_turn(self) -> ConversationTurn:
         turn = self.current_turn
         if not is_open_turn(turn.state):
             return turn
@@ -967,11 +956,8 @@ class ConversationRuntime:
         lane.translation_task = None
         lane.tts_task = None
         lane.pending_tts = None
-        turn.state = outcome
-        if outcome == TurnState.CLOSED:
-            self.closed_turns.append(turn)
-        elif outcome == TurnState.DISCARDED:
-            self.discarded_turns.append(turn)
+        turn.state = TurnState.CLOSED
+        self.closed_turns.append(turn)
         self.turn_counter += 1
         return turn
 
