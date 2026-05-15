@@ -276,14 +276,14 @@ const els = {
   settingsMicrophoneNav: document.querySelector('#settingsMicrophoneNav'),
   settingsAudioNav: document.querySelector('#settingsAudioNav'),
   settingsHistoryNav: document.querySelector('#settingsHistoryNav'),
-  settingsDebugNav: document.querySelector('#settingsDebugNav'),
+  settingsDevToolsNav: document.querySelector('#settingsDevToolsNav'),
   settingsTuningNav: document.querySelector('#settingsTuningNav'),
   settingsTuningPage: document.querySelector('#settingsTuningPage'),
-  debugShowPcExport: document.querySelector('#debugShowPcExport'),
+  devToolsShowPcExport: document.querySelector('#devToolsShowPcExport'),
   settingsMicrophonePage: document.querySelector('#settingsMicrophonePage'),
   settingsAudioPage: document.querySelector('#settingsAudioPage'),
   settingsHistoryPage: document.querySelector('#settingsHistoryPage'),
-  settingsDebugPage: document.querySelector('#settingsDebugPage'),
+  settingsDevToolsPage: document.querySelector('#settingsDevToolsPage'),
   tuningSettingsGroups: document.querySelector('#tuningSettingsGroups'),
   historySettingsSummary: document.querySelector('#historySettingsSummary'),
   historySaveSessions: document.querySelector('#historySaveSessions'),
@@ -332,7 +332,7 @@ const state = {
   tuningSettings: cloneSettings(DEFAULT_TUNING_SETTINGS),
   tuningExpandedGroups: new Set(),
   ttsSettings: cloneSettings(DEFAULT_TTS_SETTINGS),
-  debugSettings: loadDebugSettings(),
+  devToolsSettings: loadDevToolsSettings(),
   ttsOptions: cloneSettings(DEFAULT_TTS_OPTIONS),
   ttsExpandedGroups: new Set(),
   ttsVoxcpm2SelectedTag: '',
@@ -416,9 +416,9 @@ async function init() {
   els.settingsMicrophoneNav.addEventListener('click', () => setSettingsPage('microphone'));
   els.settingsAudioNav.addEventListener('click', () => setSettingsPage('audio'));
   els.settingsHistoryNav.addEventListener('click', () => setSettingsPage('history'));
-  els.settingsDebugNav.addEventListener('click', () => setSettingsPage('debug'));
+  els.settingsDevToolsNav.addEventListener('click', () => setSettingsPage('dev-tools'));
   els.settingsTuningNav.addEventListener('click', () => setSettingsPage('tuning'));
-  els.debugShowPcExport.addEventListener('change', handleDebugShowPcExportChange);
+  els.devToolsShowPcExport.addEventListener('change', handleDevToolsShowPcExportChange);
   els.installAppRow.addEventListener('click', handleInstallApp);
   els.settingsStartButton.addEventListener('click', startFromSettings);
   els.micPreGain.addEventListener('input', handlePreGainInput);
@@ -882,7 +882,7 @@ function renderLifecycle() {
   els.translateNowButton.hidden = !running;
   els.speakNowButton.hidden = !running;
   els.micToggleButton.hidden = !running;
-  els.pcExportButton.hidden = !(running && micOff && state.debugSettings.showPcExport);
+  els.pcExportButton.hidden = !(running && micOff && state.devToolsSettings.showPcExport);
   els.finishButton.hidden = !(running && micOff);
   els.startButton.disabled = state.status === 'connecting';
   els.settingsStartButton.disabled = !(setup || micOff) || state.status === 'connecting';
@@ -1022,27 +1022,27 @@ function handleSettingsBack() {
     return;
   }
   if (state.settingsPage === 'tuning') {
-    setSettingsPage('debug');
+    setSettingsPage('dev-tools');
     return;
   }
   setSettingsPage('home');
 }
 
 function setSettingsPage(page) {
-  state.settingsPage = ['microphone', 'audio', 'history', 'debug', 'tuning'].includes(page) ? page : 'home';
+  state.settingsPage = ['microphone', 'audio', 'history', 'dev-tools', 'tuning'].includes(page) ? page : 'home';
   renderSettingsPage();
-  if (state.settingsPage === 'debug') renderDebugSettings();
+  if (state.settingsPage === 'dev-tools') renderDevToolsSettings();
   if (state.settingsPage === 'tuning') renderTuningSettings();
   if (state.settingsPage === 'audio') renderTtsSettings();
 }
 
-function renderDebugSettings() {
-  els.debugShowPcExport.checked = state.debugSettings.showPcExport;
+function renderDevToolsSettings() {
+  els.devToolsShowPcExport.checked = state.devToolsSettings.showPcExport;
 }
 
-function handleDebugShowPcExportChange() {
-  state.debugSettings.showPcExport = els.debugShowPcExport.checked;
-  saveDebugSettings();
+function handleDevToolsShowPcExportChange() {
+  state.devToolsSettings.showPcExport = els.devToolsShowPcExport.checked;
+  saveDevToolsSettings();
   render();
 }
 
@@ -1053,7 +1053,7 @@ function renderSettingsPage() {
   els.settingsMicrophonePage.hidden = page !== 'microphone';
   els.settingsAudioPage.hidden = page !== 'audio';
   els.settingsHistoryPage.hidden = page !== 'history';
-  els.settingsDebugPage.hidden = page !== 'debug';
+  els.settingsDevToolsPage.hidden = page !== 'dev-tools';
   els.settingsTuningPage.hidden = page !== 'tuning';
   els.settingsBackButton.classList.toggle('is-sheet-close', home);
   els.settingsBackButton.classList.toggle('is-subpage-back', !home);
@@ -1065,7 +1065,7 @@ function renderSettingsPage() {
     els.settingsSheetTitle.textContent = 'TTS options';
   } else if (page === 'history') {
     els.settingsSheetTitle.textContent = 'History';
-  } else if (page === 'debug') {
+  } else if (page === 'dev-tools') {
     els.settingsSheetTitle.textContent = 'Dev tools';
   } else if (page === 'tuning') {
     els.settingsSheetTitle.textContent = 'ASR tuning';
@@ -2192,19 +2192,19 @@ function renderLanguageControls() {
 }
 
 const RECENT_LANGUAGES_KEY = 'recent_languages';
-const DEBUG_SETTINGS_KEY = 'debug_settings';
+const DEV_TOOLS_SETTINGS_KEY = 'dev_tools_settings';
 
-function loadDebugSettings() {
+function loadDevToolsSettings() {
   try {
-    const saved = JSON.parse(localStorage.getItem(DEBUG_SETTINGS_KEY) || '{}');
+    const saved = JSON.parse(localStorage.getItem(DEV_TOOLS_SETTINGS_KEY) || '{}');
     return { showPcExport: Boolean(saved.showPcExport) };
   } catch {
     return { showPcExport: false };
   }
 }
 
-function saveDebugSettings() {
-  localStorage.setItem(DEBUG_SETTINGS_KEY, JSON.stringify(state.debugSettings));
+function saveDevToolsSettings() {
+  localStorage.setItem(DEV_TOOLS_SETTINGS_KEY, JSON.stringify(state.devToolsSettings));
 }
 const RECENT_MAX = 4;
 
