@@ -452,6 +452,10 @@ async function init() {
     if (event.key !== 'Escape') return;
     closeSettingsSheet();
   });
+  window.addEventListener('popstate', handlePopstateBack);
+  if (history.state?.view === 'running') {
+    history.replaceState({}, '');
+  }
 
 
   renderLanguageControls();
@@ -496,10 +500,8 @@ async function startListening({ statusDetail = 'Opening connection' } = {}) {
       handleMessage,
       () => {
         if (state.socket !== socket) return;
-        state.captureMutedForPlayback = false;
-        state.sessionId = null;
-        renderAudioSettings();
-        setSessionState(SESSION_STATES.SETUP);
+        cleanupClientSession({ keepSocket: false });
+        resetSessionToSetup();
         setStatus('idle', '');
       },
     );
@@ -891,13 +893,40 @@ function clearAllLanes({ laneId = currentLaneId() } = {}) {
 }
 
 function setSessionState(sessionState) {
+  const previous = state.sessionState;
   state.sessionState = Object.values(SESSION_STATES).includes(sessionState) ? sessionState : SESSION_STATES.SETUP;
   if (state.sessionState !== SESSION_STATES.RUNNING) {
     state.micState = MIC_STATES.OFF;
   }
+  syncSessionHistory(previous, state.sessionState);
   renderLifecycle();
   renderTuningSettings({ preserveScroll: true });
   updateActionButtons();
+}
+
+let _skipHistorySync = false;
+
+function syncSessionHistory(previous, next) {
+  if (_skipHistorySync) return;
+  if (previous !== SESSION_STATES.RUNNING && next === SESSION_STATES.RUNNING) {
+    if (history.state?.view !== 'running') {
+      history.pushState({ view: 'running' }, '');
+    }
+  } else if (previous === SESSION_STATES.RUNNING && next !== SESSION_STATES.RUNNING) {
+    if (history.state?.view === 'running') {
+      history.back();
+    }
+  }
+}
+
+function handlePopstateBack() {
+  if (state.sessionState !== SESSION_STATES.RUNNING) return;
+  _skipHistorySync = true;
+  try {
+    finishSession();
+  } finally {
+    _skipHistorySync = false;
+  }
 }
 
 function setViewMode(viewMode) {
