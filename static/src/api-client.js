@@ -44,6 +44,18 @@ export const api = {
     });
   },
 
+  generateStableVoiceSample({ language, gender, engine }) {
+    return fetchJson('/api/voice-library/stable', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        language: String(language || ''),
+        gender: String(gender || ''),
+        engine: String(engine || ''),
+      }),
+    });
+  },
+
   async getSessionPcExport(sessionId) {
     const response = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/transcript.pc`, {
       headers: { Accept: 'text/plain' },

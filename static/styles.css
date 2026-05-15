@@ -1489,6 +1489,64 @@ button {
   opacity: 0.55;
 }
 
+.voice-library-help {
+  margin: 0 0 8px;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  background: var(--surface-soft);
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+#settingsSheet .bottom-sheet:has(#settingsVoiceLibraryPage:not([hidden])) {
+  height: 100dvh;
+  max-height: 100dvh;
+}
+
+.voice-library-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.voice-library-status {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.voice-library-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.voice-library-actions .tts-inspect-button {
+  flex: 1 1 auto;
+}
+
+.voice-library-group .select-row {
+  grid-template-columns: minmax(0, 100px) 1fr;
+}
+
+.voice-library-group .select-row select {
+  width: 100%;
+}
+
+.select-row select option {
+  color: var(--text);
+  background: var(--surface);
+}
+
+.tts-stable-status {
+  color: var(--muted);
+  font-size: 0.78rem;
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .tts-inspect-button {
   width: 100%;
   min-height: 30px;
@@ -1505,6 +1563,39 @@ button {
   color: var(--muted);
   cursor: default;
   opacity: 0.55;
+}
+
+.tts-play-button {
+  width: 28px;
+  height: 28px;
+  padding: 5px;
+  background: transparent;
+  border: 0;
+  border-radius: 50%;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.tts-play-button:hover,
+.tts-play-button:focus-visible {
+  background: var(--surface);
+  color: var(--text);
+  outline: none;
+}
+
+.tts-play-button:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+.tts-play-button svg {
+  width: 100%;
+  height: 100%;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .tts-prompt-preview {

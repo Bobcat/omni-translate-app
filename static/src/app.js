@@ -136,7 +136,6 @@ const DEFAULT_TTS_OPTIONS = {
     { value: 'reference_audio', label: 'From reference audio' },
   ],
   voxcpm2_genders: [
-    { value: 'no_preference', label: 'No preference' },
     { value: 'female', label: 'Female' },
     { value: 'male', label: 'Male' },
   ],
@@ -148,19 +147,18 @@ const DEFAULT_TTS_OPTIONS = {
   ],
   voxcpm2_reference_sources: [
     { value: 'last_speech', label: 'Last speech fragment' },
-    { value: 'stable_generated', label: 'Stable generated', disabled: true },
+    { value: 'stable_generated', label: 'Stable generated' },
     { value: 'own_voice', label: 'Own voice (later)', disabled: true },
   ],
 };
 const VOXCPM2_DEFAULT_LANGUAGE_CONFIG = {
   mode: 'description',
-  gender: 'no_preference',
+  gender: 'female',
   style: 'neutral',
 };
 const VOXCPM2_DEFAULT_TRIM_SECONDS = 8;
 const VOXCPM2_VOICE_CONFIG_STORAGE_KEY = 'voxcpm2_voice_config';
 const VOXCPM2_GENDER_CLAUSES = {
-  no_preference: 'Use a natural adult voice.',
   female: 'Use a natural adult female voice.',
   male: 'Use a natural adult male voice.',
 };
@@ -284,6 +282,9 @@ const els = {
   settingsAudioPage: document.querySelector('#settingsAudioPage'),
   settingsHistoryPage: document.querySelector('#settingsHistoryPage'),
   settingsDevToolsPage: document.querySelector('#settingsDevToolsPage'),
+  settingsVoiceLibraryNav: document.querySelector('#settingsVoiceLibraryNav'),
+  settingsVoiceLibraryPage: document.querySelector('#settingsVoiceLibraryPage'),
+  voiceLibraryControls: document.querySelector('#voiceLibraryControls'),
   tuningSettingsGroups: document.querySelector('#tuningSettingsGroups'),
   historySettingsSummary: document.querySelector('#historySettingsSummary'),
   historySaveSessions: document.querySelector('#historySaveSessions'),
@@ -338,6 +339,11 @@ const state = {
   ttsVoxcpm2SelectedTag: '',
   ttsPromptInspectOpen: false,
   ttsUpdateBusy: false,
+  voiceLibraryStable: {},
+  voiceLibraryBusyTag: '',
+  voiceLibraryEngine: '',
+  voiceLibraryLanguageTag: '',
+  voiceLibraryGender: 'female',
 };
 
 let audioQueue;
@@ -389,6 +395,7 @@ async function init() {
   state.audioInputSampleRate = config.audio_input?.sample_rate_hz || 16000;
   state.tuningSettings = mergeSettings(DEFAULT_TUNING_SETTINGS, config.live_settings || {});
   applyTtsConfig(config.tts || {});
+  applyVoiceLibraryStatus(config.voice_library?.stable || {});
   syncVoxcpm2VoiceConfigToBackend();
 
   els.startButton.addEventListener('click', handleStartButton);
@@ -418,6 +425,9 @@ async function init() {
   els.settingsHistoryNav.addEventListener('click', () => setSettingsPage('history'));
   els.settingsDevToolsNav.addEventListener('click', () => setSettingsPage('dev-tools'));
   els.settingsTuningNav.addEventListener('click', () => setSettingsPage('tuning'));
+  els.settingsVoiceLibraryNav.addEventListener('click', () => setSettingsPage('voice-library'));
+  els.voiceLibraryControls.addEventListener('change', handleVoiceLibraryChange);
+  els.voiceLibraryControls.addEventListener('click', handleVoiceLibraryClick);
   els.devToolsShowPcExport.addEventListener('change', handleDevToolsShowPcExportChange);
   els.installAppRow.addEventListener('click', handleInstallApp);
   els.settingsStartButton.addEventListener('click', startFromSettings);
@@ -1021,7 +1031,7 @@ function handleSettingsBack() {
     closeSettingsSheet();
     return;
   }
-  if (state.settingsPage === 'tuning') {
+  if (state.settingsPage === 'tuning' || state.settingsPage === 'voice-library') {
     setSettingsPage('dev-tools');
     return;
   }
@@ -1029,15 +1039,226 @@ function handleSettingsBack() {
 }
 
 function setSettingsPage(page) {
-  state.settingsPage = ['microphone', 'audio', 'history', 'dev-tools', 'tuning'].includes(page) ? page : 'home';
+  state.settingsPage = ['microphone', 'audio', 'history', 'dev-tools', 'tuning', 'voice-library'].includes(page) ? page : 'home';
   renderSettingsPage();
   if (state.settingsPage === 'dev-tools') renderDevToolsSettings();
   if (state.settingsPage === 'tuning') renderTuningSettings();
   if (state.settingsPage === 'audio') renderTtsSettings();
+  if (state.settingsPage === 'voice-library') renderVoiceLibraryPage();
 }
 
 function renderDevToolsSettings() {
   els.devToolsShowPcExport.checked = state.devToolsSettings.showPcExport;
+}
+
+function renderVoiceLibraryPage() {
+  if (!els.voiceLibraryControls) return;
+  if (els.settingsSheet.hidden || state.settingsPage !== 'voice-library') return;
+  const engines = voiceLibraryEngineOptions();
+  const languageTags = voiceLibraryLanguageTags();
+  const genderOptions = voxcpm2GenderOptions();
+  if (!engines.some((option) => option.value === state.voiceLibraryEngine)) {
+    state.voiceLibraryEngine = engines[0]?.value || '';
+  }
+  if (!languageTags.includes(state.voiceLibraryLanguageTag)) {
+    const targetTag = bcp47ForLanguageName(currentTtsTargetLanguage());
+    state.voiceLibraryLanguageTag = languageTags.includes(targetTag) ? targetTag : (languageTags[0] || '');
+  }
+  if (!['female', 'male'].includes(state.voiceLibraryGender)) {
+    state.voiceLibraryGender = 'female';
+  }
+  const tag = state.voiceLibraryLanguageTag;
+  const gender = state.voiceLibraryGender;
+  const engine = state.voiceLibraryEngine;
+  const langStatus = state.voiceLibraryStable[tag] || {
+    has_reference_text: false,
+    reference_text: '',
+    samples: {},
+  };
+  const info = stableSampleInfo(tag, gender);
+  const busy = state.voiceLibraryBusyTag === `${tag}:${gender}`;
+  const languageOptions = languageTags.map((value) => ({
+    value,
+    label: languageNameForBcp47(value) || value,
+  }));
+  const referenceText = String(langStatus.reference_text || '');
+  const languageName = languageNameForBcp47(tag) || tag || '';
+  const promptText = languageName
+    ? voxcpm2InstructionsPreview(languageName, { mode: 'description', gender, style: 'neutral' })
+    : '';
+
+  const fragment = document.createDocumentFragment();
+  fragment.append(
+    _voiceLibrarySelectRow({
+      label: 'Engine',
+      value: engine,
+      options: engines,
+      kind: 'engine',
+      disabled: engines.length < 2,
+      emptyText: engines.length ? '' : 'No VoxCPM engine loaded',
+    }),
+    _voiceLibrarySelectRow({
+      label: 'Language',
+      value: tag,
+      options: languageOptions,
+      kind: 'language',
+      disabled: false,
+    }),
+    _voiceLibrarySelectRow({
+      label: 'Gender',
+      value: gender,
+      options: genderOptions,
+      kind: 'gender',
+      disabled: false,
+    }),
+    _voiceLibraryStatusLine(info),
+    _voiceLibraryActions({ busy, info, hasReferenceText: langStatus.has_reference_text, hasEngine: Boolean(engine) }),
+    _voiceLibraryBlock('Reference text', referenceText || '(no reference text for this language)'),
+    _voiceLibraryBlock('Prompt', promptText),
+  );
+  els.voiceLibraryControls.replaceChildren(fragment);
+}
+
+function voiceLibraryEngineOptions() {
+  const all = ttsBackendOptions();
+  return all.filter((option) => option.value === 'voxcpm2' || option.value === 'nanovllm_voxcpm');
+}
+
+function voiceLibraryLanguageTags() {
+  const tags = [];
+  const seen = new Set();
+  for (const item of languages) {
+    const tag = item.bcp47;
+    if (!tag || seen.has(tag)) continue;
+    seen.add(tag);
+    tags.push(tag);
+  }
+  tags.sort((a, b) => (languageNameForBcp47(a) || a).localeCompare(languageNameForBcp47(b) || b));
+  return tags;
+}
+
+function _voiceLibrarySelectRow({ label, value, options, kind, disabled, emptyText }) {
+  const row = document.createElement('label');
+  row.className = 'select-row voice-library-row';
+  const labelEl = document.createElement('span');
+  labelEl.textContent = label;
+  const select = document.createElement('select');
+  select.dataset.voiceLibraryKind = kind;
+  select.disabled = disabled || !options.length;
+  if (!options.length && emptyText) {
+    const opt = document.createElement('option');
+    opt.textContent = emptyText;
+    opt.value = '';
+    select.append(opt);
+  } else {
+    for (const option of options) {
+      const opt = document.createElement('option');
+      opt.value = option.value;
+      opt.textContent = option.label;
+      select.append(opt);
+    }
+    select.value = value;
+  }
+  row.append(labelEl, select);
+  return row;
+}
+
+function _voiceLibraryBlock(label, body) {
+  const wrap = document.createElement('div');
+  wrap.className = 'tts-prompt-preview voice-library-block';
+  const labelEl = document.createElement('span');
+  labelEl.className = 'tts-prompt-preview-label';
+  labelEl.textContent = label;
+  const code = document.createElement('code');
+  code.textContent = body;
+  wrap.append(labelEl, code);
+  return wrap;
+}
+
+function _voiceLibraryStatusLine(info) {
+  const line = document.createElement('div');
+  line.className = 'voice-library-status';
+  if (info?.exists && info?.generated_at) {
+    try {
+      const stamp = new Date(info.generated_at);
+      if (!Number.isNaN(stamp.getTime())) {
+        line.textContent = `Last generated: ${stamp.toLocaleString([], {
+          year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+        })}`;
+        return line;
+      }
+    } catch (_) {}
+    line.textContent = 'Last generated: unknown time';
+  } else {
+    line.textContent = 'Last generated: never';
+  }
+  return line;
+}
+
+function _voiceLibraryActions({ busy, info, hasReferenceText, hasEngine }) {
+  const wrap = document.createElement('div');
+  wrap.className = 'voice-library-actions';
+  const generate = document.createElement('button');
+  generate.type = 'button';
+  generate.className = 'tts-inspect-button';
+  generate.dataset.voiceLibraryAction = 'generate';
+  if (busy) {
+    generate.textContent = 'Generating…';
+  } else if (info.exists) {
+    generate.textContent = 'Regenerate';
+  } else {
+    generate.textContent = 'Generate';
+  }
+  generate.disabled = busy || !hasReferenceText || !hasEngine;
+  if (!hasReferenceText) generate.title = 'No reference text for this language';
+  else if (!hasEngine) generate.title = 'Load a VoxCPM engine to generate samples';
+  const play = document.createElement('button');
+  play.type = 'button';
+  play.className = 'tts-play-button';
+  play.dataset.voiceLibraryAction = 'play';
+  play.setAttribute('aria-label', 'Play sample');
+  play.title = 'Play sample';
+  play.disabled = busy || !info.exists;
+  play.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true">'
+    + '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>'
+    + '<path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>'
+    + '<path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>'
+    + '</svg>';
+  wrap.append(generate, play);
+  return wrap;
+}
+
+function handleVoiceLibraryChange(event) {
+  const select = event.target;
+  if (!select || select.tagName !== 'SELECT') return;
+  const kind = select.dataset.voiceLibraryKind || '';
+  const value = String(select.value || '');
+  if (kind === 'engine') {
+    state.voiceLibraryEngine = value;
+  } else if (kind === 'language') {
+    state.voiceLibraryLanguageTag = value.toLowerCase();
+  } else if (kind === 'gender') {
+    state.voiceLibraryGender = value;
+  } else {
+    return;
+  }
+  renderVoiceLibraryPage();
+}
+
+function handleVoiceLibraryClick(event) {
+  const button = event.target?.closest?.('[data-voice-library-action]');
+  if (!button || button.disabled) return;
+  const action = button.dataset.voiceLibraryAction;
+  const tag = state.voiceLibraryLanguageTag;
+  const gender = state.voiceLibraryGender;
+  if (action === 'generate') {
+    handleGenerateStableSample(tag, gender, state.voiceLibraryEngine);
+    return;
+  }
+  if (action === 'play') {
+    const info = stableSampleInfo(tag, gender);
+    if (info.exists) playStableSamplePreview(tag, gender, info);
+  }
 }
 
 function handleDevToolsShowPcExportChange() {
@@ -1055,6 +1276,7 @@ function renderSettingsPage() {
   els.settingsHistoryPage.hidden = page !== 'history';
   els.settingsDevToolsPage.hidden = page !== 'dev-tools';
   els.settingsTuningPage.hidden = page !== 'tuning';
+  els.settingsVoiceLibraryPage.hidden = page !== 'voice-library';
   els.settingsBackButton.classList.toggle('is-sheet-close', home);
   els.settingsBackButton.classList.toggle('is-subpage-back', !home);
   els.settingsBackButton.setAttribute('aria-label', home ? 'Close settings' : 'Back');
@@ -1069,6 +1291,8 @@ function renderSettingsPage() {
     els.settingsSheetTitle.textContent = 'Dev tools';
   } else if (page === 'tuning') {
     els.settingsSheetTitle.textContent = 'ASR tuning';
+  } else if (page === 'voice-library') {
+    els.settingsSheetTitle.textContent = 'Voice library';
   } else {
     els.settingsSheetTitle.textContent = 'Settings';
   }
@@ -1482,17 +1706,26 @@ function normalizeVoxcpm2LanguageEntry(entry) {
   if (!entry || typeof entry !== 'object') return null;
   const mode = entry.mode === 'reference_audio' ? 'reference_audio' : 'description';
   if (mode === 'description') {
-    const allowedGenders = new Set(['no_preference', 'female', 'male']);
+    const allowedGenders = new Set(['female', 'male']);
     const allowedStyles = new Set(['neutral', 'warm', 'calm', 'clear']);
-    const gender = allowedGenders.has(entry.gender) ? entry.gender : 'no_preference';
+    const gender = allowedGenders.has(entry.gender) ? entry.gender : 'female';
     const style = allowedStyles.has(entry.style) ? entry.style : 'neutral';
     return { mode, gender, style };
   }
+  const allowedSources = new Set(['last_speech', 'stable_generated']);
+  const referenceSource = allowedSources.has(entry.reference_source)
+    ? entry.reference_source
+    : 'last_speech';
   const trimRaw = Number(entry.trim_seconds);
   const trim = Number.isFinite(trimRaw)
     ? Math.min(60, Math.max(1, trimRaw))
     : VOXCPM2_DEFAULT_TRIM_SECONDS;
-  return { mode, reference_source: 'last_speech', trim_seconds: trim };
+  const out = { mode, reference_source: referenceSource, trim_seconds: trim };
+  if (referenceSource === 'stable_generated') {
+    const allowedGenders = new Set(['female', 'male']);
+    out.stable_gender = allowedGenders.has(entry.stable_gender) ? entry.stable_gender : 'female';
+  }
+  return out;
 }
 
 function handleTtsEnabledChange() {
@@ -1553,8 +1786,8 @@ function handleTtsSettingChange(event) {
     return;
   }
   if (kind === 'voxcpm2-gender') {
-    const allowed = new Set(['no_preference', 'female', 'male']);
-    const value = allowed.has(input.value) ? input.value : 'no_preference';
+    const allowed = new Set(['female', 'male']);
+    const value = allowed.has(input.value) ? input.value : 'female';
     updateVoxcpm2LanguageConfig(tag, (current) => ({
       mode: 'description',
       gender: value,
@@ -1573,24 +1806,47 @@ function handleTtsSettingChange(event) {
     return;
   }
   if (kind === 'voxcpm2-reference-source') {
-    // Phase 1: only "last_speech" is selectable. The disabled options are
-    // shown for affordance only; the picker resets the value defensively.
+    const allowed = new Set(['last_speech', 'stable_generated']);
+    const value = allowed.has(input.value) ? input.value : 'last_speech';
+    updateVoxcpm2LanguageConfig(tag, (current) => {
+      const next = {
+        mode: 'reference_audio',
+        reference_source: value,
+        trim_seconds: Number.isFinite(Number(current.trim_seconds))
+          ? Number(current.trim_seconds)
+          : VOXCPM2_DEFAULT_TRIM_SECONDS,
+      };
+      if (value === 'stable_generated') {
+        next.stable_gender = current.stable_gender || 'female';
+      }
+      return next;
+    }, previous);
+    return;
+  }
+  if (kind === 'voxcpm2-stable-gender') {
+    const allowed = new Set(['female', 'male']);
+    const value = allowed.has(input.value) ? input.value : 'female';
     updateVoxcpm2LanguageConfig(tag, (current) => ({
       mode: 'reference_audio',
-      reference_source: 'last_speech',
+      reference_source: 'stable_generated',
       trim_seconds: Number.isFinite(Number(current.trim_seconds))
         ? Number(current.trim_seconds)
         : VOXCPM2_DEFAULT_TRIM_SECONDS,
+      stable_gender: value,
     }), previous);
     return;
   }
   if (kind === 'voxcpm2-trim-seconds') {
     const value = normalizeTtsNumber(input.value, VOXCPM2_DEFAULT_TRIM_SECONDS, 1, 60);
-    updateVoxcpm2LanguageConfig(tag, (current) => ({
-      mode: 'reference_audio',
-      reference_source: 'last_speech',
-      trim_seconds: value,
-    }), previous);
+    updateVoxcpm2LanguageConfig(tag, (current) => {
+      const allowed = new Set(['last_speech', 'stable_generated']);
+      const source = allowed.has(current.reference_source) ? current.reference_source : 'last_speech';
+      const next = { mode: 'reference_audio', reference_source: source, trim_seconds: value };
+      if (source === 'stable_generated') {
+        next.stable_gender = current.stable_gender || 'female';
+      }
+      return next;
+    }, previous);
     return;
   }
 }
@@ -1646,6 +1902,62 @@ function handleTtsSettingsClick(event) {
   if (!button) return;
   if (button.dataset.ttsAction === 'toggle-prompt-preview') {
     state.ttsPromptInspectOpen = !state.ttsPromptInspectOpen;
+    renderTtsSettings({ preserveScroll: true });
+  }
+}
+
+function playStableSamplePreview(tag, gender, info) {
+  if (!tag || !gender || !info?.exists) return;
+  const cacheBust = encodeURIComponent(info.generated_at || String(Date.now()));
+  const url = `/api/voice-library/stable/${encodeURIComponent(tag)}/${encodeURIComponent(gender)}/audio.wav?t=${cacheBust}`;
+  audioQueue.clear();
+  audioQueue.enqueue({ url, duration_ms: 0, replay: true });
+}
+
+function applyVoiceLibraryStatus(stable) {
+  const next = {};
+  if (stable && typeof stable === 'object') {
+    for (const [tag, entry] of Object.entries(stable)) {
+      next[String(tag).toLowerCase()] = entry && typeof entry === 'object'
+        ? {
+          has_reference_text: Boolean(entry.has_reference_text),
+          reference_text: String(entry.reference_text || ''),
+          samples: entry.samples && typeof entry.samples === 'object' ? entry.samples : {},
+        }
+        : { has_reference_text: false, reference_text: '', samples: {} };
+    }
+  }
+  state.voiceLibraryStable = next;
+}
+
+function stableSampleInfo(tag, gender) {
+  return state.voiceLibraryStable[tag]?.samples?.[gender] || { exists: false, generated_at: null };
+}
+
+async function handleGenerateStableSample(tag, gender, engine) {
+  if (!tag || !gender || !engine || state.voiceLibraryBusyTag) return;
+  state.voiceLibraryBusyTag = `${tag}:${gender}`;
+  renderVoiceLibraryPage();
+  renderTtsSettings({ preserveScroll: true });
+  try {
+    const result = await api.generateStableVoiceSample({ language: tag, gender, engine });
+    const resolvedGender = String(result?.gender || gender);
+    if (result?.info && typeof result.info === 'object') {
+      const existing = state.voiceLibraryStable[tag] || { has_reference_text: false, samples: {} };
+      state.voiceLibraryStable = {
+        ...state.voiceLibraryStable,
+        [tag]: {
+          ...existing,
+          samples: { ...(existing.samples || {}), [resolvedGender]: result.info },
+        },
+      };
+      playStableSamplePreview(tag, resolvedGender, result.info);
+    }
+  } catch (error) {
+    setStatus('error', error.message || 'Sample generation failed');
+  } finally {
+    state.voiceLibraryBusyTag = '';
+    renderVoiceLibraryPage();
     renderTtsSettings({ preserveScroll: true });
   }
 }
@@ -1779,13 +2091,13 @@ function voxcpm2TtsRows(backend) {
   if (config.mode === 'description') {
     rows.push(createTtsSelectRow({
       label: 'Voice gender',
-      value: config.gender || 'no_preference',
+      value: config.gender || 'female',
       options: voxcpm2GenderOptions(),
       disabled,
       meta,
       kind: 'voxcpm2-gender',
       language: tag,
-      emptyLabel: 'No preference',
+      emptyLabel: 'Female',
     }));
     rows.push(createTtsSelectRow({
       label: 'Speaking style',
@@ -1808,6 +2120,18 @@ function voxcpm2TtsRows(backend) {
       language: tag,
       emptyLabel: 'Last speech fragment',
     }));
+    if ((config.reference_source || 'last_speech') === 'stable_generated') {
+      rows.push(createTtsSelectRow({
+        label: 'Voice gender',
+        value: config.stable_gender || 'female',
+        options: voxcpm2GenderOptions(),
+        disabled,
+        meta,
+        kind: 'voxcpm2-stable-gender',
+        language: tag,
+        emptyLabel: 'Female',
+      }));
+    }
     rows.push(createTtsNumberRow({
       label: 'Trim reference audio',
       value: Number.isFinite(Number(config.trim_seconds)) ? Number(config.trim_seconds) : VOXCPM2_DEFAULT_TRIM_SECONDS,
@@ -1820,9 +2144,55 @@ function voxcpm2TtsRows(backend) {
       kind: 'voxcpm2-trim-seconds',
       language: tag,
     }));
+    if ((config.reference_source || 'last_speech') === 'stable_generated') {
+      rows.push(createStableSampleStatusRow({
+        tag,
+        gender: config.stable_gender || 'female',
+        meta,
+      }));
+    }
   }
   rows.push(createTtsPromptInspectRows(active, tag, config));
   return rows;
+}
+
+function createStableSampleStatusRow({ tag, gender, meta }) {
+  const row = document.createElement('div');
+  row.className = 'tuning-row';
+  const labelEl = document.createElement('span');
+  labelEl.className = 'tuning-label';
+  labelEl.textContent = 'Stable sample';
+  const metaEl = document.createElement('span');
+  metaEl.className = 'tuning-meta';
+  metaEl.textContent = meta;
+  const langEntry = state.voiceLibraryStable[tag] || { has_reference_text: false, samples: {} };
+  const info = stableSampleInfo(tag, gender);
+  const valueEl = document.createElement('span');
+  valueEl.className = 'tts-stable-status';
+  if (!langEntry.has_reference_text) {
+    valueEl.textContent = 'No reference text';
+  } else if (!info.exists) {
+    valueEl.textContent = 'Not generated yet';
+  } else {
+    valueEl.textContent = formatStableSampleStatus(info);
+  }
+  row.append(labelEl, metaEl, valueEl);
+  return row;
+}
+
+function formatStableSampleStatus(info) {
+  if (!info?.generated_at) return 'Sample · available';
+  try {
+    const stamp = new Date(info.generated_at);
+    if (!Number.isNaN(stamp.getTime())) {
+      const time = stamp.toLocaleString([], {
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit',
+      });
+      return `Sample · ${time}`;
+    }
+  } catch (_) {}
+  return 'Sample · available';
 }
 
 function createVoxcpm2LanguagePickerRow({ tag, disabled, meta }) {
@@ -1946,7 +2316,7 @@ function voxcpm2InstructionsPreview(languageName, config) {
       'Speak clearly and generate only the requested text.',
     ].join(' ');
   }
-  const gender = VOXCPM2_GENDER_CLAUSES[config.gender] || VOXCPM2_GENDER_CLAUSES.no_preference;
+  const gender = VOXCPM2_GENDER_CLAUSES[config.gender] || VOXCPM2_GENDER_CLAUSES.female;
   const style = VOXCPM2_STYLE_CLAUSES[config.style] || VOXCPM2_STYLE_CLAUSES.neutral;
   return [
     `Speak in ${languageName}.`,
@@ -2023,13 +2393,17 @@ function voxcpm2LanguageConfig(tag) {
     return { ...VOXCPM2_DEFAULT_LANGUAGE_CONFIG };
   }
   if (stored.mode === 'reference_audio') {
-    return {
+    const cfg = {
       mode: 'reference_audio',
       reference_source: stored.reference_source || 'last_speech',
       trim_seconds: Number.isFinite(Number(stored.trim_seconds))
         ? Number(stored.trim_seconds)
         : VOXCPM2_DEFAULT_TRIM_SECONDS,
     };
+    if (cfg.reference_source === 'stable_generated') {
+      cfg.stable_gender = stored.stable_gender || 'female';
+    }
+    return cfg;
   }
   return {
     mode: 'description',

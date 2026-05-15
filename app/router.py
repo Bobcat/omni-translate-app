@@ -18,6 +18,8 @@ from app.sessions import SESSIONS
 from app.tts_bridge import artifact_path
 from app.tts_bridge import tts_settings_payload
 from app.tts_bridge import update_tts_settings
+from app.voice_library import generate_stable_sample
+from app.voice_library import stable_voice_library_status
 
 
 api_router = APIRouter(prefix="/api")
@@ -31,6 +33,12 @@ class CreateSessionRequest(BaseModel):
 
 class UpdateTTSSettingsRequest(BaseModel):
     settings: dict[str, Any]
+
+
+class GenerateStableVoiceSampleRequest(BaseModel):
+    language: str
+    gender: str
+    engine: str
 
 
 @api_router.get("/health")
@@ -53,6 +61,9 @@ async def config() -> dict[str, Any]:
         },
         "tts": tts_settings_payload(),
         "live_settings": default_live_settings(),
+        "voice_library": {
+            "stable": stable_voice_library_status(),
+        },
     }
 
 
@@ -62,6 +73,28 @@ async def set_tts_settings(payload: UpdateTTSSettingsRequest) -> dict[str, Any]:
     if errors:
         raise HTTPException(status_code=422, detail={"tts": errors})
     return {"tts": settings}
+
+
+@api_router.post("/voice-library/stable")
+async def post_stable_voice_sample(payload: GenerateStableVoiceSampleRequest) -> dict[str, Any]:
+    tag = (payload.language or "").strip().lower()
+    gender = (payload.gender or "").strip().lower()
+    engine = (payload.engine or "").strip().lower()
+    if not tag:
+        raise HTTPException(status_code=400, detail="language_required")
+    if not gender:
+        raise HTTPException(status_code=400, detail="gender_required")
+    if not engine:
+        raise HTTPException(status_code=400, detail="engine_required")
+    try:
+        info = generate_stable_sample(tag, gender, engine)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return {"language": tag, "gender": gender, "engine": engine, "info": info}
 
 
 @api_router.post("/sessions")
@@ -92,6 +125,27 @@ async def create_session(request: Request, payload: CreateSessionRequest) -> dic
             "channels": get_int("live.audio.channels", 1),
         },
     }
+
+
+@api_router.get("/voice-library/stable/{language}/{gender}/audio.wav")
+async def get_stable_voice_audio(language: str, gender: str) -> FileResponse:
+    from app.voice_library import STABLE_VOICE_GENDERS, STABLE_VOICE_LIBRARY_ROOT
+    tag = (language or "").strip().lower()
+    gender_key = (gender or "").strip().lower()
+    allowed_chars = set("abcdefghijklmnopqrstuvwxyz-_")
+    if not tag or any(ch not in allowed_chars for ch in tag):
+        raise HTTPException(status_code=404, detail="Sample not found")
+    if gender_key not in STABLE_VOICE_GENDERS:
+        raise HTTPException(status_code=404, detail="Sample not found")
+    path = (STABLE_VOICE_LIBRARY_ROOT / tag / gender_key / "audio.wav").resolve()
+    if not str(path).startswith(str(STABLE_VOICE_LIBRARY_ROOT)) or not path.exists():
+        raise HTTPException(status_code=404, detail="Sample not found")
+    return FileResponse(
+        path,
+        media_type="audio/wav",
+        filename=f"stable-{tag}-{gender_key}.wav",
+        content_disposition_type="inline",
+    )
 
 
 @api_router.get("/sessions/{session_id}/tts/{artifact_id}")

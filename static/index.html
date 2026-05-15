@@ -14,7 +14,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
-    <link rel="stylesheet" href="/styles.css?v=20260514-voxcpm-options-5">
+    <link rel="stylesheet" href="/styles.css?v=20260515-voxcpm-stable-14">
   </head>
   <body>
     <main class="app is-setup">
@@ -249,12 +249,27 @@
                   <small>Adjust live transcription behavior</small>
                 </span>
               </button>
+              <button class="settings-nav-row" id="settingsVoiceLibraryNav" type="button">
+                <span>
+                  <strong>Voice library</strong>
+                  <small>Curate stable reference samples</small>
+                </span>
+              </button>
               <label class="settings-nav-row settings-toggle-row" for="devToolsShowPcExport">
                 <span>
                   <strong>Show PC export button</strong>
                 </span>
                 <input id="devToolsShowPcExport" type="checkbox">
               </label>
+            </div>
+            <div class="settings-page" id="settingsVoiceLibraryPage" hidden>
+              <p class="voice-library-help">
+                Voice library samples are short audio clips used as voice references when
+                <em>Stable generated</em> is selected for a target language in TTS options.
+                They are generated and stored server-side from the reference text per language,
+                shared across all users of this deployment.
+              </p>
+              <section class="setting-group voice-library-group" id="voiceLibraryControls" aria-label="Voice library sample"></section>
             </div>
             <div class="settings-page" id="settingsTuningPage" hidden>
               <div class="tuning-settings-groups" id="tuningSettingsGroups"></div>
@@ -281,6 +296,6 @@
       </div>
 
     </main>
-    <script type="module" src="/src/app.js?v=20260514-voxcpm-options-5"></script>
+    <script type="module" src="/src/app.js?v=20260515-voxcpm-stable-14"></script>
   </body>
 </html>

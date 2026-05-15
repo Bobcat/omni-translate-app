@@ -247,6 +247,95 @@ class TTSBridgeTests(unittest.TestCase):
         )
         self.assertTrue(tts_uses_asr_reference_wav("Dutch"))
 
+    def test_synthesize_uses_stable_voice_sample_when_selected(self) -> None:
+        from app.voice_library import STABLE_VOICE_LIBRARY_ROOT
+
+        update_tts_settings(
+            {
+                "backend": "voxcpm2",
+                "voxcpm2": {
+                    "languages": {
+                        "nl": {
+                            "mode": "reference_audio",
+                            "reference_source": "stable_generated",
+                            "trim_seconds": 4,
+                        },
+                    },
+                },
+            }
+        )
+        language_dir = (STABLE_VOICE_LIBRARY_ROOT / "nl").resolve()
+        stable_dir = language_dir / "female"
+        stable_dir.mkdir(parents=True, exist_ok=True)
+        stable_path = stable_dir / "audio.wav"
+        stable_path.write_bytes(_silent_wav(seconds=2.5))
+        self.addCleanup(lambda: shutil.rmtree(language_dir, ignore_errors=True))
+
+        fake_pool = FakeTtsPool()
+        session_id = "conv_test_stable_sample"
+        self.addCleanup(lambda: shutil.rmtree(TTS_ROOT / session_id, ignore_errors=True))
+
+        # ASR wav is intentionally not provided — runtime would skip it for stable_generated.
+        self.assertFalse(tts_uses_asr_reference_wav("Dutch"))
+
+        with mock.patch("app.tts_bridge._post_json", side_effect=fake_pool.post_json):
+            payload = TTSBridge().synthesize(
+                session_id=session_id,
+                text="Hallo",
+                language="Dutch",
+                reference_wav_path=None,
+            )
+
+        request = fake_pool.calls[0]["payload"]
+        self.assertEqual(request["model"], "voxcpm2")
+        self.assertIn("reference_audio", request["voice"])
+        self.assertIn("Use the reference audio as the voice reference", request["voice"]["instructions"])
+        self.assertEqual(payload["metadata"]["reference_client_source"], "stable_generated")
+        self.assertEqual(request["voice"]["reference_audio"]["max_duration_s"], 4.0)
+
+    def test_update_tts_settings_normalizes_stable_gender(self) -> None:
+        settings, errors = update_tts_settings(
+            {
+                "backend": "voxcpm2",
+                "voxcpm2": {
+                    "languages": {
+                        "nl": {
+                            "mode": "reference_audio",
+                            "reference_source": "stable_generated",
+                            "trim_seconds": 6,
+                            "stable_gender": "female",
+                        },
+                        "it": {
+                            "mode": "reference_audio",
+                            "reference_source": "stable_generated",
+                            "trim_seconds": 6,
+                        },
+                    },
+                },
+            }
+        )
+
+        self.assertEqual(errors, {})
+        self.assertEqual(settings["voxcpm2"]["languages"]["nl"]["stable_gender"], "female")
+        # Missing stable_gender defaults to female.
+        self.assertEqual(settings["voxcpm2"]["languages"]["it"]["stable_gender"], "female")
+        # last_speech entries do not carry a stable_gender field.
+        settings, errors = update_tts_settings(
+            {
+                "voxcpm2": {
+                    "languages": {
+                        "nl": {
+                            "mode": "reference_audio",
+                            "reference_source": "last_speech",
+                            "trim_seconds": 6,
+                        },
+                    },
+                },
+            }
+        )
+        self.assertEqual(errors, {})
+        self.assertNotIn("stable_gender", settings["voxcpm2"]["languages"]["nl"])
+
     def test_update_tts_settings_replaces_languages_map_atomically(self) -> None:
         update_tts_settings(
             {
@@ -301,7 +390,7 @@ class TTSBridgeTests(unittest.TestCase):
         )
         self.assertEqual(
             [option["value"] for option in payload["options"]["voxcpm2_genders"]],
-            ["no_preference", "female", "male"],
+            ["female", "male"],
         )
         self.assertEqual(
             [option["value"] for option in payload["options"]["voxcpm2_styles"]],
@@ -313,7 +402,7 @@ class TTSBridgeTests(unittest.TestCase):
             ["last_speech", "stable_generated", "own_voice"],
         )
         self.assertFalse(reference_sources[0]["disabled"])
-        self.assertTrue(reference_sources[1]["disabled"])
+        self.assertFalse(reference_sources[1]["disabled"])
         self.assertTrue(reference_sources[2]["disabled"])
 
     def test_settings_payload_exposes_only_loaded_tts_pool_models(self) -> None:

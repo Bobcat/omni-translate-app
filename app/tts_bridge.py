@@ -107,7 +107,6 @@ VOXCPM2_MODE_OPTIONS = (
     ("reference_audio", "From reference audio"),
 )
 VOXCPM2_GENDER_OPTIONS = (
-    ("no_preference", "No preference"),
     ("female", "Female"),
     ("male", "Male"),
 )
@@ -117,20 +116,19 @@ VOXCPM2_STYLE_OPTIONS = (
     ("calm", "Calm"),
     ("clear", "Clear"),
 )
-# (value, label, disabled) — Phase 1 enables only "last_speech".
+# (value, label, disabled) — own_voice arrives in Phase 4.
 VOXCPM2_REFERENCE_SOURCE_OPTIONS = (
     ("last_speech", "Last speech fragment", False),
-    ("stable_generated", "Stable generated", True),
+    ("stable_generated", "Stable generated", False),
     ("own_voice", "Own voice (later)", True),
 )
 VOXCPM2_DEFAULT_TRIM_SECONDS = 8.0
 VOXCPM2_DEFAULT_LANGUAGE_CONFIG = {
     "mode": "description",
-    "gender": "no_preference",
+    "gender": "female",
     "style": "neutral",
 }
 VOXCPM2_GENDER_PROMPT_CLAUSES = {
-    "no_preference": "Use a natural adult voice.",
     "female": "Use a natural adult female voice.",
     "male": "Use a natural adult male voice.",
 }
@@ -298,7 +296,9 @@ def tts_uses_asr_reference_wav(language: str) -> bool:
     if not _is_voxcpm_family_backend(settings["backend"]):
         return False
     config = _voxcpm2_language_config(settings["voxcpm2"]["languages"], language)
-    return config["mode"] == "reference_audio"
+    if config["mode"] != "reference_audio":
+        return False
+    return config.get("reference_source", "last_speech") == "last_speech"
 
 
 def artifact_path(session_id: str, artifact_id: str) -> Path:
@@ -322,8 +322,18 @@ def _tts_pool_request_payload(
             voice["preset"] = preset
     elif _is_voxcpm_family_backend(backend):
         config = _voxcpm2_language_config(settings["voxcpm2"]["languages"], language)
-        wants_reference = config["mode"] == "reference_audio"
-        has_reference_audio = bool(wants_reference and reference_wav_path)
+        resolved_reference_path: str | None = None
+        reference_source = config.get("reference_source", "last_speech")
+        if config["mode"] == "reference_audio":
+            if reference_source == "stable_generated":
+                from app.voice_library import stable_voice_wav_path
+                stable_gender = str(config.get("stable_gender") or "female")
+                stable_path = stable_voice_wav_path(language, stable_gender)
+                if stable_path is not None:
+                    resolved_reference_path = str(stable_path)
+            elif reference_source == "last_speech" and reference_wav_path:
+                resolved_reference_path = reference_wav_path
+        has_reference_audio = bool(resolved_reference_path)
         instructions = _voxcpm2_voice_instructions(
             language,
             config,
@@ -334,13 +344,13 @@ def _tts_pool_request_payload(
         if has_reference_audio:
             trim_s = float(config.get("trim_seconds", VOXCPM2_DEFAULT_TRIM_SECONDS))
             reference_audio, reference_metrics, reference_metadata = _reference_audio_payload(
-                reference_wav_path,
+                resolved_reference_path,
                 max_duration_s=trim_s,
             )
             voice["reference_audio"] = reference_audio
             request_metrics.update(reference_metrics)
             request_metadata.update(reference_metadata)
-            request_metadata["reference_client_source"] = config.get("reference_source", "last_speech")
+            request_metadata["reference_client_source"] = reference_source
     else:
         raise ValueError(f"unsupported tts.backend: {backend!r}")
     return {
@@ -366,9 +376,9 @@ def _voxcpm2_voice_instructions(
 
 
 def _voxcpm2_description_instructions(target_lang: str, config: dict[str, Any]) -> str:
-    gender = str(config.get("gender") or "no_preference")
+    gender = str(config.get("gender") or "female")
     style = str(config.get("style") or "neutral")
-    gender_clause = VOXCPM2_GENDER_PROMPT_CLAUSES.get(gender, VOXCPM2_GENDER_PROMPT_CLAUSES["no_preference"])
+    gender_clause = VOXCPM2_GENDER_PROMPT_CLAUSES.get(gender, VOXCPM2_GENDER_PROMPT_CLAUSES["female"])
     style_clause = VOXCPM2_STYLE_PROMPT_CLAUSES.get(style, VOXCPM2_STYLE_PROMPT_CLAUSES["neutral"])
     return (
         f"Speak in {target_lang}. "
@@ -713,11 +723,11 @@ def _normalize_voxcpm2_language_entry(
         mode = "description"
     result: dict[str, Any] = {"mode": mode}
     if mode == "description":
-        gender = str(entry.get("gender") or "no_preference").strip().lower()
+        gender = str(entry.get("gender") or "female").strip().lower()
         if gender not in _VOXCPM2_GENDER_VALUES:
             if errors is not None:
                 errors[f"{errors_prefix}.gender"] = "unsupported gender"
-            gender = "no_preference"
+            gender = "female"
         style = str(entry.get("style") or "neutral").strip().lower()
         if style not in _VOXCPM2_STYLE_VALUES:
             if errors is not None:
@@ -745,6 +755,13 @@ def _normalize_voxcpm2_language_entry(
             trim = VOXCPM2_DEFAULT_TRIM_SECONDS
         result["reference_source"] = reference_source
         result["trim_seconds"] = trim
+        if reference_source == "stable_generated":
+            stable_gender = str(entry.get("stable_gender") or "female").strip().lower()
+            if stable_gender not in _VOXCPM2_GENDER_VALUES:
+                if errors is not None:
+                    errors[f"{errors_prefix}.stable_gender"] = "unsupported gender"
+                stable_gender = "female"
+            result["stable_gender"] = stable_gender
     return result
 
 
