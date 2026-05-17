@@ -1329,6 +1329,10 @@ button {
   line-height: 1.25;
 }
 
+.tuning-row:not(:has(.tuning-meta)) {
+  grid-template-columns: minmax(0, 1fr) minmax(140px, 200px);
+}
+
 .tuning-label {
   min-width: 0;
   overflow-wrap: anywhere;
@@ -1446,7 +1450,7 @@ button {
 .tts-stable-status {
   color: var(--muted);
   font-size: 0.78rem;
-  text-align: right;
+  text-align: left;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

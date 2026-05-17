@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 import time
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -33,8 +34,12 @@ from app.protocol import event
 from app.sessions import ConversationSession
 from app.sessions import SESSIONS
 from app.translation_bridge import TranslationBridge
+from app.tts_bridge import TtsReferenceUnavailableError
 from app.tts_bridge import get_tts_bridge
 from app.tts_bridge import tts_uses_asr_reference_wav
+
+
+LOGGER = logging.getLogger("asr_translate_tts.runtime")
 
 
 _ASR_LANGUAGE_CODES = {
@@ -705,6 +710,18 @@ class ConversationRuntime:
             )
         except asyncio.CancelledError:
             raise
+        except TtsReferenceUnavailableError as exc:
+            LOGGER.warning(
+                "tts skipped (reference unavailable) lane=%s turn=%s lang=%s: %s",
+                lane.lane_id, turn_id, lane.target_language, exc,
+            )
+            if self.current_turn.turn_id == turn_id and self.current_turn.state == TurnState.OPEN_SPEAKING:
+                for part in self.current_turn.parts:
+                    if part.part_id in speaking_part_ids and part.speech_state == "speaking":
+                        part.speech_state = "spoken"
+                self._refresh_turn_state()
+                await self._send_turn_update(reason="tts_skipped")
+            return
         except Exception as exc:
             if self.current_turn.turn_id == turn_id and self.current_turn.state == TurnState.OPEN_SPEAKING:
                 for part in self.current_turn.parts:
