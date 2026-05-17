@@ -126,7 +126,7 @@ recipe is inline text annotations.
 | [#107](https://github.com/OpenBMB/VoxCPM/issues/107) | Cannot run from background thread in 1.5. | Affects us only if we ever call from a non-main thread. |
 | [HF #3](https://huggingface.co/openbmb/VoxCPM2/discussions/3) | Output plays 2-3× too fast in Ultimate mode with long reference. Empirical fix: `seed=0`, verify 16 kHz sample rate. | Direct evidence a seed knob exists somewhere. |
 | [HF #14](https://huggingface.co/openbmb/VoxCPM2/discussions/14) | Ultimate Cloning produces source-language accent in target language. Control Instruction with explicit target-language tag works better. | Confirms our current instruction-prompt approach (we already say "Speak in {target_lang}"). |
-| [HF #10](https://huggingface.co/openbmb/VoxCPM2/discussions/10) | Voice-Designed audio degrades when re-used as a clone prompt. | We do exactly that with `stable_generated`. Watch for kwaliteit-issues. |
+| [HF #10](https://huggingface.co/openbmb/VoxCPM2/discussions/10) | Voice-Designed audio degrades when re-used as a clone prompt. | Not observed in our flow for the languages we actually use (en / it / de) — short TTS is consistently stable with our curated reference texts and samples. May surface in less-tested languages; listed for completeness. |
 | [HF #11](https://huggingface.co/openbmb/VoxCPM2/discussions/11) | 30-language support advertised but quality outside Chinese/English is not guaranteed; team recommends fine-tuning. | Calibrates language expectations. |
 
 ---
@@ -166,7 +166,7 @@ case under a permissive license.
 
 ---
 
-## 8. Top three actionables for our project
+## 8. Top actionables for our project
 
 1. **Grep our nano-vllm fork for a reachable seed path**
    (`grep -ri 'seed\|manual_seed\|Generator' nanovllm_voxcpm/`). If
@@ -176,10 +176,6 @@ case under a permissive license.
    pool requests to nano-vllm. One-line fix; the current `cfg=1.0`
    default may already be costing us output stability and
    text-fidelity.
-3. **Re-evaluate `stable_generated` reference samples** against
-   HF #10 — degradation when designed audio is reused as a clone
-   prompt is a documented failure mode. If we see kwaliteits-issues
-   in stable_generated TTS, this is a candidate root cause.
 
 ---
 
