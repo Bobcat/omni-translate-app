@@ -152,12 +152,13 @@ const DEFAULT_TTS_OPTIONS = {
   ],
 };
 const VOXCPM2_DEFAULT_LANGUAGE_CONFIG = {
-  mode: 'description',
-  gender: 'female',
-  style: 'neutral',
+  mode: 'reference_audio',
+  reference_source: 'stable_generated',
+  stable_gender: 'female',
 };
-const VOXCPM2_DEFAULT_TRIM_SECONDS = 8;
+const VOXCPM2_DEFAULT_TRIM_SECONDS = 4;
 const VOXCPM2_VOICE_CONFIG_STORAGE_KEY = 'voxcpm2_voice_config';
+const TTS_GLOBAL_STORAGE_KEY = 'tts_global';
 const VOXCPM2_GENDER_CLAUSES = {
   female: 'Use a natural adult female voice.',
   male: 'Use a natural adult male voice.',
@@ -232,15 +233,15 @@ const LANGUAGE_FLAGS = {
 
 const els = {
   app: document.querySelector('.app'),
-  sessionStatusPill: document.querySelector('#sessionStatusPill'),
   turnModeButton: document.querySelector('#turnModeButton'),
   conversationModeButton: document.querySelector('#conversationModeButton'),
   setupStartPanel: document.querySelector('#setupStartPanel'),
   startButton: document.querySelector('#startButton'),
-  turnHeaderActions: document.querySelector('#turnHeaderActions'),
   micToggleButton: document.querySelector('#micToggleButton'),
   pcExportButton: document.querySelector('#pcExportButton'),
-  finishButton: document.querySelector('#finishButton'),
+  swapButton: document.querySelector('#swapButton'),
+  turnSourceLanguage: document.querySelector('#turnSourceLanguage'),
+  turnTargetLanguage: document.querySelector('#turnTargetLanguage'),
   sourceLanguagePill: document.querySelector('#sourceLanguagePill'),
   sourceLanguagePillText: document.querySelector('#sourceLanguagePill .language-pill-text'),
   targetLanguagePill: document.querySelector('#targetLanguagePill'),
@@ -252,18 +253,16 @@ const els = {
   languageSearch: document.querySelector('#languageSearch'),
   languageSheetList: document.querySelector('#languageSheetList'),
   setupSwapButton: document.querySelector('#setupSwapButton'),
-  turnSourceLanguage: document.querySelector('#turnSourceLanguage'),
-  turnTargetLanguage: document.querySelector('#turnTargetLanguage'),
   installAppRow: document.querySelector('#installAppRow'),
   installAppHint: document.querySelector('#installAppHint'),
   vadBadge: document.querySelector('#vadBadge'),
   settingsButton: document.querySelector('#settingsButton'),
+  dockSettingsButton: document.querySelector('#dockSettingsButton'),
+  titlebarBackButton: document.querySelector('#titlebarBackButton'),
   sourceText: document.querySelector('#sourceText'),
   targetText: document.querySelector('#targetText'),
   translateNowButton: document.querySelector('#translateNowButton'),
   speakNowButton: document.querySelector('#speakNowButton'),
-  clearTurnButton: document.querySelector('#clearTurnButton'),
-  swapButton: document.querySelector('#swapButton'),
   audioResumeButton: document.querySelector('#audioResumeButton'),
   ttsAudio: document.querySelector('#ttsAudio'),
   settingsSheet: document.querySelector('#settingsSheet'),
@@ -357,31 +356,26 @@ audioQueue = new AudioQueue({
   resumeButton: els.audioResumeButton,
   onStatus: (text) => {
     state.audioStatus = text;
-    if (text) {
-      if (text.startsWith('Playing')) renderStatus('speaking');
-    } else if (state.sessionState === SESSION_STATES.RUNNING) {
-      renderStatus('listening');
-    }
     updateActionButtons();
   },
   onPlaybackStart: (item) => {
     state.captureMutedForPlayback = true;
     state.audioPlayback = item || null;
-    renderStatus('speaking');
     renderTranscript();
   },
   onPlaybackIdle: () => {
     state.captureMutedForPlayback = false;
     state.audioPlayback = null;
-    renderStatus(state.sessionState === SESSION_STATES.RUNNING ? 'listening' : state.status);
     renderTranscript();
   },
   onPlaybackComplete: () => {
     if (state.sessionState !== SESSION_STATES.RUNNING || state.micState !== MIC_STATES.LISTENING) return;
-    stopMicrophoneCapture({ statusText: 'Mic off' });
+    stopMicrophoneCapture();
   },
   onItemEnded: (item) => {
     if (item.replay) return;
+    const speakingPart = (state.currentTurn?.parts || []).find((p) => p.speechState === 'speaking');
+    if (speakingPart) speakingPart.speechState = 'spoken';
     state.socket?.ttsPlaybackComplete({
       laneId: item.laneId,
       turnId: item.turnId,
@@ -391,7 +385,7 @@ audioQueue = new AudioQueue({
 });
 
 init().catch((error) => {
-  setStatus('error', error.message || String(error));
+  setStatus('error');
 });
 
 async function init() {
@@ -402,13 +396,13 @@ async function init() {
   state.audioInputSampleRate = config.audio_input?.sample_rate_hz || 16000;
   state.tuningSettings = mergeSettings(DEFAULT_TUNING_SETTINGS, config.live_settings || {});
   applyTtsConfig(config.tts || {});
+  mergeStoredTtsConfigIntoState();
   applyVoiceLibraryStatus(config.voice_library?.stable || {});
   syncVoxcpm2VoiceConfigToBackend();
 
   els.startButton.addEventListener('click', handleStartButton);
   els.micToggleButton.addEventListener('click', handleMicToggle);
   els.pcExportButton.addEventListener('click', exportPcTranscript);
-  els.finishButton.addEventListener('click', handleSessionRightAction);
   els.turnModeButton?.addEventListener('click', () => setViewMode('turn'));
   els.sourceLanguagePill.addEventListener('click', () => openLanguageSheet('source'));
   els.targetLanguagePill.addEventListener('click', () => openLanguageSheet('target'));
@@ -421,18 +415,19 @@ async function init() {
   });
   window.visualViewport?.addEventListener('resize', _onViewportResize);
   els.setupSwapButton.addEventListener('click', swapSetupLanguages);
-  els.swapButton.addEventListener('click', swapDirection);
   els.translateNowButton.addEventListener('click', translateNow);
   els.speakNowButton.addEventListener('click', speakNow);
-  els.clearTurnButton.addEventListener('click', clearTurn);
+  els.swapButton.addEventListener('click', swapDirection);
   els.settingsButton.addEventListener('click', openSettingsSheet);
+  els.dockSettingsButton.addEventListener('click', openSettingsSheet);
+  els.titlebarBackButton.addEventListener('click', finishSession);
   els.settingsBackButton.addEventListener('click', handleSettingsBack);
-  els.settingsMicrophoneNav.addEventListener('click', () => setSettingsPage('microphone'));
-  els.settingsAudioNav.addEventListener('click', () => setSettingsPage('audio'));
-  els.settingsHistoryNav.addEventListener('click', () => setSettingsPage('history'));
-  els.settingsDevToolsNav.addEventListener('click', () => setSettingsPage('dev-tools'));
-  els.settingsTuningNav.addEventListener('click', () => setSettingsPage('tuning'));
-  els.settingsVoiceLibraryNav.addEventListener('click', () => setSettingsPage('voice-library'));
+  els.settingsMicrophoneNav.addEventListener('click', () => navigateSettingsPage('microphone'));
+  els.settingsAudioNav.addEventListener('click', () => navigateSettingsPage('audio'));
+  els.settingsHistoryNav.addEventListener('click', () => navigateSettingsPage('history'));
+  els.settingsDevToolsNav.addEventListener('click', () => navigateSettingsPage('dev-tools'));
+  els.settingsTuningNav.addEventListener('click', () => navigateSettingsPage('tuning'));
+  els.settingsVoiceLibraryNav.addEventListener('click', () => navigateSettingsPage('voice-library'));
   els.voiceLibraryControls.addEventListener('change', handleVoiceLibraryChange);
   els.voiceLibraryControls.addEventListener('click', handleVoiceLibraryClick);
   els.devToolsShowPcExport.addEventListener('change', handleDevToolsShowPcExportChange);
@@ -453,6 +448,19 @@ async function init() {
     closeSettingsSheet();
   });
   window.addEventListener('popstate', handlePopstateBack);
+  setupSheetSwipeClose({
+    layer: els.languageSheet,
+    sheet: els.languageSheet.querySelector('.bottom-sheet'),
+    scrollContainer: els.languageSheetList,
+    onClose: closeLanguageSheet,
+  });
+  setupSheetSwipeClose({
+    layer: els.settingsSheet,
+    sheet: els.settingsSheet.querySelector('.bottom-sheet'),
+    scrollContainer: els.settingsSheet.querySelector('.settings-views'),
+    onClose: closeSettingsSheet,
+    isAllowed: () => state.settingsPage === 'home',
+  });
   if (history.state?.view === 'running') {
     history.replaceState({}, '');
   }
@@ -468,21 +476,21 @@ async function init() {
   renderHistorySettings();
   updateActionButtons();
   renderLifecycle();
-  setStatus('idle', '');
+  setStatus('idle');
   _updateInstallRow();
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('/sw.js').catch(() => {});
   }
 }
 
-async function startListening({ statusDetail = 'Opening connection' } = {}) {
+async function startListening() {
   const startLaneId = currentLaneId();
   clearAllLanes({ laneId: startLaneId });
   state.requestedStartLaneId = startLaneId;
   state.micState = MIC_STATES.OFF;
   state.pcExportBusy = false;
   setListenBusy(true);
-  setStatus('connecting', statusDetail);
+  setStatus('connecting');
   let socket = null;
   let capture = null;
   try {
@@ -502,7 +510,7 @@ async function startListening({ statusDetail = 'Opening connection' } = {}) {
         if (state.socket !== socket) return;
         cleanupClientSession({ keepSocket: false });
         resetSessionToSetup();
-        setStatus('idle', '');
+        setStatus('idle');
       },
     );
     await Promise.all([
@@ -519,7 +527,7 @@ async function startListening({ statusDetail = 'Opening connection' } = {}) {
     state.micState = MIC_STATES.LISTENING;
     renderAudioSettings();
     setSessionState(SESSION_STATES.RUNNING);
-    setStatus('listening', '');
+    setStatus('listening');
   } catch (error) {
     state.captureMutedForPlayback = false;
     capture?.stop();
@@ -527,7 +535,7 @@ async function startListening({ statusDetail = 'Opening connection' } = {}) {
     cleanupClientSession();
     state.sessionId = null;
     setSessionState(SESSION_STATES.SETUP);
-    setStatus('error', error.message || String(error));
+    setStatus('error');
   } finally {
     setListenBusy(false);
     renderLifecycle();
@@ -543,17 +551,12 @@ function handleStartButton() {
 function handleMicToggle() {
   if (state.sessionState !== SESSION_STATES.RUNNING) return;
   if (state.micState === MIC_STATES.LISTENING) {
-    stopMicrophoneCapture({ statusText: 'Mic off' });
+    stopMicrophoneCapture();
     return;
   }
   if (state.micState === MIC_STATES.OFF) {
     startMicrophoneCapture();
   }
-}
-
-function handleSessionRightAction() {
-  if (state.sessionState !== SESSION_STATES.RUNNING) return;
-  finishSession();
 }
 
 function finishSession() {
@@ -594,21 +597,21 @@ async function startMicrophoneCapture() {
     state.captureMutedForPlayback = false;
     renderAudioSettings();
     renderTranscript();
-    setStatus('listening', '');
+    setStatus('listening');
   } catch (error) {
     state.capture?.stop();
     state.capture = null;
     state.micState = MIC_STATES.OFF;
     renderMicLevel(0);
     renderAudioSettings();
-    setStatus('error', error.message || 'Microphone unavailable');
+    setStatus('error');
   } finally {
     setListenBusy(false);
     renderLifecycle();
   }
 }
 
-function stopMicrophoneCapture({ statusText = 'Mic off' } = {}) {
+function stopMicrophoneCapture() {
   if (state.sessionState !== SESSION_STATES.RUNNING) return;
   state.captureMutedForPlayback = false;
   state.capture?.stop();
@@ -618,7 +621,7 @@ function stopMicrophoneCapture({ statusText = 'Mic off' } = {}) {
   renderMicLevel(0);
   renderAudioSettings();
   renderTranscript();
-  setStatus('listening', statusText);
+  setStatus('listening');
 }
 
 function speakNow() {
@@ -636,7 +639,7 @@ function speakNow() {
       updateActionButtons();
     }, 1500);
     if (state.micState === MIC_STATES.LISTENING) {
-      stopMicrophoneCapture({ statusText: 'Mic off' });
+      stopMicrophoneCapture();
     }
     updateActionButtons();
   }
@@ -658,6 +661,14 @@ function translateNow() {
   }
 }
 
+function swapDirection() {
+  if (state.sessionState !== SESSION_STATES.RUNNING) return;
+  if (!state.socket?.isOpen()) return;
+  const nextLaneId = currentLaneId() === 'a_to_b' ? 'b_to_a' : 'a_to_b';
+  audioQueue.clear();
+  state.socket.nextTurn(nextLaneId);
+}
+
 async function exportPcTranscript() {
   if (state.sessionState !== SESSION_STATES.RUNNING || state.micState !== MIC_STATES.OFF || !state.sessionId) return;
   state.pcExportBusy = true;
@@ -666,17 +677,10 @@ async function exportPcTranscript() {
     const { blob, filename } = await api.getSessionPcExport(state.sessionId);
     downloadBlob(blob, filename);
   } catch (error) {
-    setStatus('error', error.message || 'PC export failed');
+    setStatus('error');
   } finally {
     state.pcExportBusy = false;
     updateActionButtons();
-  }
-}
-
-function clearTurn() {
-  if (state.sessionState !== SESSION_STATES.RUNNING) return;
-  if (state.socket?.clearTurn()) {
-    audioQueue.clear();
   }
 }
 
@@ -685,7 +689,7 @@ function resetSessionToSetup() {
   state.requestedStartLaneId = 'a_to_b';
   state.captureMutedForPlayback = false;
   setSessionState(SESSION_STATES.SETUP);
-  setStatus('idle', '');
+  setStatus('idle');
 }
 
 function downloadBlob(blob, filename) {
@@ -730,14 +734,6 @@ async function createStartedAudioCapture({ targetSampleRate = 16000 } = {}) {
   }
 }
 
-function swapDirection() {
-  if (state.sessionState !== SESSION_STATES.RUNNING) return;
-  const nextLaneId = currentLaneId() === 'a_to_b' ? 'b_to_a' : 'a_to_b';
-  if (!state.socket?.isOpen()) return;
-  audioQueue.clear();
-  state.socket.nextTurn(nextLaneId);
-}
-
 function handleMessage(msg) {
   const msgSessionId = String(msg?.session_id || '').trim();
   if (!state.sessionId || msgSessionId !== state.sessionId) return;
@@ -746,7 +742,7 @@ function handleMessage(msg) {
     return;
   }
   if (msg.type === 'state') {
-    setStatus(msg.state || 'idle', '');
+    setStatus(msg.state || 'idle');
     return;
   }
   if (msg.type === 'vad_state') {
@@ -800,7 +796,7 @@ function handleMessage(msg) {
     return;
   }
   if (msg.type === 'error') {
-    setStatus('error', msg.message || msg.code || 'Error');
+    setStatus('error');
     return;
   }
   if (msg.type === 'ended') {
@@ -840,7 +836,7 @@ function applyTurnUpdate(msg) {
   applyCurrentTurn(msg.current_turn || state.currentTurn);
   clearSpeakNowPending();
   const laneChanged = previousLaneId !== currentLaneId();
-  if (laneChanged || msg.reason === 'clear_turn' || msg.reason === 'next_turn') {
+  if (laneChanged || msg.reason === 'next_turn') {
     audioQueue.clear();
     hideVadHint();
     enableTranscriptAutoFollow();
@@ -861,7 +857,6 @@ function renderTurnStatus(reason) {
   } else if (reason === 'translate_now') {
   } else if (reason === 'translation_update') {
   } else if (reason === 'speak_now') {
-  } else if (reason === 'clear_turn') {
   } else if (reason === 'next_turn' || reason === 'tts_playback_complete') {
   }
 }
@@ -919,7 +914,26 @@ function syncSessionHistory(previous, next) {
   }
 }
 
-function handlePopstateBack() {
+function handlePopstateBack(event) {
+  if (_skipLanguageSheetPopstate) {
+    _skipLanguageSheetPopstate = false;
+    return;
+  }
+  if (!els.languageSheet.hidden) {
+    closeLanguageSheet();
+    return;
+  }
+  if (!els.settingsSheet.hidden) {
+    const newState = event?.state;
+    if (newState?.view === 'settingsSheet' && newState.page) {
+      _settingsSheetDepth = Math.max(1, _settingsSheetDepth - 1);
+      setSettingsPage(newState.page);
+    } else {
+      _settingsSheetDepth = 0;
+      els.settingsSheet.hidden = true;
+    }
+    return;
+  }
   if (state.sessionState !== SESSION_STATES.RUNNING) return;
   _skipHistorySync = true;
   try {
@@ -945,13 +959,11 @@ function renderLifecycle() {
   els.app.classList.toggle('is-mic-listening', micListening);
   els.setupStartPanel.hidden = !setup;
   els.sourceText.hidden = setup;
-  els.turnHeaderActions.hidden = !running;
   els.setupSwapButton.hidden = !setup;
   els.translateNowButton.hidden = !running;
   els.speakNowButton.hidden = !running;
   els.micToggleButton.hidden = !running;
   els.pcExportButton.hidden = !(running && micOff && state.devToolsSettings.showPcExport);
-  els.finishButton.hidden = !(running && micOff);
   els.startButton.disabled = state.status === 'connecting';
   els.settingsStartButton.disabled = !(setup || micOff) || state.status === 'connecting';
   els.setupSwapButton.disabled = !setup || state.status === 'connecting';
@@ -960,7 +972,6 @@ function renderLifecycle() {
   els.conversationModeButton?.classList.toggle('is-active', state.viewMode === 'conversation');
   els.conversationModeButton?.setAttribute('aria-pressed', state.viewMode === 'conversation' ? 'true' : 'false');
   renderLanguageControls();
-  renderStatus(state.status);
 }
 
 function setListenBusy(busy) {
@@ -973,8 +984,7 @@ function updateActionButtons() {
   updateSpeakNowButton();
   updateMicToggleButton();
   updatePcExportButton();
-  updateClearTurnButton();
-  updateSessionRightAction();
+  updateSwapButton();
   renderLanguageControls();
 }
 
@@ -982,6 +992,11 @@ function updateTranslateNowButton() {
   const turnIsSpeaking = state.currentTurn.state === TURN_STATES.OPEN_SPEAKING;
   const live = state.sessionState === SESSION_STATES.RUNNING && state.socket?.isOpen();
   els.translateNowButton.disabled = !(live && state.currentTurn.canTranslateNow && !turnIsSpeaking);
+}
+
+function updateSwapButton() {
+  const live = state.sessionState === SESSION_STATES.RUNNING && state.socket?.isOpen();
+  els.swapButton.disabled = !live;
 }
 
 function updateSpeakNowButton() {
@@ -999,20 +1014,6 @@ function updateSpeakNowButton() {
   }
   els.speakNowButton.setAttribute('aria-label', label);
   els.speakNowButton.title = label;
-}
-
-function updateClearTurnButton() {
-  const hasText = Boolean(state.currentTurn.sourceText || state.currentTurn.targetText || state.currentTurn.parts.length);
-  const live = state.sessionState === SESSION_STATES.RUNNING && state.socket?.isOpen();
-  els.clearTurnButton.disabled = !hasText || !live;
-  els.swapButton.disabled = !live;
-}
-
-function updateSessionRightAction() {
-  const live = state.sessionState === SESSION_STATES.RUNNING && state.socket?.isOpen();
-  els.finishButton.disabled = !live;
-  els.finishButton.setAttribute('aria-label', 'Finish session');
-  els.finishButton.title = 'Finish';
 }
 
 function updateMicToggleButton() {
@@ -1038,62 +1039,53 @@ function updatePcExportButton() {
   els.pcExportButton.title = state.pcExportBusy ? 'Exporting PC' : 'Export PC';
 }
 
-function setStatus(status, detail) {
+function setStatus(status) {
   state.status = String(status || 'idle').toLowerCase();
   renderLifecycle();
   updateActionButtons();
 }
 
-function renderStatus(status) {
-  const normalized = String(status || 'idle').toLowerCase();
-  const micOff = state.sessionState === SESSION_STATES.RUNNING
-    && state.micState === MIC_STATES.OFF
-    && normalized !== 'speaking'
-    && normalized !== 'error';
-  const visible = micOff || normalized === 'connecting' || normalized === 'error';
-  els.sessionStatusPill.hidden = !visible;
-  els.sessionStatusPill.className = 'session-status-pill';
-  if (normalized === 'connecting') els.sessionStatusPill.classList.add('is-connecting');
-  if (normalized === 'listening' && !micOff) els.sessionStatusPill.classList.add('is-listening');
-  if (micOff) els.sessionStatusPill.classList.add('is-mic-off');
-  if (normalized === 'speaking') els.sessionStatusPill.classList.add('is-speaking');
-  if (normalized === 'error') els.sessionStatusPill.classList.add('is-error');
-  els.sessionStatusPill.textContent = statusLabel(normalized);
-}
-
-function statusLabel(status) {
-  const normalized = String(status || 'idle').toLowerCase();
-  if (state.sessionState === SESSION_STATES.RUNNING && state.micState === MIC_STATES.OFF && normalized !== 'speaking' && normalized !== 'error') return 'Mic off';
-  if (normalized === 'listening') return 'Listening...';
-  if (normalized === 'connecting') return 'Connecting...';
-  if (normalized === 'speaking') return 'Playing...';
-  if (normalized === 'error') return 'Error';
-  return 'Ready';
-}
+let _settingsSheetDepth = 0;
 
 function openSettingsSheet() {
+  if (!els.settingsSheet.hidden) return;
   els.settingsSheet.hidden = false;
   setSettingsPage('home');
   renderAudioSettings();
   renderTuningSettings();
   renderTtsSettings();
   renderHistorySettings();
+  history.pushState({ view: 'settingsSheet', page: 'home' }, '');
+  _settingsSheetDepth = 1;
 }
 
 function closeSettingsSheet() {
+  // Scrim tap / Escape / swipe-down: pop ALL settings levels at once.
+  if (els.settingsSheet.hidden) return;
+  if (_settingsSheetDepth > 0) {
+    const depth = _settingsSheetDepth;
+    _settingsSheetDepth = 0;
+    history.go(-depth);
+    return;
+  }
   els.settingsSheet.hidden = true;
 }
 
+function navigateSettingsPage(page) {
+  if (history.state?.view === 'settingsSheet' && history.state.page !== page) {
+    history.pushState({ view: 'settingsSheet', page }, '');
+    _settingsSheetDepth += 1;
+  }
+  setSettingsPage(page);
+}
+
 function handleSettingsBack() {
-  if (state.settingsPage === 'home') {
-    closeSettingsSheet();
+  // In-sheet back arrow and browser back: pop one level only.
+  if (history.state?.view === 'settingsSheet') {
+    history.back();
     return;
   }
-  if (state.settingsPage === 'tuning' || state.settingsPage === 'voice-library') {
-    setSettingsPage('dev-tools');
-    return;
-  }
-  setSettingsPage('home');
+  els.settingsSheet.hidden = true;
 }
 
 function setSettingsPage(page) {
@@ -1397,7 +1389,7 @@ function handlePreGainInput() {
 function startFromSettings() {
   if (state.status === 'connecting') return;
   if (state.sessionState === SESSION_STATES.SETUP) {
-    startListening({ statusDetail: 'Opening microphone' });
+    startListening();
     return;
   }
   if (state.sessionState === SESSION_STATES.RUNNING && state.micState === MIC_STATES.OFF) {
@@ -1418,7 +1410,7 @@ async function handleAutoGainControlChange() {
     return;
   }
   state.audioSettings.autoGainControl = requested;
-  await restartMicrophoneCapture({ statusText: requested ? 'Auto gain on' : 'Auto gain off' });
+  await restartMicrophoneCapture();
 }
 
 async function resetAudioSettings() {
@@ -1426,7 +1418,7 @@ async function resetAudioSettings() {
   state.capture?.setPreGain(state.audioSettings.preGain);
   if (state.sessionState === SESSION_STATES.RUNNING && state.capture) {
     state.audioSettings.autoGainControl = DEFAULT_AUDIO_SETTINGS.autoGainControl;
-    await restartMicrophoneCapture({ statusText: 'Audio reset' });
+    await restartMicrophoneCapture();
     return;
   }
   if (state.sessionState !== SESSION_STATES.RUNNING) {
@@ -1437,7 +1429,7 @@ async function resetAudioSettings() {
   renderAudioSettings();
 }
 
-async function restartMicrophoneCapture({ statusText = '' } = {}) {
+async function restartMicrophoneCapture() {
   const previousCapture = state.capture;
   const targetSampleRate = previousCapture?.targetSampleRate || 16000;
   const previousSettings = {
@@ -1466,7 +1458,7 @@ async function restartMicrophoneCapture({ statusText = '' } = {}) {
       state.audioSettings.autoGainControl = restoredCapture.autoGainControl;
     } catch {
       state.micState = MIC_STATES.OFF;
-      setStatus('error', error.message || 'Microphone unavailable');
+      setStatus('error');
     }
   } finally {
     state.audioSettings.autoGainControlBusy = false;
@@ -1725,9 +1717,28 @@ function applyTtsConfig(tts) {
   delete settings.options;
   state.ttsSettings = mergeSettings(DEFAULT_TTS_SETTINGS, settings);
   state.ttsOptions = mergeSettings(DEFAULT_TTS_OPTIONS, options);
+  renderTtsSettings();
+}
+
+function mergeStoredTtsConfigIntoState() {
+  // localStorage-merge runs once at init only. Re-running it after every
+  // submit would overwrite in-session mode/reference_source changes back to
+  // defaults (those fields are intentionally not persisted).
   const stored = loadVoxcpm2VoiceConfig();
   if (Object.keys(stored).length) {
     state.ttsSettings.voxcpm2.languages = stored;
+  }
+  const ttsGlobal = loadTtsGlobalConfig();
+  if (ttsGlobal) {
+    if (typeof ttsGlobal.enabled === 'boolean') state.ttsSettings.enabled = ttsGlobal.enabled;
+    if (ttsGlobal.backend) state.ttsSettings.backend = ttsGlobal.backend;
+    if (ttsGlobal.kokoro_voices) {
+      state.ttsSettings.kokoro = state.ttsSettings.kokoro || { voices: {} };
+      state.ttsSettings.kokoro.voices = {
+        ...(state.ttsSettings.kokoro.voices || {}),
+        ...ttsGlobal.kokoro_voices,
+      };
+    }
   }
   renderTtsSettings();
 }
@@ -1751,10 +1762,59 @@ function loadVoxcpm2VoiceConfig() {
   }
 }
 
+function loadTtsGlobalConfig() {
+  try {
+    const raw = localStorage.getItem(TTS_GLOBAL_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return null;
+    const out = {};
+    if (typeof parsed.enabled === 'boolean') out.enabled = parsed.enabled;
+    if (typeof parsed.backend === 'string' && parsed.backend) out.backend = parsed.backend;
+    if (parsed.kokoro_voices && typeof parsed.kokoro_voices === 'object') {
+      const voices = {};
+      for (const [language, voice] of Object.entries(parsed.kokoro_voices)) {
+        if (typeof language === 'string' && typeof voice === 'string' && language && voice) {
+          voices[language] = voice;
+        }
+      }
+      if (Object.keys(voices).length) out.kokoro_voices = voices;
+    }
+    return Object.keys(out).length ? out : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function persistTtsGlobalConfig() {
+  try {
+    const payload = {
+      enabled: Boolean(state.ttsSettings.enabled),
+      backend: String(state.ttsSettings.backend || ''),
+      kokoro_voices: { ...(state.ttsSettings.kokoro?.voices || {}) },
+    };
+    localStorage.setItem(TTS_GLOBAL_STORAGE_KEY, JSON.stringify(payload));
+  } catch (_) {
+    // ignore quota / disabled storage
+  }
+}
+
 function persistVoxcpm2VoiceConfig() {
   try {
-    const payload = JSON.stringify(state.ttsSettings.voxcpm2.languages || {});
-    localStorage.setItem(VOXCPM2_VOICE_CONFIG_STORAGE_KEY, payload);
+    const stripped = {};
+    const languages = state.ttsSettings.voxcpm2.languages || {};
+    for (const [tag, entry] of Object.entries(languages)) {
+      if (!entry || typeof entry !== 'object') continue;
+      const out = {};
+      // Persist only the fields we keep across reloads. mode and reference_source
+      // are intentionally omitted — they always reset to defaults on hard refresh.
+      if (entry.gender !== undefined) out.gender = entry.gender;
+      if (entry.style !== undefined) out.style = entry.style;
+      if (entry.stable_gender !== undefined) out.stable_gender = entry.stable_gender;
+      if (entry.trim_seconds !== undefined) out.trim_seconds = entry.trim_seconds;
+      if (Object.keys(out).length) stripped[tag] = out;
+    }
+    localStorage.setItem(VOXCPM2_VOICE_CONFIG_STORAGE_KEY, JSON.stringify(stripped));
   } catch (_) {
     // ignore quota / disabled storage
   }
@@ -1762,26 +1822,16 @@ function persistVoxcpm2VoiceConfig() {
 
 function normalizeVoxcpm2LanguageEntry(entry) {
   if (!entry || typeof entry !== 'object') return null;
-  const mode = entry.mode === 'reference_audio' ? 'reference_audio' : 'description';
-  if (mode === 'description') {
-    const allowedGenders = new Set(['female', 'male']);
-    const allowedStyles = new Set(['neutral', 'warm', 'calm', 'clear']);
-    const gender = allowedGenders.has(entry.gender) ? entry.gender : 'female';
-    const style = allowedStyles.has(entry.style) ? entry.style : 'neutral';
-    return { mode, gender, style };
-  }
-  const allowedSources = new Set(['last_speech', 'stable_generated']);
-  const referenceSource = allowedSources.has(entry.reference_source)
-    ? entry.reference_source
-    : 'last_speech';
+  // Mode and reference_source are not persisted: always restored from defaults.
+  const out = { ...VOXCPM2_DEFAULT_LANGUAGE_CONFIG };
+  const allowedGenders = new Set(['female', 'male']);
+  const allowedStyles = new Set(['neutral', 'warm', 'calm', 'clear']);
+  if (allowedGenders.has(entry.gender)) out.gender = entry.gender;
+  if (allowedStyles.has(entry.style)) out.style = entry.style;
+  if (allowedGenders.has(entry.stable_gender)) out.stable_gender = entry.stable_gender;
   const trimRaw = Number(entry.trim_seconds);
-  const trim = Number.isFinite(trimRaw)
-    ? Math.min(60, Math.max(1, trimRaw))
-    : VOXCPM2_DEFAULT_TRIM_SECONDS;
-  const out = { mode, reference_source: referenceSource, trim_seconds: trim };
-  if (referenceSource === 'stable_generated') {
-    const allowedGenders = new Set(['female', 'male']);
-    out.stable_gender = allowedGenders.has(entry.stable_gender) ? entry.stable_gender : 'female';
+  if (Number.isFinite(trimRaw)) {
+    out.trim_seconds = Math.min(60, Math.max(1, trimRaw));
   }
   return out;
 }
@@ -1790,6 +1840,7 @@ function handleTtsEnabledChange() {
   const previous = cloneSettings(state.ttsSettings);
   const enabled = Boolean(els.ttsEnabled.checked);
   state.ttsSettings.enabled = enabled;
+  persistTtsGlobalConfig();
   renderTtsSettings({ preserveScroll: true });
   submitTtsSettings({ enabled }, previous);
 }
@@ -1799,6 +1850,7 @@ function handleTtsBackendChange() {
   const backend = String(els.ttsBackendSelect.value || '');
   if (!backend) return;
   state.ttsSettings.backend = backend;
+  persistTtsGlobalConfig();
   renderTtsSettings({ preserveScroll: true });
   submitTtsSettings({ backend }, previous);
 }
@@ -1812,6 +1864,7 @@ function handleTtsSettingChange(event) {
   if (kind === 'kokoro-voice' && language) {
     const value = String(input.value || '');
     state.ttsSettings.kokoro.voices[language] = value;
+    persistTtsGlobalConfig();
     renderTtsSettings({ preserveScroll: true });
     submitTtsSettings({ kokoro: { voices: { [language]: value } } }, previous);
     return;
@@ -1829,13 +1882,14 @@ function handleTtsSettingChange(event) {
       if (nextMode === 'description') {
         return {
           mode: 'description',
-          gender: current.gender || VOXCPM2_DEFAULT_LANGUAGE_CONFIG.gender,
-          style: current.style || VOXCPM2_DEFAULT_LANGUAGE_CONFIG.style,
+          gender: current.gender || 'female',
+          style: current.style || 'neutral',
         };
       }
       return {
         mode: 'reference_audio',
-        reference_source: 'last_speech',
+        reference_source: 'stable_generated',
+        stable_gender: current.stable_gender || 'female',
         trim_seconds: Number.isFinite(Number(current.trim_seconds))
           ? Number(current.trim_seconds)
           : VOXCPM2_DEFAULT_TRIM_SECONDS,
@@ -1849,7 +1903,7 @@ function handleTtsSettingChange(event) {
     updateVoxcpm2LanguageConfig(tag, (current) => ({
       mode: 'description',
       gender: value,
-      style: current.style || VOXCPM2_DEFAULT_LANGUAGE_CONFIG.style,
+      style: current.style || 'neutral',
     }), previous);
     return;
   }
@@ -1858,7 +1912,7 @@ function handleTtsSettingChange(event) {
     const value = allowed.has(input.value) ? input.value : 'neutral';
     updateVoxcpm2LanguageConfig(tag, (current) => ({
       mode: 'description',
-      gender: current.gender || VOXCPM2_DEFAULT_LANGUAGE_CONFIG.gender,
+      gender: current.gender || 'female',
       style: value,
     }), previous);
     return;
@@ -1926,9 +1980,15 @@ function updateVoxcpm2LanguageConfig(tag, updater, previous) {
 }
 
 function syncVoxcpm2VoiceConfigToBackend() {
-  const languages = state.ttsSettings.voxcpm2.languages || {};
-  if (!Object.keys(languages).length) return;
-  submitTtsSettings({ voxcpm2: { languages } }, cloneSettings(state.ttsSettings));
+  // Push localStorage-restored TTS settings to the backend after page load,
+  // so the backend's runtime overrides match what the UI shows.
+  const delta = {
+    enabled: Boolean(state.ttsSettings.enabled),
+    backend: String(state.ttsSettings.backend || ''),
+    kokoro: { voices: { ...(state.ttsSettings.kokoro?.voices || {}) } },
+    voxcpm2: { languages: state.ttsSettings.voxcpm2.languages || {} },
+  };
+  submitTtsSettings(delta, cloneSettings(state.ttsSettings));
 }
 
 function handleTargetTextClick(event) {
@@ -2029,7 +2089,7 @@ async function handleGenerateStableSample(tag, gender, engine) {
       playStableSamplePreview(tag, resolvedGender, result.info);
     }
   } catch (error) {
-    setStatus('error', error.message || 'Sample generation failed');
+    setStatus('error');
   } finally {
     state.voiceLibraryBusyTag = '';
     renderVoiceLibraryPage();
@@ -2045,7 +2105,7 @@ async function submitTtsSettings(delta, previousSettings) {
     applyTtsConfig(payload.tts || {});
   } catch (error) {
     state.ttsSettings = previousSettings;
-    setStatus('error', error.message || 'Voice settings failed');
+    setStatus('error');
   } finally {
     state.ttsUpdateBusy = false;
     renderTtsSettings({ preserveScroll: true });
@@ -2138,7 +2198,6 @@ function kokoroTtsRows() {
       value,
       options,
       disabled,
-      meta: ttsRowMeta({ active, available: options.length > 0 }),
       kind: 'kokoro-voice',
       language,
       emptyLabel: 'Unsupported',
@@ -2151,14 +2210,12 @@ function voxcpm2TtsRows(backend) {
   const disabled = state.ttsUpdateBusy || !active;
   const tag = currentVoxcpm2PickerTag();
   const config = voxcpm2LanguageConfig(tag);
-  const meta = ttsRowMeta({ active, available: true });
-  const rows = [createVoxcpm2LanguagePickerRow({ tag, disabled, meta })];
+  const rows = [createVoxcpm2LanguagePickerRow({ tag, disabled })];
   rows.push(createTtsSelectRow({
     label: 'Voice instruction',
     value: config.mode,
     options: voxcpm2ModeOptions(),
     disabled,
-    meta,
     kind: 'voxcpm2-mode',
     language: tag,
     emptyLabel: 'From description',
@@ -2169,7 +2226,6 @@ function voxcpm2TtsRows(backend) {
       value: config.gender || 'female',
       options: voxcpm2GenderOptions(),
       disabled,
-      meta,
       kind: 'voxcpm2-gender',
       language: tag,
       emptyLabel: 'Female',
@@ -2179,7 +2235,6 @@ function voxcpm2TtsRows(backend) {
       value: config.style || 'neutral',
       options: voxcpm2StyleOptions(),
       disabled,
-      meta,
       kind: 'voxcpm2-style',
       language: tag,
       emptyLabel: 'Neutral',
@@ -2191,7 +2246,6 @@ function voxcpm2TtsRows(backend) {
       value: config.reference_source || 'last_speech',
       options: voxcpm2ReferenceSourceOptions(),
       disabled,
-      meta,
       kind: 'voxcpm2-reference-source',
       language: tag,
       emptyLabel: 'Last speech fragment',
@@ -2202,21 +2256,19 @@ function voxcpm2TtsRows(backend) {
         value: config.stable_gender || 'female',
         options: voxcpm2GenderOptions(),
         disabled,
-        meta,
         kind: 'voxcpm2-stable-gender',
         language: tag,
         emptyLabel: 'Female',
       }));
     }
     rows.push(createTtsNumberRow({
-      label: 'Trim reference audio',
+      label: 'Trim audio',
       value: Number.isFinite(Number(config.trim_seconds)) ? Number(config.trim_seconds) : VOXCPM2_DEFAULT_TRIM_SECONDS,
       min: 1,
       max: 60,
       step: 1,
       unit: 's',
       disabled,
-      meta,
       kind: 'voxcpm2-trim-seconds',
       language: tag,
     }));
@@ -2224,7 +2276,6 @@ function voxcpm2TtsRows(backend) {
       rows.push(createStableSampleStatusRow({
         tag,
         gender: config.stable_gender || 'female',
-        meta,
       }));
     }
   }
@@ -2246,27 +2297,23 @@ function createDescriptionModeWarningRow() {
   return row;
 }
 
-function createStableSampleStatusRow({ tag, gender, meta }) {
+function createStableSampleStatusRow({ tag, gender }) {
   const row = document.createElement('div');
   row.className = 'tuning-row';
   const labelEl = document.createElement('span');
   labelEl.className = 'tuning-label';
   labelEl.textContent = 'Stable sample';
-  const metaEl = document.createElement('span');
-  metaEl.className = 'tuning-meta';
-  metaEl.textContent = meta;
-  const langEntry = state.voiceLibraryStable[tag] || { has_reference_text: false, samples: {} };
   const info = stableSampleInfo(tag, gender);
   const valueEl = document.createElement('span');
   valueEl.className = 'tts-stable-status';
-  if (!langEntry.has_reference_text) {
-    valueEl.textContent = 'No reference text';
-  } else if (!info.exists) {
+  if (info.exists) {
+    valueEl.textContent = formatStableSampleStatus(info);
+  } else if (tag === 'en') {
     valueEl.textContent = 'Not generated yet';
   } else {
-    valueEl.textContent = formatStableSampleStatus(info);
+    valueEl.textContent = 'Using English sample';
   }
-  row.append(labelEl, metaEl, valueEl);
+  row.append(labelEl, valueEl);
   return row;
 }
 
@@ -2285,15 +2332,12 @@ function formatStableSampleStatus(info) {
   return 'Sample · available';
 }
 
-function createVoxcpm2LanguagePickerRow({ tag, disabled, meta }) {
+function createVoxcpm2LanguagePickerRow({ tag, disabled }) {
   const row = document.createElement('label');
   row.className = 'tuning-row';
   const labelEl = document.createElement('span');
   labelEl.className = 'tuning-label';
   labelEl.textContent = 'Configure for';
-  const metaEl = document.createElement('span');
-  metaEl.className = 'tuning-meta';
-  metaEl.textContent = meta;
   const select = document.createElement('select');
   select.dataset.ttsKind = 'voxcpm2-picker-language';
   select.disabled = disabled;
@@ -2314,7 +2358,7 @@ function createVoxcpm2LanguagePickerRow({ tag, disabled, meta }) {
   const valueWrap = document.createElement('span');
   valueWrap.className = 'tuning-value-wrap';
   valueWrap.append(select);
-  row.append(labelEl, metaEl, valueWrap);
+  row.append(labelEl, valueWrap);
   return row;
 }
 
@@ -2352,9 +2396,6 @@ function createTtsPromptInspectRows(active, tag, config) {
   const label = document.createElement('span');
   label.className = 'tuning-label';
   label.textContent = 'Prompt';
-  const meta = document.createElement('span');
-  meta.className = 'tuning-meta';
-  meta.textContent = active ? 'inspect' : 'inactive';
   const button = document.createElement('button');
   button.className = 'tts-inspect-button';
   button.type = 'button';
@@ -2364,7 +2405,7 @@ function createTtsPromptInspectRows(active, tag, config) {
   const valueWrap = document.createElement('span');
   valueWrap.className = 'tuning-value-wrap';
   valueWrap.append(button);
-  row.append(label, meta, valueWrap);
+  row.append(label, valueWrap);
   fragment.append(row);
   if (state.ttsPromptInspectOpen && active) {
     fragment.append(createVoxcpm2PromptPreview(tag, config));
@@ -2417,15 +2458,12 @@ function voxcpm2InstructionsPreview(languageName, config) {
   ].join(' ');
 }
 
-function createTtsSelectRow({ label, value, options, disabled, meta, kind, language, emptyLabel }) {
+function createTtsSelectRow({ label, value, options, disabled, kind, language, emptyLabel }) {
   const row = document.createElement('label');
   row.className = 'tuning-row';
   const labelEl = document.createElement('span');
   labelEl.className = 'tuning-label';
   labelEl.textContent = label;
-  const metaEl = document.createElement('span');
-  metaEl.className = 'tuning-meta';
-  metaEl.textContent = meta;
   const select = document.createElement('select');
   select.dataset.ttsKind = kind;
   select.dataset.ttsLanguage = language;
@@ -2442,19 +2480,16 @@ function createTtsSelectRow({ label, value, options, disabled, meta, kind, langu
   const valueWrap = document.createElement('span');
   valueWrap.className = 'tuning-value-wrap';
   valueWrap.append(select);
-  row.append(labelEl, metaEl, valueWrap);
+  row.append(labelEl, valueWrap);
   return row;
 }
 
-function createTtsNumberRow({ label, value, min, max, step, unit, disabled, meta, kind, language }) {
+function createTtsNumberRow({ label, value, min, max, step, unit, disabled, kind, language }) {
   const row = document.createElement('label');
   row.className = 'tuning-row';
   const labelEl = document.createElement('span');
   labelEl.className = 'tuning-label';
   labelEl.textContent = label;
-  const metaEl = document.createElement('span');
-  metaEl.className = 'tuning-meta';
-  metaEl.textContent = meta;
   const input = document.createElement('input');
   input.type = 'number';
   input.dataset.ttsKind = kind;
@@ -2473,7 +2508,7 @@ function createTtsNumberRow({ label, value, min, max, step, unit, disabled, meta
     unitEl.textContent = unit;
     valueWrap.append(unitEl);
   }
-  row.append(labelEl, metaEl, valueWrap);
+  row.append(labelEl, valueWrap);
   return row;
 }
 
@@ -2485,7 +2520,7 @@ function voxcpm2LanguageConfig(tag) {
   if (stored.mode === 'reference_audio') {
     const cfg = {
       mode: 'reference_audio',
-      reference_source: stored.reference_source || 'last_speech',
+      reference_source: stored.reference_source || 'stable_generated',
       trim_seconds: Number.isFinite(Number(stored.trim_seconds))
         ? Number(stored.trim_seconds)
         : VOXCPM2_DEFAULT_TRIM_SECONDS,
@@ -2497,8 +2532,8 @@ function voxcpm2LanguageConfig(tag) {
   }
   return {
     mode: 'description',
-    gender: stored.gender || VOXCPM2_DEFAULT_LANGUAGE_CONFIG.gender,
-    style: stored.style || VOXCPM2_DEFAULT_LANGUAGE_CONFIG.style,
+    gender: stored.gender || 'female',
+    style: stored.style || 'neutral',
   };
 }
 
@@ -2565,12 +2600,6 @@ function currentTtsTargetLanguage() {
   return normalizeLanguageName(currentLane().targetLanguage || state.sideBLanguage);
 }
 
-function ttsRowMeta({ active, available }) {
-  if (!available) return 'unavailable';
-  if (!active) return 'inactive';
-  return 'live';
-}
-
 function ttsSummary() {
   if (!state.ttsSettings.enabled) return 'off';
   if (!ttsBackendOptions().length) return 'none loaded';
@@ -2619,6 +2648,16 @@ function hideVadHint() {
   els.vadBadge.hidden = true;
 }
 
+function levelToHaloUnit(level) {
+  // Visual-only gain so the halo stays responsive on devices that hand back
+  // very low raw peaks (older iPhones, web audio with internal AGC).
+  const visual = Math.min(1, level * 8);
+  if (visual <= 0) return 0;
+  // dB mapping (-50 dB → 0, 0 dB → 1) spreads quiet→loud across the range.
+  const db = 20 * Math.log10(visual);
+  return Math.max(0, Math.min(1, (db + 50) / 50));
+}
+
 function renderMicLevel(value) {
   const level = normalizeLevel(value);
   state.audioSettings.inputLevel = level;
@@ -2626,13 +2665,26 @@ function renderMicLevel(value) {
   els.micLevelFill.style.transform = `scaleX(${level.toFixed(3)})`;
   els.micLevel.setAttribute('aria-valuenow', String(percent));
   els.micLevel.classList.toggle('is-hot', level >= 0.9);
-  const haloLevel = state.micState === MIC_STATES.LISTENING ? Math.sqrt(level) : 0;
+  // Baseline halo when listening (always-visible mic-ready indicator); audio
+  // level adds on top so any sound is reflected even at quiet levels.
+  const BASELINE_HALO = 0.4;
+  const haloLevel = state.micState === MIC_STATES.LISTENING
+    ? Math.min(1, BASELINE_HALO + (1 - BASELINE_HALO) * levelToHaloUnit(level))
+    : 0;
   const clipRisk = state.micState === MIC_STATES.LISTENING && level >= 0.95;
   const hot = level >= 0.85;
   els.micToggleButton.classList.toggle('is-clip-risk', clipRisk);
-  els.micToggleButton.style.setProperty('--mic-toggle-halo-color', clipRisk ? '185, 28, 28' : hot ? '245, 158, 11' : '59, 130, 246');
-  els.micToggleButton.style.setProperty('--mic-toggle-halo-alpha', (haloLevel ? 0.08 + haloLevel * (clipRisk ? 0.42 : hot ? 0.36 : 0.3) : 0).toFixed(3));
-  els.micToggleButton.style.setProperty('--mic-toggle-halo-size', `${Math.round(haloLevel * 14)}px`);
+  const r = clipRisk ? 185 : hot ? 245 : 59;
+  const g = clipRisk ? 28 : hot ? 158 : 130;
+  const b = clipRisk ? 28 : hot ? 11 : 246;
+  const alpha = haloLevel ? 0.08 + haloLevel * (clipRisk ? 0.42 : hot ? 0.36 : 0.3) : 0;
+  const scale = 1 + haloLevel * 0.55;
+  els.micToggleButton.style.setProperty('--mic-toggle-halo-scale', scale.toFixed(3));
+  els.micToggleButton.style.setProperty(
+    '--mic-toggle-halo-color',
+    haloLevel ? `rgba(${r}, ${g}, ${b}, ${alpha.toFixed(3)})` : 'transparent',
+  );
+  els.micToggleButton.style.boxShadow = '';
 }
 
 function renderLanguageControls() {
@@ -2652,7 +2704,6 @@ function renderLanguageControls() {
 
   els.sourceLanguagePill.setAttribute('aria-label', `Source language: ${lane.sourceLanguage}`);
   els.targetLanguagePill.setAttribute('aria-label', `Target language: ${lane.targetLanguage}`);
-  renderDirectionLabels(lane);
 }
 
 const RECENT_LANGUAGES_KEY = 'recent_languages';
@@ -2696,12 +2747,98 @@ function openLanguageSheet(side) {
   els.languageSearch.value = '';
   renderLanguageSheetList(currentLang, '');
   els.languageSheet.hidden = false;
+  if (history.state?.view !== 'languageSheet') {
+    history.pushState({ view: 'languageSheet' }, '');
+  }
 }
 
+let _skipLanguageSheetPopstate = false;
+
 function closeLanguageSheet() {
+  const wasOpen = !els.languageSheet.hidden;
   els.languageSheet.hidden = true;
   els.languageSearch.value = '';
   _resetLanguageSheetPosition();
+  if (wasOpen && history.state?.view === 'languageSheet') {
+    _skipLanguageSheetPopstate = true;
+    history.back();
+  }
+}
+
+function setupSheetSwipeClose({ layer, sheet, scrollContainer, onClose, isAllowed }) {
+  if (!layer || !sheet) return;
+  const SWIPE_CLOSE_THRESHOLD_PCT = 0.40;
+  let startY = null;
+  let startScrollTop = 0;
+  let dragging = false;
+  let currentDelta = 0;
+  let sheetHeight = 0;
+  const onStart = (e) => {
+    if (layer.hidden) return;
+    if (e.touches.length !== 1) return;
+    if (isAllowed && !isAllowed()) return;
+    startY = e.touches[0].clientY;
+    startScrollTop = scrollContainer ? scrollContainer.scrollTop : 0;
+    sheetHeight = sheet.getBoundingClientRect().height || 0;
+    dragging = false;
+    currentDelta = 0;
+  };
+  const onMove = (e) => {
+    if (startY === null) return;
+    const y = e.touches[0].clientY;
+    const delta = y - startY;
+    if (delta <= 0) return;
+    if (startScrollTop > 0) return;
+    if (scrollContainer && scrollContainer.scrollTop > 0) {
+      sheet.style.removeProperty('transform');
+      sheet.style.removeProperty('transition');
+      dragging = false;
+      return;
+    }
+    dragging = true;
+    currentDelta = delta;
+    // !important needed to beat the entry animation's fill-mode:both,
+    // which otherwise keeps "transform: translateY(0)" pinned.
+    sheet.style.setProperty('transition', 'none', 'important');
+    sheet.style.setProperty('transform', `translateY(${delta}px)`, 'important');
+    e.preventDefault();
+  };
+  const onEnd = () => {
+    if (dragging) {
+      const threshold = Math.max(40, sheetHeight * SWIPE_CLOSE_THRESHOLD_PCT);
+      if (currentDelta > threshold) {
+        // Animate the layer opacity together with the sheet so the scrim
+        // fades instead of popping when we hide it.
+        sheet.style.setProperty('transition', 'transform 0.18s ease', 'important');
+        sheet.style.setProperty('transform', 'translateY(100%)', 'important');
+        layer.style.setProperty('transition', 'opacity 0.18s ease', 'important');
+        layer.style.setProperty('opacity', '0', 'important');
+        setTimeout(() => {
+          onClose();
+          sheet.style.removeProperty('transform');
+          sheet.style.removeProperty('transition');
+          layer.style.removeProperty('opacity');
+          layer.style.removeProperty('transition');
+        }, 170);
+      } else {
+        sheet.style.setProperty('transition', 'transform 0.18s ease', 'important');
+        sheet.style.setProperty('transform', 'translateY(0)', 'important');
+        // Clear inline after the snap-back transition completes so the
+        // entry animation can take over again on next open.
+        setTimeout(() => {
+          sheet.style.removeProperty('transform');
+          sheet.style.removeProperty('transition');
+        }, 200);
+      }
+    }
+    startY = null;
+    dragging = false;
+    currentDelta = 0;
+  };
+  sheet.addEventListener('touchstart', onStart, { passive: true });
+  sheet.addEventListener('touchmove', onMove, { passive: false });
+  sheet.addEventListener('touchend', onEnd);
+  sheet.addEventListener('touchcancel', onEnd);
 }
 
 function _resetLanguageSheetPosition() {
@@ -2785,21 +2922,23 @@ function _languageRow(item, currentLang) {
 }
 
 function renderTranscript() {
-  const lane = currentLane();
   renderTurnStream(els.sourceText, state.currentTurn.parts, 'source', state.currentTurn.sourceText);
   renderTurnStream(els.targetText, state.currentTurn.parts, 'target', state.currentTurn.targetText);
-  renderDirectionLabels(lane);
+  renderDirectionLabels(currentLane());
   pinToBottomIfFollowing(els.sourceText);
   pinToBottomIfFollowing(els.targetText);
 }
 
 function renderDirectionLabels(lane) {
-  const sourceCode = codeForLanguage(lane.sourceLanguage);
-  const targetCode = codeForLanguage(lane.targetLanguage);
-  els.turnSourceLanguage.textContent = sourceCode;
-  els.turnTargetLanguage.textContent = targetCode;
+  els.turnSourceLanguage.textContent = codeForLanguage(lane.sourceLanguage);
+  els.turnTargetLanguage.textContent = codeForLanguage(lane.targetLanguage);
   els.turnSourceLanguage.title = lane.sourceLanguage;
   els.turnTargetLanguage.title = lane.targetLanguage;
+}
+
+function codeForLanguage(name) {
+  const match = languages.find((item) => item.name === name);
+  return (match?.asr || String(name || '').slice(0, 2)).toUpperCase();
 }
 
 function renderTurnStream(el, parts, role, fallbackText) {
@@ -2812,6 +2951,7 @@ function renderTurnStream(el, parts, role, fallbackText) {
     row.className = 'turn-part';
     if (part.speechState === 'spoken') row.classList.add('is-spoken');
     if (part.speechState === 'speaking') row.classList.add('is-speaking');
+    if (role === 'target' && part.lowQualityReference) row.classList.add('is-low-quality-ref');
     renderTextStream(row, committedText, previewText);
     if (role === 'target' && state.ttsSettings.enabled) {
       const replayText = String(committedText || '').trim();
@@ -2964,6 +3104,7 @@ function normalizeTurnPart(part) {
     targetCommittedText,
     targetPreviewText,
     targetText: String(part?.target_text || visibleText(targetCommittedText, targetPreviewText)),
+    lowQualityReference: Boolean(part?.low_quality_reference),
   };
 }
 
@@ -3035,11 +3176,6 @@ function previewSuffixText(committed, preview) {
   return /\s$/.test(left) || !left ? right : ` ${right}`;
 }
 
-function directionLabel() {
-  const lane = currentLane();
-  return `${codeForLanguage(lane.sourceLanguage)} -> ${codeForLanguage(lane.targetLanguage)}`;
-}
-
 function normalizePreGain(value) {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? Math.max(0.5, Math.min(3.0, numeric)) : 1;
@@ -3056,11 +3192,6 @@ function normalizeLanguageName(value) {
   return languages.some((item) => item.name === text) ? text : fallback;
 }
 
-function codeForLanguage(name) {
-  const match = languages.find((item) => item.name === name);
-  return (match?.asr || String(name || '').slice(0, 2)).toUpperCase();
-}
-
 function flagForLanguage(name) {
   const match = languages.find((item) => item.name === name);
   return match?.flag || LANGUAGE_FLAGS[match?.asr] || '';
@@ -3069,9 +3200,15 @@ function flagForLanguage(name) {
 function setupAutoFollow(el) {
   if (!el) return;
   enableAutoFollow(el);
+  updateClipTop(el);
   el.addEventListener('scroll', () => {
     el.dataset.autofollow = isNearBottom(el) ? 'on' : 'off';
+    updateClipTop(el);
   });
+}
+
+function updateClipTop(el) {
+  el.dataset.clipTop = el.scrollTop > 0 ? 'on' : 'off';
 }
 
 function enableTranscriptAutoFollow() {

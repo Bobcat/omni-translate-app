@@ -14,12 +14,19 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
-    <link rel="stylesheet" href="/styles.css?v=20260515-omni-translate-2">
+    <link rel="stylesheet" href="/styles.css?v=20260516-ui-tweaks-55">
   </head>
   <body>
     <main class="app is-setup">
       <header class="app-titlebar">
+        <button class="settings-button titlebar-back-button" id="titlebarBackButton" type="button" aria-label="Back" title="Back">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M19 12H5"></path>
+            <path d="M12 5l-7 7 7 7"></path>
+          </svg>
+        </button>
         <h1 class="app-title"><strong>Omni</strong> Translate</h1>
+        <span class="vad-badge titlebar-vad-badge" id="vadBadge" hidden>Speech detected</span>
         <button class="settings-button titlebar-settings-button" id="settingsButton" type="button" aria-label="Open settings" title="Settings">
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/>
@@ -28,57 +35,44 @@
         </button>
       </header>
       <section class="text-panels" aria-live="polite">
-        <div class="turn-header-actions" id="turnHeaderActions" hidden>
-          <button class="icon-action clear-turn-action" id="clearTurnButton" type="button" aria-label="Clear turn" title="Clear turn" disabled>
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M3 6h18"/>
-              <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/>
-              <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/>
-              <line x1="10" x2="10" y1="11" y2="17"/>
-              <line x1="14" x2="14" y1="11" y2="17"/>
-            </svg>
-          </button>
-          <button class="icon-action switch-turn-action" id="swapButton" type="button" aria-label="Switch turn" title="Switch turn">
-            <span class="turn-language-label" id="turnSourceLanguage">NL</span>
+        <article class="pane source-pane">
+          <div class="text-stream" id="sourceText" data-empty="No speech recognized yet"></div>
+        </article>
+        <div class="pane lane-divider">
+          <button class="lane-swap-button" id="swapButton" type="button" aria-label="Swap direction" title="Swap direction">
+            <span class="lane-swap-label" id="turnSourceLanguage">NL</span>
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="M8 3 4 7l4 4"/>
               <path d="M4 7h16"/>
               <path d="m16 21 4-4-4-4"/>
               <path d="M20 17H4"/>
             </svg>
-            <span class="turn-language-label" id="turnTargetLanguage">EN</span>
+            <span class="lane-swap-label" id="turnTargetLanguage">EN</span>
           </button>
         </div>
-        <article class="pane source-pane">
-          <div class="pane-header">
-            <h1>What is heard</h1>
-            <div class="pane-indicators">
-              <span class="vad-badge" id="vadBadge" hidden>Speech detected</span>
-            </div>
-            <span class="session-status-pill" id="sessionStatusPill" hidden>Mic off</span>
-          </div>
-          <div class="pane-body">
-            <div class="setup-start-panel" id="setupStartPanel">
-              <button class="setup-start-button" id="startButton" type="button" title="Start" aria-label="Start">
-                <svg class="setup-start-icon" viewBox="0 0 24 24" aria-hidden="true">
-                  <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path>
-                  <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
-                  <line x1="12" y1="19" x2="12" y2="22"></line>
-                </svg>
-              </button>
-            </div>
-            <div class="text-stream" id="sourceText" data-empty="No speech recognized yet"></div>
-          </div>
-        </article>
         <article class="pane target-pane">
-          <div class="pane-header">
-            <h1>Translation</h1>
-            </div>
           <div class="text-stream" id="targetText" data-empty="No translation yet"></div>
         </article>
+        <div class="setup-start-panel" id="setupStartPanel">
+          <button class="setup-start-button" id="startButton" type="button" title="Start" aria-label="Start">
+            <svg class="setup-start-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path>
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+              <line x1="12" y1="19" x2="12" y2="22"></line>
+            </svg>
+          </button>
+        </div>
       </section>
 
       <footer class="action-dock">
+        <div class="dock-end">
+          <button class="settings-button dock-settings-button" id="dockSettingsButton" type="button" aria-label="Open settings" title="Settings">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/>
+              <circle cx="12" cy="12" r="3"/>
+            </svg>
+          </button>
+        </div>
         <div class="dock-center">
           <button class="language-pill" id="sourceLanguagePill" type="button" aria-label="Choose source language">
             <span class="language-pill-text"></span>
@@ -122,13 +116,6 @@
               <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
               <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
               <path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
-            </svg>
-          </button>
-        </div>
-        <div class="dock-end">
-          <button class="dock-action round-action finish-action" id="finishButton" type="button" aria-label="Finish session" title="Finish" hidden>
-            <svg class="round-action-icon finish-action-icon" viewBox="0 0 24 24" aria-hidden="true">
-              <rect x="8" y="8" width="8" height="8" rx="1.6"></rect>
             </svg>
           </button>
         </div>
@@ -296,6 +283,6 @@
       </div>
 
     </main>
-    <script type="module" src="/src/app.js?v=20260515-omni-translate-2"></script>
+    <script type="module" src="/src/app.js?v=20260516-ui-tweaks-55"></script>
   </body>
 </html>

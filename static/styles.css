@@ -1,7 +1,7 @@
 :root {
   --bg: hsl(210, 20%, 98%);
   --surface: hsl(0, 0%, 100%);
-  --surface-soft: hsl(210, 40%, 98%);
+  --surface-soft: hsl(210, 40%, 95%);
   --panels-bg: hsl(220, 15%, 91%);
   --text: hsl(215, 25%, 17%);
   --text-strong: hsl(215, 25%, 17%);
@@ -50,7 +50,7 @@
     --bg: hsl(220, 16%, 8%);
     --panels-bg: hsl(220, 16%, 7%);
     --surface: hsl(220, 14%, 11%);
-    --surface-soft: hsl(220, 12%, 14%);
+    --surface-soft: hsl(220, 12%, 16%);
     --text: hsl(220, 10%, 88%);
     --text-strong: hsl(220, 10%, 95%);
     --muted: hsl(220, 8%, 52%);
@@ -134,6 +134,7 @@ button {
   grid-template-columns: 1fr auto 1fr;
   align-items: center;
   padding: 10px 12px;
+  background: var(--surface);
 }
 
 .app-title {
@@ -155,11 +156,47 @@ button {
   justify-self: end;
 }
 
+.app .titlebar-back-button {
+  grid-column: 1;
+  justify-self: start;
+  display: none;
+  color: var(--text);
+  opacity: 1;
+}
+
+.app.is-running .titlebar-back-button {
+  display: inline-flex;
+}
+
+.app.is-running .app-title {
+  display: none;
+}
+
+.titlebar-back-button:focus,
+.titlebar-back-button:focus-visible {
+  color: var(--text);
+}
+
+.titlebar-vad-badge {
+  grid-column: 3;
+  justify-self: end;
+}
+
+.app.is-running .titlebar-settings-button {
+  display: none;
+}
+
+.app .dock-settings-button {
+  display: none;
+}
+
+.app.is-running .dock-settings-button {
+  display: inline-flex;
+}
+
 
 .language-pill,
-.session-status-pill,
 .settings-button,
-.icon-action,
 .link-row {
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -169,22 +206,23 @@ button {
 }
 
 .language-pill {
-  width: 110px;
-  min-width: 110px;
-  max-width: 110px;
+  width: 140px;
+  min-width: 140px;
+  max-width: 140px;
   height: 44px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   padding: 0 12px;
+  border: 0;
   border-radius: 8px;
-  background-color: var(--surface-soft);
+  background-color: var(--surface);
   color: var(--text);
   font-size: 0.85rem;
   font-weight: 600;
   line-height: 1.2;
   box-shadow: 0 1px 2px hsla(222, 47%, 11%, 0.06);
-  transition: border-color 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
+  transition: background-color 0.15s ease;
 }
 
 .language-pill-text {
@@ -206,26 +244,17 @@ button {
   flex-shrink: 0;
 }
 
-.language-pill:hover {
-  border-color: var(--border-hover);
-  background-color: var(--surface);
-}
-
 .language-pill:active {
   background-color: var(--border);
 }
 
 .language-pill:focus {
   outline: none;
-  border-color: var(--primary);
-  box-shadow: 0 0 0 3px rgba(var(--primary-rgb), 0.2);
-  background-color: var(--surface);
 }
 
 .language-pill:disabled {
   cursor: default;
   background-color: transparent;
-  border-color: transparent;
   box-shadow: none;
 }
 
@@ -327,75 +356,6 @@ button {
   stroke-linejoin: round;
 }
 
-.session-status-pill {
-  min-width: 112px;
-  height: 28px;
-  display: none;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 0 12px;
-  color: var(--muted);
-  background: var(--surface-soft);
-  border-radius: 999px;
-  border: 0;
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  line-height: 1;
-  text-transform: uppercase;
-  white-space: nowrap;
-  cursor: default;
-  transition: color 0.25s ease, background-color 0.25s ease;
-}
-
-.session-status-pill.is-listening {
-  color: var(--success-text);
-  background: var(--success-bg);
-}
-
-.session-status-pill.is-listening::before {
-  content: "";
-  width: 8px;
-  height: 8px;
-  display: block;
-  flex-shrink: 0;
-  border-radius: 50%;
-  background: var(--success-accent);
-  animation: live-pulse-green 2s infinite;
-}
-
-@keyframes live-pulse-green {
-  0% {
-    box-shadow: 0 0 0 0 hsla(142, 71%, 45%, 0.45);
-  }
-
-  70% {
-    box-shadow: 0 0 0 6px hsla(142, 71%, 45%, 0);
-  }
-
-  100% {
-    box-shadow: 0 0 0 0 hsla(142, 71%, 45%, 0);
-  }
-}
-
-.session-status-pill.is-mic-off {
-  display: inline-flex;
-  color: var(--muted);
-  background: var(--surface-soft);
-}
-
-.session-status-pill.is-speaking,
-.session-status-pill.is-connecting {
-  color: var(--warning);
-  background: var(--warning-bg);
-}
-
-.session-status-pill.is-error {
-  color: var(--error-text);
-  background: var(--error-bg);
-}
-
 .settings-button {
   width: 28px;
   min-width: 28px;
@@ -415,15 +375,9 @@ button {
   transition: color 0.15s ease, opacity 0.15s ease;
 }
 
-.settings-button:hover,
-.settings-button:focus {
-  color: var(--text);
-  opacity: 1;
+.settings-button:focus,
+.settings-button:focus-visible {
   outline: none;
-}
-
-.settings-button:focus {
-  color: var(--primary);
 }
 
 .settings-button svg {
@@ -441,7 +395,7 @@ button {
   min-width: 0;
   min-height: 0;
   display: grid;
-  grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto minmax(0, 1fr);
   row-gap: 0;
   column-gap: 0;
   padding: 0;
@@ -450,6 +404,69 @@ button {
 
 .app.is-setup .target-pane .empty-state {
   display: none;
+}
+
+.app.is-setup .text-panels {
+  grid-template-rows: 1fr;
+}
+
+.app.is-setup .target-pane,
+.app.is-setup .lane-divider {
+  display: none;
+}
+
+.app.is-setup .source-pane {
+  border-radius: 0 0 20px 20px;
+}
+
+.lane-divider {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: var(--surface);
+}
+
+.lane-swap-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+}
+
+.lane-swap-button:focus-visible {
+  outline: none;
+}
+
+.lane-swap-button:disabled {
+  cursor: default;
+  opacity: 0.42;
+}
+
+.lane-swap-button svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.lane-swap-label {
+  min-width: 20px;
+  color: var(--text);
+  text-align: center;
 }
 
 .pane {
@@ -503,47 +520,6 @@ button {
   }
 }
 
-.source-pane,
-.source-pane .pane-body,
-.source-pane .setup-start-panel,
-.source-pane .text-stream {
-  background: var(--surface);
-}
-
-.pane-header {
-  height: 40px;
-  min-height: 40px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 6px 12px;
-  background: var(--surface-soft);
-}
-
-
-.pane h1 {
-  min-width: 0;
-  margin: 0;
-  color: var(--text-strong);
-  font-size: 0.82rem;
-  line-height: 1.2;
-  font-weight: 700;
-}
-
-.app:not(.is-setup) .pane h1 {
-  display: none;
-}
-
-.pane-indicators {
-  flex: 0 0 auto;
-  min-height: 30px;
-  margin-left: auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-}
-
 .pane-language-pill {
   margin-left: auto;
   display: inline-flex;
@@ -562,73 +538,6 @@ button {
 
 .pane-language-pill:hover {
   border-color: var(--border-strong);
-}
-
-.turn-header-actions {
-  position: absolute;
-  inset: 0;
-  z-index: 4;
-  pointer-events: none;
-}
-
-.turn-header-actions[hidden] {
-  display: none;
-}
-
-.icon-action {
-  position: absolute;
-  width: 30px;
-  height: 30px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  border-radius: 8px;
-  color: var(--muted);
-  background: transparent;
-  transition: color 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease;
-}
-
-.icon-action:hover {
-  color: var(--text);
-  background: var(--surface);
-}
-
-.icon-action:focus {
-  color: var(--text);
-  background: var(--surface);
-  outline: none;
-  box-shadow: 0 0 0 2px rgba(var(--primary-rgb), 0.3);
-}
-
-.icon-action:disabled {
-  cursor: default;
-  opacity: 0.42;
-}
-
-.icon-action svg {
-  width: 18px;
-  height: 18px;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.8;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
-.clear-turn-action {
-  top: 7px;
-  left: 12px;
-}
-
-.switch-turn-action {
-  top: calc(50% + 7px);
-  left: 50%;
-  width: 90px;
-  gap: 7px;
-  padding: 0 8px;
-  background: var(--surface);
-  transform: translateX(-50%);
 }
 
 .setup-switch-action {
@@ -655,10 +564,6 @@ button {
   opacity: 0.42;
 }
 
-.turn-header-actions .icon-action {
-  pointer-events: auto;
-}
-
 .setup-switch-action svg {
   width: 24px;
   height: 24px;
@@ -667,15 +572,6 @@ button {
   stroke-width: 2;
   stroke-linecap: round;
   stroke-linejoin: round;
-}
-
-.turn-language-label {
-  min-width: 20px;
-  color: var(--text);
-  font-size: 0.7rem;
-  font-weight: 700;
-  line-height: 1;
-  text-align: center;
 }
 
 .vad-badge {
@@ -699,17 +595,9 @@ button {
   display: none;
 }
 
-.pane-body {
-  position: relative;
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
-
 .setup-start-panel {
-  flex: 1;
-  min-height: 0;
+  position: absolute;
+  inset: 0;
   display: grid;
   align-content: center;
   justify-items: center;
@@ -722,8 +610,8 @@ button {
 }
 
 .setup-start-button {
-  width: 64px;
-  height: 64px;
+  width: 90px;
+  height: 90px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -758,8 +646,8 @@ button {
 }
 
 .setup-start-icon {
-  width: 30px;
-  height: 30px;
+  width: 42px;
+  height: 42px;
   fill: none;
   stroke: currentColor;
   stroke-width: 1.7;
@@ -774,10 +662,12 @@ button {
 }
 
 .text-stream {
+  --bubble-pad-y: 8px;
+  --bubble-pad-x: 12px;
   flex: 1;
   min-height: 0;
   overflow: auto;
-  padding: 20px;
+  padding: 0.5rem 0.4rem;
   font-family: var(--ui-font);
   font-size: 1rem;
   font-weight: 400;
@@ -787,34 +677,38 @@ button {
   scrollbar-gutter: stable;
 }
 
+.text-stream[data-clip-top="on"] {
+  mask-image: linear-gradient(to bottom, transparent 0, #000 16px);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 16px);
+}
+
 .empty-state {
+  padding: var(--bubble-pad-y) var(--bubble-pad-x);
   color: var(--empty-state);
   font-style: normal;
   font-weight: 400;
 }
 
 .turn-part + .turn-part {
-  margin-top: 0.7rem;
+  margin-top: 0.4rem;
 }
 
 .turn-part {
-  padding: 8px 12px;
+  padding: var(--bubble-pad-y) var(--bubble-pad-x);
   border-radius: 10px;
   background: var(--surface-soft);
   transition: background-color 0.15s ease;
 }
 
-.source-pane .turn-part {
-  background: var(--surface);
-}
-
-.source-pane .turn-part:active {
-  background: var(--surface-soft);
-}
-
 .turn-part.is-spoken {
   color: var(--muted);
   opacity: 0.76;
+}
+
+/* Spoken bubble whose TTS used a sub-threshold last_speech reference. */
+.target-pane .turn-part.is-spoken.is-low-quality-ref {
+  color: var(--warning);
+  opacity: 1;
 }
 
 .target-pane .turn-part.is-replayable {
@@ -870,7 +764,6 @@ button {
 
 .bubble-speak-button:hover,
 .bubble-speak-button:focus-visible {
-  background: var(--surface);
   color: var(--text);
   outline: none;
 }
@@ -905,8 +798,8 @@ button {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 7px 8px;
-  padding-bottom: max(8px, env(safe-area-inset-bottom));
+  padding: 16px 8px;
+  padding-bottom: max(16px, env(safe-area-inset-bottom));
   background: var(--dock-bg);
   -webkit-backdrop-filter: blur(12px);
   backdrop-filter: blur(12px);
@@ -922,7 +815,9 @@ button {
   min-width: 0;
 }
 
-.dock-start {
+.dock-end {
+  position: absolute;
+  right: 8px;
   display: flex;
   align-items: center;
 }
@@ -932,13 +827,6 @@ button {
   align-items: center;
   justify-content: center;
   gap: 5px;
-}
-
-.dock-end {
-  position: absolute;
-  right: 8px;
-  display: flex;
-  align-items: center;
 }
 
 .round-action {
@@ -1002,34 +890,46 @@ button {
 }
 
 .mic-toggle-action {
-  width: 48px;
-  height: 48px;
-  min-width: 48px;
-  min-height: 48px;
-  --mic-toggle-halo-alpha: 0;
-  --mic-toggle-halo-color: 59, 130, 246;
-  --mic-toggle-halo-size: 0px;
-  box-shadow: 0 0 0 var(--mic-toggle-halo-size) rgba(var(--mic-toggle-halo-color), var(--mic-toggle-halo-alpha));
-  transition: box-shadow 80ms linear, background-color 0.2s ease, transform 0.15s ease;
+  position: relative;
+  width: 60px;
+  height: 60px;
+  min-width: 60px;
+  min-height: 60px;
+  margin: 0 14px;
+  transition: background-color 0.2s ease, transform 0.15s ease;
+}
+
+.mic-toggle-action::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background-color: var(--mic-toggle-halo-color, transparent);
+  transform: scale(var(--mic-toggle-halo-scale, 1));
+  pointer-events: none;
+  z-index: -1;
+  transition: transform 80ms linear, background-color 80ms linear;
 }
 
 .mic-toggle-action .round-action-icon {
-  width: 24px;
-  height: 24px;
+  width: 30px;
+  height: 30px;
 }
 
 .mic-toggle-action.is-clip-risk {
   animation: mic-toggle-clip-pulse 640ms ease-in-out infinite;
 }
 
+/* Pulse via outline so it doesn't fight the inline box-shadow halo. */
 @keyframes mic-toggle-clip-pulse {
   0%,
   100% {
-    box-shadow: 0 0 0 var(--mic-toggle-halo-size) rgba(var(--mic-toggle-halo-color), var(--mic-toggle-halo-alpha));
+    outline: 2px solid rgba(185, 28, 28, 0);
+    outline-offset: 2px;
   }
-
   50% {
-    box-shadow: 0 0 0 calc(var(--mic-toggle-halo-size) + 4px) rgba(var(--mic-toggle-halo-color), calc(var(--mic-toggle-halo-alpha) + 0.12));
+    outline: 2px solid rgba(185, 28, 28, 0.5);
+    outline-offset: 6px;
   }
 }
 
@@ -1041,25 +941,6 @@ button {
 .mic-toggle-action.is-mic-on-action .mic-toggle-on-icon {
   display: block;
 }
-
-.finish-action {
-  background: var(--danger);
-}
-
-.finish-action:active {
-  background: var(--finish-pressed);
-  transform: scale(0.93);
-}
-
-.finish-action:disabled {
-  opacity: 0.46;
-}
-
-.finish-action-icon {
-  fill: none;
-  stroke-width: 2.1;
-}
-
 
 .hidden-playback-button {
   position: fixed;
@@ -1355,7 +1236,7 @@ button {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--surface);
-  color: var(--muted);
+  color: var(--text);
   font: inherit;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1458,6 +1339,10 @@ button {
   color: var(--text);
   font-size: 0.78rem;
   line-height: 1.25;
+}
+
+.tuning-row:not(:has(.tuning-meta)) {
+  grid-template-columns: minmax(0, 1fr) minmax(140px, 200px);
 }
 
 .tuning-label {
@@ -1577,7 +1462,7 @@ button {
 .tts-stable-status {
   color: var(--muted);
   font-size: 0.78rem;
-  text-align: right;
+  text-align: left;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1695,10 +1580,6 @@ button {
   .pane {
     height: 100%;
   }
-
-  .switch-turn-action {
-    top: 7px;
-  }
 }
 
 @media (max-width: 720px) {
@@ -1710,11 +1591,6 @@ button {
 @media (max-width: 390px) {
   .language-pill {
     width: auto;
-  }
-
-  .session-status-pill {
-    min-width: 70px;
-    padding: 6px 10px;
   }
 
   .settings-button {

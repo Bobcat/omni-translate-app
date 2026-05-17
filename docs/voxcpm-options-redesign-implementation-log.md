@@ -265,6 +265,83 @@ the backend (`_SEGMENT_DEBUG_KEYS`, `_segment_debug_payload`,
 
 ---
 
+## Observations during use
+
+### Replay volume varies wildly with `last_speech`
+
+Observed: replaying the same target bubble multiple times with
+`reference_source = last_speech` could produce wildly different TTS
+volume (sometimes loud, sometimes barely audible). Replays with
+`stable_generated` were noticeably more consistent. Two root causes:
+
+1. **Replay was reading `lane.last_asr_wav_path` live**, not the WAV
+   that was used during the original TTS for that bubble. If the user
+   had spoken again in between, the replay used a different reference
+   than the first play. Fixed by snapshotting the ref-WAV per
+   `TurnPart` (`reference_wav_path` field) at TTS time and reusing it
+   in `_replay_tts`; snapshots live under
+   `data/tts/{session_id}/refs/` and are deleted in
+   `_close_current_turn`. Session-end cleanup falls under the existing
+   `clear_session` rmtree.
+2. **The model itself is stochastic** (VoxCPM is autoregressive with
+   sampling). Same text + same ref WAV can yield different prosody
+   and amplitude. With stable_generated refs the output distribution
+   is narrower because the ref has clean, predictable properties
+   (controlled pitch/energy/articulation, no leading silence, no
+   background noise). With last_speech the ref's variability — short
+   duration, leading silence, ambient noise — opens the model up to a
+   wider output range.
+
+Cause #1 is fixed. Cause #2 is inherent to the model+input. Possible
+follow-ups for #2:
+
+- **RMS-normalize the ref-WAV** before sending. Should reduce
+  amplitude variance directly.
+- **VAD-trim** leading/trailing silence before applying the
+  `trim_seconds` window, so the trimmed snippet contains actual
+  speech.
+- **Pin a model seed** if the TTS pool / VoxCPM exposes one in its
+  sampling parameters — would make replays deterministic for a given
+  `(text, ref)` pair.
+
+### Last-speech quality heuristic + low-quality indicator
+
+The quality-score heuristic from the design doc
+("Last speech fragment — quality heuristic") is now wired into the
+runtime path:
+
+- `_last_speech_quality_score(segments, wav_path)` implements the
+  signal-level formula (`min(duration_s/3, vad_coverage_ratio,
+  1 - max_internal_silence_ms/1000)`) using the existing ASR segments
+  plus the WAV file duration. `avg_logprob` is intentionally **not**
+  folded in: it measures whether the audio matches the transcription
+  (ASR confidence), not whether the audio is a usable *voice
+  reference* for TTS. The two diverge often enough (clean whisper →
+  high logprob but unusable ref; clear loud voice on a rare word →
+  low logprob but fine ref) that it's a poor proxy here. The
+  design-doc proposal to weave it in is dropped.
+- Each lane keeps the most recent qualifying fragment as
+  `lane.last_qualifying_asr_wav_path`. `_last_speech_reference_choice`
+  returns `(path, low_quality)`:
+  - current fragment scores ≥ threshold → use it.
+  - else fall back to the previous qualifying fragment if available.
+  - else use the current (sub-threshold) fragment anyway, with
+    `low_quality=True`. Deviation from the design doc: the doc says
+    "fragment is not used" below threshold; user opted instead to
+    always produce audio and visualize the uncertainty.
+- The `low_quality` bit travels to the frontend via
+  `TurnPart.low_quality_reference` → `_part_payload` →
+  `is-low-quality-ref` class on the bubble → orange text once the
+  part is spoken (`.target-pane .turn-part.is-spoken.is-low-quality-ref`
+  in styles.css). Subsequent replays of that bubble keep the colour
+  since the snapshot + flag are stored per part.
+
+Threshold lives at `LAST_SPEECH_QUALITY_THRESHOLD = 0.7` in runtime.py
+for easy tuning if the practical range turns out wider/narrower than
+the spec assumed.
+
+---
+
 ## Open items
 
 Carry-over work for future rounds, in rough order of likely priority:

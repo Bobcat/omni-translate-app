@@ -136,12 +136,6 @@ export class SessionSocket {
     return true;
   }
 
-  clearTurn() {
-    if (!this.isOpen()) return false;
-    this.ws.send(JSON.stringify({ type: 'clear_turn' }));
-    return true;
-  }
-
   replayTts({ laneId, text }) {
     if (!this.isOpen()) return false;
     this.ws.send(JSON.stringify({

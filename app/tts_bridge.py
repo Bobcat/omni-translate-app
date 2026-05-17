@@ -28,6 +28,10 @@ from app.config import rooted_path
 TTS_ROOT = (REPO_ROOT / "data" / "tts").resolve()
 LOGGER = logging.getLogger("asr_translate_tts.tts_metrics")
 _TTS_BRIDGE: TTSBridge | None = None
+
+
+class TtsReferenceUnavailableError(Exception):
+    """Raised when voxcpm2 reference_audio mode has no usable reference."""
 _TTS_BRIDGE_LOCK = threading.Lock()
 _TTS_SETTINGS_LOCK = threading.Lock()
 _TTS_RUNTIME_OVERRIDES: dict[str, Any] = {}
@@ -122,11 +126,12 @@ VOXCPM2_REFERENCE_SOURCE_OPTIONS = (
     ("stable_generated", "Stable generated", False),
     ("own_voice", "Own voice (later)", True),
 )
-VOXCPM2_DEFAULT_TRIM_SECONDS = 8.0
+VOXCPM2_DEFAULT_TRIM_SECONDS = 4.0
 VOXCPM2_DEFAULT_LANGUAGE_CONFIG = {
-    "mode": "description",
-    "gender": "female",
-    "style": "neutral",
+    "mode": "reference_audio",
+    "reference_source": "stable_generated",
+    "stable_gender": "female",
+    "trim_seconds": VOXCPM2_DEFAULT_TRIM_SECONDS,
 }
 VOXCPM2_GENDER_PROMPT_CLAUSES = {
     "female": "Use a natural adult female voice.",
@@ -298,7 +303,7 @@ def tts_uses_asr_reference_wav(language: str) -> bool:
     config = _voxcpm2_language_config(settings["voxcpm2"]["languages"], language)
     if config["mode"] != "reference_audio":
         return False
-    return config.get("reference_source", "last_speech") == "last_speech"
+    return config.get("reference_source", "stable_generated") == "last_speech"
 
 
 def artifact_path(session_id: str, artifact_id: str) -> Path:
@@ -323,12 +328,17 @@ def _tts_pool_request_payload(
     elif _is_voxcpm_family_backend(backend):
         config = _voxcpm2_language_config(settings["voxcpm2"]["languages"], language)
         resolved_reference_path: str | None = None
-        reference_source = config.get("reference_source", "last_speech")
+        reference_source = config.get("reference_source", "stable_generated")
         if config["mode"] == "reference_audio":
             if reference_source == "stable_generated":
                 from app.voice_library import stable_voice_wav_path
                 stable_gender = str(config.get("stable_gender") or "female")
                 stable_path = stable_voice_wav_path(language, stable_gender)
+                if stable_path is None:
+                    # Hardcoded policy: when the target language has no stable
+                    # sample, fall back to English. The English sample is
+                    # operator-curated and expected to always exist.
+                    stable_path = stable_voice_wav_path("English", stable_gender)
                 if stable_path is not None:
                     resolved_reference_path = str(stable_path)
             elif reference_source == "last_speech" and reference_wav_path:
@@ -370,7 +380,11 @@ def _voxcpm2_voice_instructions(
     has_reference_audio: bool,
 ) -> str:
     target_lang = str(language or "").strip()
-    if config["mode"] == "reference_audio" and has_reference_audio:
+    if config["mode"] == "reference_audio":
+        if not has_reference_audio:
+            raise TtsReferenceUnavailableError(
+                f"no reference audio available for language={target_lang!r}"
+            )
         return _voxcpm2_reference_instructions(target_lang)
     return _voxcpm2_description_instructions(target_lang, config)
 
@@ -716,11 +730,11 @@ def _normalize_voxcpm2_language_entry(
     errors: dict[str, str] | None = None,
     errors_prefix: str = "voxcpm2.languages",
 ) -> dict[str, Any]:
-    mode = str(entry.get("mode") or "description").strip().lower()
+    mode = str(entry.get("mode") or "reference_audio").strip().lower()
     if mode not in _VOXCPM2_MODE_VALUES:
         if errors is not None:
             errors[f"{errors_prefix}.mode"] = "unsupported mode"
-        mode = "description"
+        mode = "reference_audio"
     result: dict[str, Any] = {"mode": mode}
     if mode == "description":
         gender = str(entry.get("gender") or "female").strip().lower()
@@ -736,11 +750,11 @@ def _normalize_voxcpm2_language_entry(
         result["gender"] = gender
         result["style"] = style
     else:
-        reference_source = str(entry.get("reference_source") or "last_speech").strip().lower()
+        reference_source = str(entry.get("reference_source") or "stable_generated").strip().lower()
         if reference_source not in _VOXCPM2_REFERENCE_SOURCE_VALUES:
             if errors is not None:
                 errors[f"{errors_prefix}.reference_source"] = "unsupported reference source"
-            reference_source = "last_speech"
+            reference_source = "stable_generated"
         trim_raw = entry.get("trim_seconds", VOXCPM2_DEFAULT_TRIM_SECONDS)
         try:
             trim = _clamped_float(

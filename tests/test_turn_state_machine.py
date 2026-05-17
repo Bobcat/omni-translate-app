@@ -270,31 +270,6 @@ class TurnStateMachineTests(unittest.IsolatedAsyncioTestCase):
             self.runtimes = [item for item in getattr(self, "runtimes", []) if item is not runtime]
             path.unlink(missing_ok=True)
 
-    async def test_clear_turn_while_tts_is_pending_discards_turn_and_drops_late_audio(self) -> None:
-        runtime, websocket = self.make_runtime(SlowTTS())
-
-        await runtime._speak_now()
-        old_turn_id = runtime.current_turn.turn_id
-        self.assertEqual(runtime.current_turn.state.value, "open_speaking")
-
-        await runtime._clear_turn()
-        await asyncio.sleep(0.3)
-        await runtime._tts_playback_complete(
-            {
-                "lane_id": "a_to_b",
-                "turn_id": old_turn_id,
-                "artifact_id": "late_artifact",
-            }
-        )
-
-        self.assertEqual(runtime.current_turn.turn_id, "turn_2")
-        self.assertEqual(runtime.current_turn.lane_id, "a_to_b")
-        self.assertEqual(runtime.current_turn.state.value, "open_empty")
-        self.assertEqual(runtime.current_turn.parts, [])
-        self.assertEqual(len(runtime.discarded_turns), 1)
-        self.assertIsNone(runtime.lanes["a_to_b"].pending_tts)
-        self.assertFalse(any(event["type"] == "tts_clip_ready" for event in websocket.sent))
-
     async def test_next_turn_while_tts_is_pending_closes_turn_and_drops_late_audio(self) -> None:
         runtime, websocket = self.make_runtime(SlowTTS())
 
