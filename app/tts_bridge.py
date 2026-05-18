@@ -162,6 +162,14 @@ LANGUAGE_BCP47_BY_NAME = {
     "Chinese": "zh-cn",
     "Japanese": "ja",
     "Korean": "ko",
+    "Afrikaans": "af",
+    "Danish": "da",
+    "Hungarian": "hu",
+    "Norwegian": "nb",
+    "Romanian": "ro",
+    "Russian": "ru",
+    "Swedish": "sv",
+    "Vietnamese": "vi",
 }
 
 
