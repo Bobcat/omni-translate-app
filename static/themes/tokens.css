@@ -1,0 +1,11 @@
+/* Theme-invariant tokens: geometry + typography + color-scheme declaration.
+   Per-theme color tokens live in light.css / dark.css / future themes. */
+
+:root {
+  color-scheme: light dark;
+  --radius: 8px;
+  --dialog-radius: 16px;
+  --ui-font: 'Inter', system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, "Noto Sans", "Liberation Sans", sans-serif;
+  --ui-line-height: 1.56;
+  --dialog-body-line-height: 1.52;
+}

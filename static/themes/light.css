@@ -1,0 +1,46 @@
+/* Light theme — the default. Defines the full color token set; dark.css
+   (and any future high-contrast.css) only override the tokens that differ. */
+
+:root {
+  --bg: hsl(210, 20%, 98%);
+  --surface: hsl(0, 0%, 100%);
+  --surface-soft: hsl(210, 40%, 95%);
+  --panels-bg: hsl(220, 15%, 91%);
+  --text: hsl(215, 25%, 17%);
+  --text-strong: hsl(215, 25%, 17%);
+  --muted: hsl(215, 16%, 47%);
+  --border: hsl(214, 32%, 91%);
+  --border-hover: hsl(214, 20%, 80%);
+  --primary: hsl(224, 60%, 55%);
+  --primary-pressed: hsl(224, 65%, 46%);
+  --primary-rgb: 66, 99, 199;
+  --on-primary: hsl(0, 0%, 100%);
+  --accent: hsl(224, 60%, 55%);
+  --warning: hsl(38, 82%, 28%);
+  --warning-bg: hsl(48, 96%, 88%);
+  --warning-accent: hsl(38, 92%, 50%);
+  --danger: hsl(0, 84%, 60%);
+  --danger-rgb: 185, 28, 28;
+  --error-text: hsl(0, 70%, 35%);
+  --error-bg: hsl(0, 93%, 94%);
+
+  --success-bg: hsl(138, 76%, 93%);
+  --success-text: hsl(150, 60%, 24%);
+  --success-accent: hsl(142, 71%, 45%);
+  --text-preview: hsl(220, 6%, 57%);
+  --empty-state: hsl(216, 12%, 76%);
+  --vad-border: hsl(148, 40%, 80%);
+  --vad-bg: hsl(144, 50%, 97%);
+  --vad-text: hsl(150, 30%, 35%);
+  --pc-export: hsl(174, 77%, 26%);
+  --pc-export-pressed: hsl(174, 70%, 22%);
+  --finish-pressed: hsl(0, 72%, 51%);
+  --level-bg: hsl(216, 18%, 90%);
+  --level-hot: hsl(32, 100%, 36%);
+  --level-threshold: hsla(0, 0%, 100%, 0.74);
+  --scrim: hsla(210, 24%, 12%, 0.36);
+  --sheet-header-bg: hsla(210, 40%, 98%, 0.96);
+  --dock-bg: hsl(265, 22%, 95%);
+  --shadow: 0 18px 36px hsla(222, 47%, 11%, 0.15);
+  --shadow-soft: 0 1px 3px hsla(222, 47%, 11%, 0.06);
+}

@@ -1,0 +1,48 @@
+/* Dark theme — overrides over the light baseline. Loaded after light.css
+   so its `:root` declarations cascade on top when the media query matches. */
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: hsl(220, 16%, 8%);
+    --panels-bg: hsl(220, 16%, 7%);
+    --surface: hsl(222, 18%, 14%);
+    --surface-soft: hsl(220, 12%, 16%);
+    --text: hsl(220, 10%, 88%);
+    --text-strong: hsl(220, 10%, 95%);
+    --muted: hsl(220, 8%, 52%);
+    --border: hsl(220, 12%, 20%);
+    --border-hover: hsl(220, 10%, 30%);
+    --primary: hsl(224, 60%, 65%);
+    --primary-pressed: hsl(224, 55%, 55%);
+    --primary-rgb: 105, 138, 219;
+    --on-primary: hsl(0, 0%, 100%);
+    --accent: hsl(224, 60%, 65%);
+    --warning: hsl(38, 70%, 60%);
+    --warning-bg: hsl(38, 40%, 16%);
+    --warning-accent: hsl(38, 75%, 60%);
+    --danger: hsl(0, 72%, 55%);
+    --danger-rgb: 216, 76, 76;
+    --error-text: hsl(0, 60%, 68%);
+    --error-bg: hsl(0, 40%, 15%);
+
+    --success-bg: hsl(150, 30%, 14%);
+    --success-text: hsl(150, 40%, 65%);
+    --success-accent: hsl(142, 60%, 42%);
+    --text-preview: hsl(220, 6%, 48%);
+    --empty-state: hsl(220, 8%, 38%);
+    --vad-border: hsl(150, 20%, 25%);
+    --vad-bg: hsl(150, 15%, 12%);
+    --vad-text: hsl(150, 25%, 60%);
+    --pc-export: hsl(174, 50%, 40%);
+    --pc-export-pressed: hsl(174, 50%, 34%);
+    --finish-pressed: hsl(0, 60%, 42%);
+    --level-bg: hsl(220, 12%, 18%);
+    --level-hot: hsl(32, 80%, 50%);
+    --level-threshold: hsla(0, 0%, 100%, 0.2);
+    --scrim: hsla(220, 20%, 4%, 0.6);
+    --sheet-header-bg: hsla(220, 14%, 13%, 0.96);
+    --dock-bg: hsl(220, 14%, 11%);
+    --shadow: 0 18px 36px hsla(220, 30%, 4%, 0.4);
+    --shadow-soft: 0 1px 3px hsla(220, 30%, 4%, 0.15);
+  }
+}
