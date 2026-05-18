@@ -97,20 +97,22 @@ see if it's reachable.
 
 ---
 
-## 3. Style control — wrong field in our code?
+## 3. Style control — inline vs separate field
 
-Style control instructions go **inline in the text itself**, not via
-a separate field:
+VoxCPM2's documented recipe puts style instructions **inline in the
+text itself**:
 
 ```
 "(young woman, gentle and sweet voice)Hello there"
 "(slightly faster, cheerful tone)..."
 ```
 
-Our pool passes `voice.instructions` as a separate field. Worth
-verifying that VoxCPM2 actually reads it — it may be ignored, or
-processed differently than what the README documents. The official
-recipe is inline text annotations.
+Our app sends `voice.instructions` as a separate field, but the
+tts-pool wraps it into the inline `(control)text` format before
+calling `model.generate()` — see `_voxcpm2_text` in
+`tts-pool/app/engine/voxcpm2.py`. Both `voxcpm2` and
+`nanovllm_voxcpm` engines use the same helper. The model sees the
+documented inline form; no change needed in our code.
 
 ---
 
