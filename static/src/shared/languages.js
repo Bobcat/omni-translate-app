@@ -17,3 +17,51 @@ export const languages = [
   { name: 'Japanese', asr: 'ja', bcp47: 'ja', kokoro: true },
   { name: 'Korean', asr: 'ko', bcp47: 'ko' },
 ];
+
+export const LANGUAGE_FLAGS = {
+  ar: '🇸🇦',
+  de: '🇩🇪',
+  en: '🇬🇧',
+  es: '🇪🇸',
+  fr: '🇫🇷',
+  hi: '🇮🇳',
+  it: '🇮🇹',
+  ja: '🇯🇵',
+  ko: '🇰🇷',
+  nl: '🇳🇱',
+  pl: '🇵🇱',
+  pt: '🇵🇹',
+  tr: '🇹🇷',
+  uk: '🇺🇦',
+  zh: '🇨🇳',
+};
+
+export function bcp47ForLanguageName(name) {
+  const text = String(name || '').trim();
+  if (!text) return '';
+  const match = languages.find((item) => item.name === text);
+  return match?.bcp47 || '';
+}
+
+export function languageNameForBcp47(tag) {
+  const text = String(tag || '').trim().toLowerCase();
+  if (!text) return '';
+  const match = languages.find((item) => item.bcp47 === text);
+  return match?.name || '';
+}
+
+export function codeForLanguage(name) {
+  const match = languages.find((item) => item.name === name);
+  return (match?.asr || String(name || '').slice(0, 2)).toUpperCase();
+}
+
+export function normalizeLanguageName(value) {
+  const fallback = languages[0]?.name || 'English';
+  const text = String(value || '').trim();
+  return languages.some((item) => item.name === text) ? text : fallback;
+}
+
+export function flagForLanguage(name) {
+  const match = languages.find((item) => item.name === name);
+  return match?.flag || LANGUAGE_FLAGS[match?.asr] || '';
+}

@@ -153,6 +153,7 @@ button {
 
 .titlebar-settings-button {
   grid-column: 3;
+  grid-row: 1;
   justify-self: end;
 }
 
@@ -179,21 +180,10 @@ button {
 
 .titlebar-vad-badge {
   grid-column: 3;
+  grid-row: 1;
   justify-self: end;
+  margin-right: 36px;
 }
-
-.app.is-running .titlebar-settings-button {
-  display: none;
-}
-
-.app .dock-settings-button {
-  display: none;
-}
-
-.app.is-running .dock-settings-button {
-  display: inline-flex;
-}
-
 
 .language-pill,
 .settings-button,
@@ -815,13 +805,6 @@ button {
   min-width: 0;
 }
 
-.dock-end {
-  position: absolute;
-  right: 8px;
-  display: flex;
-  align-items: center;
-}
-
 .dock-center {
   display: flex;
   align-items: center;
@@ -987,7 +970,7 @@ button {
   border: 0;
   border-bottom: 0;
   border-radius: var(--dialog-radius) var(--dialog-radius) 0 0;
-  background: var(--surface);
+  background: var(--dock-bg);
   box-shadow: var(--shadow);
   overflow: hidden;
   animation: sheet-slide-up 0.32s cubic-bezier(0.32, 0.72, 0, 1) both;
@@ -1040,7 +1023,7 @@ button {
   padding: 10px 12px;
   border: 0;
   border-radius: var(--radius);
-  background: var(--surface-soft);
+  background: var(--surface);
 }
 
 .settings-nav-row {

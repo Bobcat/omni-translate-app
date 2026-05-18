@@ -25,7 +25,7 @@
       "chunk_size": 10,
       "chunk_length": null,
       "backend": "whisperx",
-      "vad_filter": null,
+      "vad_filter": true,
       "vad_parameters": null,
       "word_timestamps": null,
       "max_new_tokens": null,
