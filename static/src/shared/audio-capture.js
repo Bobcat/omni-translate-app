@@ -1,7 +1,10 @@
+const WORKLET_NAME = 'asr-capture-processor';
+
 export class AudioCapture {
   constructor({ targetSampleRate = 16000, chunkMs = 40, preGain = 1, autoGainControl = false, onChunk, onLevel }) {
     this.targetSampleRate = Number(targetSampleRate);
-    this.chunkSamples = Math.max(80, Math.round(this.targetSampleRate * Number(chunkMs) / 1000));
+    this.chunkMs = Number(chunkMs);
+    this.chunkSamples = Math.max(80, Math.round(this.targetSampleRate * this.chunkMs / 1000));
     this.preGain = normalizePreGain(preGain);
     this.autoGainControl = autoGainControl === true;
     this.onChunk = onChunk;
@@ -10,8 +13,11 @@ export class AudioCapture {
     this.context = null;
     this.source = null;
     this.preGainNode = null;
+    this.worklet = null;
     this.processor = null;
     this.silence = null;
+    this.workletUrl = null;
+    this.inputSampleRate = 0;
     this.pending = new Float32Array(0);
     this.running = false;
   }
@@ -24,6 +30,7 @@ export class AudioCapture {
     this.stream = await navigator.mediaDevices.getUserMedia({
       audio: {
         channelCount: 1,
+        sampleRate: this.targetSampleRate,
         noiseSuppression: false,
         echoCancellation: false,
         autoGainControl: this.autoGainControl ? { exact: true } : false,
@@ -36,21 +43,45 @@ export class AudioCapture {
       throw new Error('AudioContext unavailable');
     }
     this.context = new AudioContextCtor({ latencyHint: 'interactive' });
+    this.inputSampleRate = Number(this.context.sampleRate || this.targetSampleRate);
     this.source = this.context.createMediaStreamSource(this.stream);
     this.preGainNode = this.context.createGain();
     this.preGainNode.gain.value = this.preGain;
-    this.processor = this.context.createScriptProcessor(4096, 1, 1);
-    this.silence = this.context.createGain();
-    this.silence.gain.value = 0;
-    this.processor.onaudioprocess = (event) => {
-      if (!this.running) return;
-      const input = event.inputBuffer.getChannelData(0);
-      this.handleSamples(input, this.context.sampleRate);
-    };
     this.source.connect(this.preGainNode);
-    this.preGainNode.connect(this.processor);
-    this.processor.connect(this.silence);
-    this.silence.connect(this.context.destination);
+
+    let workletReady = false;
+    if (this.context.audioWorklet && typeof window.AudioWorkletNode !== 'undefined') {
+      try {
+        this.workletUrl = buildWorkletModuleUrl();
+        await this.context.audioWorklet.addModule(this.workletUrl);
+        const node = new AudioWorkletNode(this.context, WORKLET_NAME, {
+          numberOfInputs: 1,
+          numberOfOutputs: 0,
+          channelCount: 1,
+        });
+        node.port.onmessage = (event) => this.handleSamples(event.data, this.inputSampleRate);
+        this.preGainNode.connect(node);
+        this.worklet = node;
+        workletReady = true;
+      } catch {
+        // Fall through to ScriptProcessor below.
+      }
+    }
+
+    if (!workletReady) {
+      this.processor = this.context.createScriptProcessor(4096, 1, 1);
+      this.silence = this.context.createGain();
+      this.silence.gain.value = 0;
+      this.processor.onaudioprocess = (event) => {
+        if (!this.running) return;
+        const input = event.inputBuffer.getChannelData(0);
+        this.handleSamples(input, this.context.sampleRate);
+      };
+      this.preGainNode.connect(this.processor);
+      this.processor.connect(this.silence);
+      this.silence.connect(this.context.destination);
+    }
+
     if (this.context.state === 'suspended') {
       await this.context.resume();
     }
@@ -59,6 +90,11 @@ export class AudioCapture {
 
   stop() {
     this.running = false;
+    if (this.worklet) {
+      try { this.worklet.port.onmessage = null; } catch {}
+      try { this.worklet.disconnect(); } catch {}
+      this.worklet = null;
+    }
     if (this.processor) {
       try { this.processor.disconnect(); } catch {}
       this.processor.onaudioprocess = null;
@@ -86,11 +122,18 @@ export class AudioCapture {
       try { this.context.close(); } catch {}
       this.context = null;
     }
+    if (this.workletUrl) {
+      try { URL.revokeObjectURL(this.workletUrl); } catch {}
+      this.workletUrl = null;
+    }
+    this.inputSampleRate = 0;
     this.pending = new Float32Array(0);
   }
 
   handleSamples(samples, inputSampleRate) {
-    const resampled = resampleLinear(samples, inputSampleRate, this.targetSampleRate);
+    if (!(samples instanceof Float32Array) || samples.length === 0) return;
+    const resampled = downsampleAveraging(samples, inputSampleRate, this.targetSampleRate);
+    if (!resampled || resampled.length === 0) return;
     this.pending = concatFloat32(this.pending, resampled);
     while (this.pending.length >= this.chunkSamples) {
       const chunk = this.pending.slice(0, this.chunkSamples);
@@ -129,19 +172,52 @@ function normalizePreGain(value) {
   return Number.isFinite(numeric) ? Math.max(0.5, Math.min(3.0, numeric)) : 1;
 }
 
-function resampleLinear(input, inputRate, outputRate) {
-  if (Math.round(inputRate) === Math.round(outputRate)) {
+function buildWorkletModuleUrl() {
+  const code = `
+class AsrCaptureProcessor extends AudioWorkletProcessor {
+  process(inputs) {
+    const input = inputs[0];
+    if (!input || input.length === 0) return true;
+    const channel = input[0];
+    if (!channel || channel.length === 0) return true;
+    this.port.postMessage(new Float32Array(channel));
+    return true;
+  }
+}
+registerProcessor('${WORKLET_NAME}', AsrCaptureProcessor);
+`;
+  const blob = new Blob([code], { type: 'application/javascript' });
+  return URL.createObjectURL(blob);
+}
+
+function downsampleAveraging(input, inputRate, outputRate) {
+  const inRate = Number(inputRate || 0);
+  const outRate = Number(outputRate || 0);
+  if (!Number.isFinite(inRate) || !Number.isFinite(outRate) || inRate <= 0 || outRate <= 0) {
+    return new Float32Array(0);
+  }
+  if (Math.round(inRate) === Math.round(outRate)) {
     return new Float32Array(input);
   }
-  const ratio = inputRate / outputRate;
-  const length = Math.max(1, Math.floor(input.length / ratio));
-  const output = new Float32Array(length);
-  for (let i = 0; i < length; i += 1) {
-    const pos = i * ratio;
-    const left = Math.floor(pos);
-    const right = Math.min(input.length - 1, left + 1);
-    const frac = pos - left;
-    output[i] = input[left] + (input[right] - input[left]) * frac;
+  if (outRate > inRate) {
+    return new Float32Array(input);
+  }
+  const ratio = inRate / outRate;
+  const newLength = Math.max(1, Math.round(input.length / ratio));
+  const output = new Float32Array(newLength);
+  let offsetResult = 0;
+  let offsetBuffer = 0;
+  while (offsetResult < output.length) {
+    const nextOffsetBuffer = Math.min(input.length, Math.round((offsetResult + 1) * ratio));
+    let accum = 0;
+    let count = 0;
+    for (let i = offsetBuffer; i < nextOffsetBuffer; i += 1) {
+      accum += input[i];
+      count += 1;
+    }
+    output[offsetResult] = count > 0 ? accum / count : 0;
+    offsetResult += 1;
+    offsetBuffer = nextOffsetBuffer;
   }
   return output;
 }
