@@ -1,4 +1,5 @@
 :root {
+  color-scheme: light dark;
   --bg: hsl(210, 20%, 98%);
   --surface: hsl(0, 0%, 100%);
   --surface-soft: hsl(210, 40%, 95%);
@@ -11,17 +12,19 @@
   --primary: hsl(224, 60%, 55%);
   --primary-pressed: hsl(224, 65%, 46%);
   --primary-rgb: 66, 99, 199;
+  --on-primary: hsl(0, 0%, 100%);
   --accent: hsl(224, 60%, 55%);
   --warning: hsl(38, 82%, 28%);
   --warning-bg: hsl(48, 96%, 88%);
+  --warning-accent: hsl(38, 92%, 50%);
   --danger: hsl(0, 84%, 60%);
+  --danger-rgb: 185, 28, 28;
   --error-text: hsl(0, 70%, 35%);
   --error-bg: hsl(0, 93%, 94%);
 
   --success-bg: hsl(138, 76%, 93%);
   --success-text: hsl(150, 60%, 24%);
   --success-accent: hsl(142, 71%, 45%);
-  --asr-source-bg: hsl(150, 50%, 98%);
   --text-preview: hsl(220, 6%, 57%);
   --empty-state: hsl(216, 12%, 76%);
   --vad-border: hsl(148, 40%, 80%);
@@ -59,17 +62,19 @@
     --primary: hsl(224, 60%, 65%);
     --primary-pressed: hsl(224, 55%, 55%);
     --primary-rgb: 105, 138, 219;
+    --on-primary: hsl(0, 0%, 100%);
     --accent: hsl(224, 60%, 65%);
     --warning: hsl(38, 70%, 60%);
     --warning-bg: hsl(38, 40%, 16%);
+    --warning-accent: hsl(38, 75%, 60%);
     --danger: hsl(0, 72%, 55%);
+    --danger-rgb: 216, 76, 76;
     --error-text: hsl(0, 60%, 68%);
     --error-bg: hsl(0, 40%, 15%);
 
     --success-bg: hsl(150, 30%, 14%);
     --success-text: hsl(150, 40%, 65%);
     --success-accent: hsl(142, 60%, 42%);
-    --asr-source-bg: hsl(150, 15%, 10%);
     --text-preview: hsl(220, 6%, 48%);
     --empty-state: hsl(220, 8%, 38%);
     --vad-border: hsl(150, 20%, 25%);
@@ -211,7 +216,7 @@ button {
   font-size: 0.85rem;
   font-weight: 600;
   line-height: 1.2;
-  box-shadow: 0 1px 2px hsla(222, 47%, 11%, 0.06);
+  box-shadow: var(--shadow-soft);
   transition: background-color 0.15s ease;
 }
 
@@ -608,7 +613,7 @@ button {
   border: 0;
   border-radius: 50%;
   background: var(--primary);
-  color: hsl(0, 0%, 100%);
+  color: var(--on-primary);
   cursor: pointer;
   box-shadow: 0 4px 12px rgba(var(--primary-rgb), 0.3);
   transition: background-color 0.2s, transform 0.15s;
@@ -717,7 +722,7 @@ button {
   align-items: start;
   gap: 8px;
   padding: 8px 10px;
-  border-left: 3px solid hsl(38, 92%, 50%);
+  border-left: 3px solid var(--warning-accent);
   border-radius: var(--radius);
   background: var(--surface-soft);
   color: var(--text);
@@ -729,7 +734,7 @@ button {
   width: 16px;
   height: 16px;
   margin-top: 2px;
-  color: hsl(38, 92%, 50%);
+  color: var(--warning-accent);
   fill: none;
   stroke: currentColor;
   stroke-width: 2;
@@ -825,7 +830,7 @@ button {
   border: 0;
   border-radius: 50%;
   background: var(--primary);
-  color: hsl(0, 0%, 100%);
+  color: var(--on-primary);
   cursor: pointer;
   box-shadow: none;
   transition: background-color 0.2s ease, opacity 0.2s ease, transform 0.15s ease;
@@ -907,11 +912,11 @@ button {
 @keyframes mic-toggle-clip-pulse {
   0%,
   100% {
-    outline: 2px solid rgba(185, 28, 28, 0);
+    outline: 2px solid rgba(var(--danger-rgb), 0);
     outline-offset: 2px;
   }
   50% {
-    outline: 2px solid rgba(185, 28, 28, 0.5);
+    outline: 2px solid rgba(var(--danger-rgb), 0.5);
     outline-offset: 6px;
   }
 }
