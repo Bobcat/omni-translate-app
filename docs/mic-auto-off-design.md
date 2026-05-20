@@ -27,7 +27,24 @@ during quiet stretches are pure waste.
    getUserMedia track) keeps the audio sensor active. Real off ≠
    suppressed.
 
-## Approach
+## Approach in the broader data-reduction strategy
+
+Reducing mobile data has four orthogonal levers:
+
+| | Mechanism | Wins on | Status |
+|---|---|---|---|
+| 1 | WebSocket permessage-deflate compression | Active speech *and* mic ambient noise; always-on baseline | Not yet implemented (future server config change) |
+| 2 | **Auto-stop the mic on silence or bubble close** | Idle stretches (zero bytes during quiet) | **This document** |
+| 3 | Client-side energy VAD + timing heartbeat protocol | Short pauses inside speech | Out of scope; protocol-invasive |
+| 4 | Opus encoding instead of PCM16 on the wire | Always-on, biggest single reduction | Out of scope; large refactor |
+
+Levers 1 and 2 stack cleanly: compression reduces bytes per frame *if*
+we are transmitting; auto-off cuts how much we transmit at all. If the
+user disables both auto-off triggers in the settings, only the
+infrastructure-level levers (1/3/4) remain — which is why those should
+not be forgotten as future work.
+
+## Approach (this branch)
 
 Auto-stop the mic capture entirely under one of two configurable
 triggers. The bottom-bar stop-circle reverts to the mic icon (the
@@ -77,7 +94,7 @@ controls:
 
 | Setting | Type | Default |
 |---|---|---|
-| Auto-off after silence | duration select: 3 / 5 / 10 / 15 / 30 / 60 s / Off | `5 s` |
+| Auto-off after silence | duration select: 3 / 5 / 10 / 15 / 30 / 60 s / Off | `10 s` |
 | Auto-off after each bubble | toggle | off |
 | Play cue on auto-off | toggle | on |
 

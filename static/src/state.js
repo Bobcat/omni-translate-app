@@ -40,7 +40,14 @@ export const state = {
     autoGainControl: DEFAULT_AUDIO_SETTINGS.autoGainControl,
     autoGainControlBusy: false,
     inputLevel: 0,
+    autoOffSilenceSeconds: DEFAULT_AUDIO_SETTINGS.autoOffSilenceSeconds,
+    autoOffAfterBubble: DEFAULT_AUDIO_SETTINGS.autoOffAfterBubble,
+    autoOffCueEnabled: DEFAULT_AUDIO_SETTINGS.autoOffCueEnabled,
   },
+  // Runtime-only handles for the silence-based auto-off timer. Never
+  // persisted; reset whenever the mic starts/stops.
+  autoOffSilenceTimer: null,
+  autoOffSilenceTimerDeadlineMono: 0,
   tuningSettings: cloneSettings(DEFAULT_TUNING_SETTINGS),
   tuningExpandedGroups: new Set(),
   ttsSettings: cloneSettings(DEFAULT_TTS_SETTINGS),

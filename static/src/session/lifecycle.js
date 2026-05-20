@@ -31,6 +31,14 @@ import { renderTuningSettings } from '../settings/tuning.js';
 import { renderTranscript } from '../ui/render-turn.js';
 import { enableTranscriptAutoFollow } from '../ui/auto-follow.js';
 import {
+  armAutoOffSilenceTimer,
+  clearAutoOffSilenceTimer,
+  registerMicAutoOffStopHandler,
+} from './mic-auto-off.js';
+import { playMicOnCue } from '../shared/audio-cue.js';
+
+registerMicAutoOffStopHandler(() => stopMicrophoneCapture());
+import {
   closeLanguageSheet,
   consumeLanguagePopstateSkip,
 } from '../ui/language-sheet.js';
@@ -151,6 +159,10 @@ export async function startMicrophoneCapture() {
     state.micState = MIC_STATES.LISTENING;
     state.captureMutedForPlayback = false;
     enableTranscriptAutoFollow();
+    armAutoOffSilenceTimer();
+    if (state.audioSettings.autoOffCueEnabled) {
+      try { playMicOnCue(); } catch {}
+    }
     renderAudioSettings();
     renderTranscript();
     setStatus('listening');
@@ -170,6 +182,7 @@ export async function startMicrophoneCapture() {
 export function stopMicrophoneCapture() {
   if (state.sessionState !== SESSION_STATES.RUNNING) return;
   state.captureMutedForPlayback = false;
+  clearAutoOffSilenceTimer();
   state.capture?.stop();
   state.capture = null;
   state.micState = MIC_STATES.OFF;
@@ -380,6 +393,8 @@ export function handleVadState(msg) {
     return;
   }
   showVadHint();
+  // Real speech observed: restart the silence-based auto-off countdown.
+  armAutoOffSilenceTimer();
 }
 
 function showVadHint() {

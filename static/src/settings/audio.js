@@ -8,9 +8,14 @@ import {
   SESSION_STATES,
   MIC_STATES,
   DEFAULT_AUDIO_SETTINGS,
+  AUTO_OFF_SILENCE_CHOICES,
 } from '../shared/constants.js';
 import { renderMicLevel } from '../ui/render-status.js';
 import { restartMicrophoneCapture } from '../session/lifecycle.js';
+import {
+  armAutoOffSilenceTimer,
+  clearAutoOffSilenceTimer,
+} from '../session/mic-auto-off.js';
 
 export function renderAudioSettings() {
   els.micPreGain.value = String(state.audioSettings.preGain);
@@ -22,7 +27,38 @@ export function renderAudioSettings() {
     || state.sessionState === SESSION_STATES.RUNNING;
   els.micAutoGainControl.disabled = state.audioSettings.autoGainControlBusy || !agcAvailable;
   els.audioSettingsReset.disabled = state.audioSettings.autoGainControlBusy;
+  if (els.micAutoOffSilence) {
+    els.micAutoOffSilence.value = String(state.audioSettings.autoOffSilenceSeconds);
+  }
+  if (els.micAutoOffAfterBubble) {
+    els.micAutoOffAfterBubble.checked = Boolean(state.audioSettings.autoOffAfterBubble);
+  }
+  if (els.micAutoOffCue) {
+    els.micAutoOffCue.checked = Boolean(state.audioSettings.autoOffCueEnabled);
+  }
   renderMicLevel(state.audioSettings.inputLevel);
+}
+
+export function handleAutoOffSilenceChange() {
+  const raw = Number(els.micAutoOffSilence?.value);
+  const next = AUTO_OFF_SILENCE_CHOICES.includes(raw) ? raw : DEFAULT_AUDIO_SETTINGS.autoOffSilenceSeconds;
+  state.audioSettings.autoOffSilenceSeconds = next;
+  if (next > 0 && state.micState === MIC_STATES.LISTENING) {
+    armAutoOffSilenceTimer();
+  } else {
+    clearAutoOffSilenceTimer();
+  }
+  renderAudioSettings();
+}
+
+export function handleAutoOffAfterBubbleChange() {
+  state.audioSettings.autoOffAfterBubble = Boolean(els.micAutoOffAfterBubble?.checked);
+  renderAudioSettings();
+}
+
+export function handleAutoOffCueChange() {
+  state.audioSettings.autoOffCueEnabled = Boolean(els.micAutoOffCue?.checked);
+  renderAudioSettings();
 }
 
 export function handlePreGainInput() {
@@ -49,7 +85,15 @@ export async function handleAutoGainControlChange() {
 
 export async function resetAudioSettings() {
   state.audioSettings.preGain = DEFAULT_AUDIO_SETTINGS.preGain;
+  state.audioSettings.autoOffSilenceSeconds = DEFAULT_AUDIO_SETTINGS.autoOffSilenceSeconds;
+  state.audioSettings.autoOffAfterBubble = DEFAULT_AUDIO_SETTINGS.autoOffAfterBubble;
+  state.audioSettings.autoOffCueEnabled = DEFAULT_AUDIO_SETTINGS.autoOffCueEnabled;
   state.capture?.setPreGain(state.audioSettings.preGain);
+  if (state.micState === MIC_STATES.LISTENING) {
+    armAutoOffSilenceTimer();
+  } else {
+    clearAutoOffSilenceTimer();
+  }
   if (state.sessionState === SESSION_STATES.RUNNING && state.capture) {
     state.audioSettings.autoGainControl = DEFAULT_AUDIO_SETTINGS.autoGainControl;
     await restartMicrophoneCapture();

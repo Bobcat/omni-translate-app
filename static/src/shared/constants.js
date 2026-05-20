@@ -23,7 +23,18 @@ export const MIC_STATES = {
 export const DEFAULT_AUDIO_SETTINGS = {
   preGain: 1.5,
   autoGainControl: true,
+  // Auto-off the mic after N seconds without backend-detected speech.
+  // 0 disables the silence-trigger. Choices in the UI:
+  // 3 / 5 / 10 / 15 / 30 / 60 / 0(off).
+  autoOffSilenceSeconds: 10,
+  // Auto-off the mic right after a bubble closes on a heuristic
+  // (sentence boundary or VAD silence). Not on the hard duration cap.
+  autoOffAfterBubble: false,
+  // Subtle Web Audio chirp when the app auto-stops the mic.
+  autoOffCueEnabled: true,
 };
+
+export const AUTO_OFF_SILENCE_CHOICES = [3, 5, 10, 15, 30, 60, 0];
 
 export const DEFAULT_TUNING_SETTINGS = {
   timing: { emit_min_ms: 120 },

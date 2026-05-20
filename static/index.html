@@ -191,7 +191,34 @@
                   <span>Auto gain control</span>
                 </label>
                 <button class="link-row settings-start-button" id="settingsStartButton" type="button">Start recording</button>
-                <button class="link-row audio-reset-button" id="audioSettingsReset" type="button">Reset audio</button>
+              </section>
+              <section class="setting-group" aria-label="Auto-off">
+                <div class="setting-title-row">
+                  <span>Auto-off</span>
+                </div>
+                <label class="select-row" for="micAutoOffSilence">
+                  <span>Stop after silence</span>
+                  <select id="micAutoOffSilence">
+                    <option value="3">3 sec</option>
+                    <option value="5">5 sec</option>
+                    <option value="10">10 sec</option>
+                    <option value="15">15 sec</option>
+                    <option value="30">30 sec</option>
+                    <option value="60">60 sec</option>
+                    <option value="0">Off</option>
+                  </select>
+                </label>
+                <label class="toggle-row" for="micAutoOffAfterBubble">
+                  <input id="micAutoOffAfterBubble" type="checkbox">
+                  <span>Stop after each bubble</span>
+                </label>
+                <label class="toggle-row" for="micAutoOffCue">
+                  <input id="micAutoOffCue" type="checkbox" checked>
+                  <span>Beep on mic events</span>
+                </label>
+              </section>
+              <section class="setting-group">
+                <button class="link-row audio-reset-button" id="audioSettingsReset" type="button">Reset to defaults</button>
               </section>
             </div>
 

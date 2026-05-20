@@ -40,6 +40,9 @@ import {
   renderAudioSettings,
   handlePreGainInput,
   handleAutoGainControlChange,
+  handleAutoOffSilenceChange,
+  handleAutoOffAfterBubbleChange,
+  handleAutoOffCueChange,
   resetAudioSettings,
 } from './settings/audio.js';
 import {
@@ -133,6 +136,9 @@ async function init() {
   els.settingsStartButton.addEventListener('click', startFromSettings);
   els.micPreGain.addEventListener('input', handlePreGainInput);
   els.micAutoGainControl.addEventListener('change', handleAutoGainControlChange);
+  els.micAutoOffSilence?.addEventListener('change', handleAutoOffSilenceChange);
+  els.micAutoOffAfterBubble?.addEventListener('change', handleAutoOffAfterBubbleChange);
+  els.micAutoOffCue?.addEventListener('change', handleAutoOffCueChange);
   els.audioSettingsReset.addEventListener('click', resetAudioSettings);
   els.tuningSettingsGroups.addEventListener('change', handleTuningSettingChange);
   els.ttsEnabled.addEventListener('change', handleTtsEnabledChange);
