@@ -32,6 +32,11 @@ export function handleTargetTextClick(event) {
 }
 
 function handleBubbleAudioAction(button, bubble) {
+  // Tapping an earlier bubble means the user wants to interact with it,
+  // not be yanked back to the latest line by the next re-render. Pause
+  // auto-follow until they manually scroll back to the bottom — the
+  // existing scroll listener flips it back on when they do.
+  if (els.targetText) els.targetText.dataset.autofollow = 'off';
   const action = button.dataset.audioAction || 'replay';
   if (action === 'stop') {
     flashReplayBubble(bubble);

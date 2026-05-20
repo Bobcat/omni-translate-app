@@ -66,6 +66,21 @@ _ASR_LANGUAGE_CODES = {
 }
 
 
+# Characters that end a sentence across the languages we offer. Used to
+# decide when an ASR commit closes the current bubble. Wider than the
+# engine-internal ASCII-only check; covers CJK, fullwidth Latin, Arabic
+# question mark, and Devanagari danda. Ellipsis and em-dash are
+# intentionally excluded (trailing-off / interruption, not closure).
+SENTENCE_END_CHARS = ".?!。？！．؟।॥"
+
+# Hard cap on how long a single bubble may stay open (wall-clock
+# seconds of bubble lifetime). Fairness ceiling, not UX heuristic;
+# expected to fire only in long monologues without sentence-boundary
+# or silence-gate cues. Starting value is intentionally low for
+# testing.
+BUBBLE_CLOSE_MAX_DURATION_S = 3.0
+
+
 class TurnState(StrEnum):
     OPEN_EMPTY = "open_empty"
     OPEN_ACTIVE_UNSPOKEN = "open_active_unspoken"
@@ -102,6 +117,14 @@ class TurnPart:
     # last_speech fragment (no previous qualifying fragment available).
     # Surfaced to the UI as an "uncertain voice quality" indicator.
     low_quality_reference: bool = False
+    # True once the bubble was closed by the segmentation logic. Closed
+    # parts no longer accept new ASR text — the next event opens a fresh
+    # part. Separate from speech_state so close and TTS lifecycle don't
+    # entangle.
+    is_closed: bool = False
+    # time.monotonic() snapshot taken when the part was first created.
+    # Used by the duration-cap layer to decide when to close the bubble.
+    bubble_opened_mono: float = 0.0
 
 
 @dataclass
@@ -477,6 +500,7 @@ class ConversationRuntime:
             return
         if decision.speech_gate_decision is not None and decision.speech_gate_decision.force_commit_requested:
             await self._commit_preview_tail(lane, speech_gate_forced=True)
+            await self._close_current_bubble(lane, reason="vad_silence")
         work = decision.work_decision.work_item
         if work is None:
             return
@@ -859,7 +883,12 @@ class ConversationRuntime:
 
         step = lane.translation_runner.on_source_event(source_event, lane.source_state)
         if step.dispatch_request is not None:
-            self._schedule_translation(lane, step.dispatch_request, turn_id=turn_id)
+            self._schedule_translation(lane, step.dispatch_request, turn_id=turn_id, part_id=part.part_id)
+
+        if kind == "c":
+            close_reason = self._bubble_close_reason(part)
+            if close_reason is not None:
+                await self._close_current_bubble(lane, reason=close_reason)
 
     def _record_pc_event(
         self,
@@ -911,17 +940,25 @@ class ConversationRuntime:
             )
         )
 
-    def _schedule_translation(self, lane: ConversationLane, request: LiveDispatchRequest, *, turn_id: str) -> None:
+    def _schedule_translation(
+        self,
+        lane: ConversationLane,
+        request: LiveDispatchRequest,
+        *,
+        turn_id: str,
+        part_id: str,
+    ) -> None:
         if lane.translation_task is not None and not lane.translation_task.done():
             return
         lane.translation_task = asyncio.create_task(
-            self._run_translation(lane.lane_id, turn_id, request, lane.translation_generation)
+            self._run_translation(lane.lane_id, turn_id, part_id, request, lane.translation_generation)
         )
 
     async def _run_translation(
         self,
         lane_id: str,
         turn_id: str,
+        part_id: str,
         request: LiveDispatchRequest,
         generation: int,
     ) -> None:
@@ -964,7 +1001,9 @@ class ConversationRuntime:
         committed = str(target_state.target_committed_text or "")
         lane.last_target_committed = committed
 
-        part = self._current_writable_part()
+        part = next((p for p in self.current_turn.parts if p.part_id == part_id), None)
+        if part is None:
+            return
         part.target_committed_text = committed
         part.target_preview_text = str(target_state.target_preview_text or "")
         self._refresh_turn_state()
@@ -977,7 +1016,7 @@ class ConversationRuntime:
             },
         )
         if step.dispatch_request is not None:
-            self._schedule_translation(lane, step.dispatch_request, turn_id=turn_id)
+            self._schedule_translation(lane, step.dispatch_request, turn_id=turn_id, part_id=part_id)
 
     def _new_turn(self, *, lane_id: str) -> ConversationTurn:
         lane = self.lanes[lane_id]
@@ -1073,9 +1112,60 @@ class ConversationRuntime:
 
     def _current_writable_part(self) -> TurnPart:
         turn = self.current_turn
-        if not turn.parts or turn.parts[-1].speech_state == "spoken":
-            turn.parts.append(TurnPart(part_id=f"{turn.turn_id}_part_{len(turn.parts) + 1}"))
-        return turn.parts[-1]
+        last = turn.parts[-1] if turn.parts else None
+        if last is None or last.speech_state == "spoken" or last.is_closed:
+            new_part = TurnPart(
+                part_id=f"{turn.turn_id}_part_{len(turn.parts) + 1}",
+                bubble_opened_mono=time.monotonic(),
+            )
+            turn.parts.append(new_part)
+            return new_part
+        return last
+
+    def _bubble_close_reason(self, part: TurnPart) -> str | None:
+        # Decide whether the just-updated bubble should close. Heuristic
+        # layer first (sentence boundary), then hard cap (duration).
+        # Empty / already-closed parts never trigger; the close helper is
+        # also idempotent as a second line of defence.
+        if part.is_closed:
+            return None
+        committed = str(part.source_committed_text or "").rstrip()
+        if not committed:
+            return None
+        if committed[-1] in SENTENCE_END_CHARS:
+            return "sentence_boundary"
+        if (
+            part.bubble_opened_mono > 0.0
+            and (time.monotonic() - part.bubble_opened_mono) >= BUBBLE_CLOSE_MAX_DURATION_S
+        ):
+            return "max_duration"
+        return None
+
+    async def _close_current_bubble(self, lane: ConversationLane, *, reason: str) -> None:
+        # Mark the current bubble as closed and reset the lane's text
+        # scope so the next ASR event opens a fresh part with empty
+        # translation context. Drains in-flight translation first so its
+        # result lands on the bubble being closed, not on the next one.
+        turn = self.current_turn
+        if not turn.parts:
+            return
+        part = turn.parts[-1]
+        if part.is_closed:
+            return
+        if not part.source_committed_text and not part.source_preview_text:
+            return
+        pending = lane.translation_task
+        if pending is not None and not pending.done():
+            try:
+                await pending
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                pass
+        part.is_closed = True
+        self._reset_lane_text_scope(lane)
+        self._refresh_turn_state()
+        await self._send_turn_update(reason=f"bubble_close:{reason}")
 
     def _refresh_turn_state(self) -> None:
         turn = self.current_turn
@@ -1545,6 +1635,7 @@ def _part_payload(part: TurnPart) -> dict[str, Any]:
         "target_preview_text": part.target_preview_text,
         "target_text": _part_target_text(part),
         "low_quality_reference": bool(part.low_quality_reference),
+        "is_closed": bool(part.is_closed),
     }
 
 

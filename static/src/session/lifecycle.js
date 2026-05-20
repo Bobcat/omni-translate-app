@@ -150,6 +150,7 @@ export async function startMicrophoneCapture() {
     state.socket.startListening();
     state.micState = MIC_STATES.LISTENING;
     state.captureMutedForPlayback = false;
+    enableTranscriptAutoFollow();
     renderAudioSettings();
     renderTranscript();
     setStatus('listening');
