@@ -35,7 +35,7 @@ import {
   clearAutoOffSilenceTimer,
   registerMicAutoOffStopHandler,
 } from './mic-auto-off.js';
-import { playMicOnCue } from '../shared/audio-cue.js';
+import { playMicOffCue, playMicOnCue } from '../shared/audio-cue.js';
 
 registerMicAutoOffStopHandler(() => stopMicrophoneCapture());
 import {
@@ -88,6 +88,9 @@ export async function startListening() {
     state.audioSettings.autoGainControl = state.capture.autoGainControl;
     state.socket.startListening();
     state.micState = MIC_STATES.LISTENING;
+    if (state.audioSettings.autoOffCueEnabled) {
+      try { playMicOnCue(); } catch {}
+    }
     renderAudioSettings();
     setSessionState(SESSION_STATES.RUNNING);
     setStatus('listening');
@@ -186,6 +189,9 @@ export function stopMicrophoneCapture() {
   state.capture?.stop();
   state.capture = null;
   state.micState = MIC_STATES.OFF;
+  if (state.audioSettings.autoOffCueEnabled) {
+    try { playMicOffCue(); } catch {}
+  }
   hideVadHint();
   renderMicLevel(0);
   renderAudioSettings();

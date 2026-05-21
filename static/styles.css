@@ -952,7 +952,8 @@ button {
   transition: background-color 0.15s ease;
 }
 
-.settings-nav-row + .settings-nav-row {
+.settings-nav-row + .settings-nav-row,
+.setting-group + .setting-group {
   margin-top: 6px;
 }
 

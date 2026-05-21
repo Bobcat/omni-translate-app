@@ -8,7 +8,6 @@
 
 import { state } from '../state.js';
 import { MIC_STATES, SESSION_STATES, TURN_STATES } from '../shared/constants.js';
-import { playMicAutoOffCue } from '../shared/audio-cue.js';
 
 let _stopMicCallback = null;
 
@@ -40,13 +39,8 @@ export function performMicAutoOff(reason) {
   if (state.sessionState !== SESSION_STATES.RUNNING) return;
   if (state.micState !== MIC_STATES.LISTENING) return;
   clearAutoOffSilenceTimer();
-  if (state.audioSettings.autoOffCueEnabled) {
-    try {
-      playMicAutoOffCue();
-    } catch {
-      // ignore — cue is best-effort
-    }
-  }
+  // The stop handler (lifecycle.stopMicrophoneCapture) plays the
+  // off-cue itself so manual stops and auto-stops sound identical.
   if (typeof _stopMicCallback === 'function') {
     _stopMicCallback(reason);
   }

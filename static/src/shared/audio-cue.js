@@ -22,7 +22,9 @@ export function playMicOnCue() {
 }
 
 // Two-note "tu-du": 880 Hz dropping to 660 Hz — "mic is off".
-export function playMicAutoOffCue() {
+// Same cue for manual stop and auto-off; the name reflects the event,
+// not the trigger.
+export function playMicOffCue() {
   _playCue([
     { freq: 880, at: 0 },
     { freq: 660, at: 0.10 },
