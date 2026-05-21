@@ -17,7 +17,7 @@
     <link rel="stylesheet" href="/themes/tokens.css?v=20260518-theme-6">
     <link rel="stylesheet" href="/themes/light.css?v=20260518-theme-6">
     <link rel="stylesheet" href="/themes/dark.css?v=20260518-theme-6">
-    <link rel="stylesheet" href="/styles.css?v=20260521-cloning-inline">
+    <link rel="stylesheet" href="/styles.css?v=20260521-switch-fixes">
   </head>
   <body>
     <main class="app is-setup">
@@ -187,8 +187,12 @@
                   <div class="mic-level-threshold" aria-hidden="true"></div>
                 </div>
                 <label class="toggle-row" for="micAutoGainControl">
-                  <input id="micAutoGainControl" type="checkbox" checked>
                   <span>Auto gain control</span>
+                  <span class="switch">
+                    <input id="micAutoGainControl" type="checkbox" role="switch" checked>
+                    <span class="switch-track" aria-hidden="true"></span>
+                    <span class="switch-thumb" aria-hidden="true"></span>
+                  </span>
                 </label>
                 <button class="link-row settings-start-button" id="settingsStartButton" type="button">Start recording</button>
               </section>
@@ -209,12 +213,20 @@
                   </select>
                 </label>
                 <label class="toggle-row" for="micAutoOffAfterBubble">
-                  <input id="micAutoOffAfterBubble" type="checkbox">
                   <span>Stop after each bubble</span>
+                  <span class="switch">
+                    <input id="micAutoOffAfterBubble" type="checkbox" role="switch">
+                    <span class="switch-track" aria-hidden="true"></span>
+                    <span class="switch-thumb" aria-hidden="true"></span>
+                  </span>
                 </label>
                 <label class="toggle-row" for="micAutoOffCue">
-                  <input id="micAutoOffCue" type="checkbox" checked>
                   <span>Beep on mic events</span>
+                  <span class="switch">
+                    <input id="micAutoOffCue" type="checkbox" role="switch" checked>
+                    <span class="switch-track" aria-hidden="true"></span>
+                    <span class="switch-thumb" aria-hidden="true"></span>
+                  </span>
                 </label>
               </section>
               <section class="setting-group">
@@ -224,10 +236,6 @@
 
             <div class="settings-page" id="settingsAudioPage" hidden>
               <section class="setting-group voice-output-main" aria-label="TTS options">
-                <label class="toggle-row" for="ttsEnabled">
-                  <input id="ttsEnabled" type="checkbox">
-                  <span>Voice output</span>
-                </label>
                 <label class="select-row" for="ttsBackendSelect">
                   <span>Engine</span>
                   <select id="ttsBackendSelect"></select>
@@ -239,8 +247,12 @@
             <div class="settings-page" id="settingsHistoryPage" hidden>
               <section class="setting-group" aria-label="History">
                 <label class="toggle-row" for="historySaveSessions">
-                  <input id="historySaveSessions" type="checkbox" disabled>
                   <span>Save sessions</span>
+                  <span class="switch">
+                    <input id="historySaveSessions" type="checkbox" role="switch" disabled>
+                    <span class="switch-track" aria-hidden="true"></span>
+                    <span class="switch-thumb" aria-hidden="true"></span>
+                  </span>
                 </label>
                 <label class="select-row" for="historyRetentionDays">
                   <span>Delete after</span>
@@ -268,7 +280,11 @@
                 <span>
                   <strong>Show PC export button</strong>
                 </span>
-                <input id="devToolsShowPcExport" type="checkbox">
+                <span class="switch">
+                  <input id="devToolsShowPcExport" type="checkbox" role="switch">
+                  <span class="switch-track" aria-hidden="true"></span>
+                  <span class="switch-thumb" aria-hidden="true"></span>
+                </span>
               </label>
             </div>
             <div class="settings-page" id="settingsVoiceLibraryPage" hidden>
@@ -305,6 +321,6 @@
       </div>
 
     </main>
-    <script type="module" src="/src/app.js?v=20260521-cloning-inline"></script>
+    <script type="module" src="/src/app.js?v=20260521-switch-fixes"></script>
   </body>
 </html>

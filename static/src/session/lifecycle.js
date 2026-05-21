@@ -379,6 +379,10 @@ function downloadBlob(blob, filename) {
 
 export function startFromSettings() {
   if (state.status === 'connecting') return;
+  if (state.sessionState === SESSION_STATES.RUNNING && state.micState === MIC_STATES.LISTENING) {
+    stopMicrophoneCapture();
+    return;
+  }
   if (state.sessionState === SESSION_STATES.SETUP) {
     startListening();
     return;

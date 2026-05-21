@@ -70,7 +70,6 @@ export const els = {
   micAutoOffAfterBubble: document.querySelector('#micAutoOffAfterBubble'),
   micAutoOffCue: document.querySelector('#micAutoOffCue'),
   ttsOutputState: document.querySelector('#ttsOutputState'),
-  ttsEnabled: document.querySelector('#ttsEnabled'),
   ttsBackendSelect: document.querySelector('#ttsBackendSelect'),
   ttsSettingsGroups: document.querySelector('#ttsSettingsGroups'),
 };

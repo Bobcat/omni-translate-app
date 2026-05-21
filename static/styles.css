@@ -1010,10 +1010,6 @@ button {
   margin-top: 6px;
 }
 
-.settings-nav-row:hover {
-  background: var(--border);
-}
-
 .settings-toggle-row {
   cursor: pointer;
 }
@@ -1152,8 +1148,9 @@ button {
 }
 
 .setting-group .toggle-row {
-  display: inline-flex;
+  display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 8px;
   min-height: 32px;
   color: var(--text);
@@ -1344,6 +1341,73 @@ button {
   height: 16px;
   min-height: 16px;
   padding: 0;
+}
+
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 36px;
+  height: 20px;
+  flex-shrink: 0;
+  justify-self: end;
+}
+
+.switch input[type="checkbox"] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  appearance: none;
+  -webkit-appearance: none;
+  opacity: 0;
+  cursor: pointer;
+  z-index: 1;
+  justify-self: stretch;
+}
+
+.switch-track {
+  position: absolute;
+  inset: 0;
+  background: var(--border);
+  border-radius: 999px;
+  transition: background 0.18s ease;
+}
+
+.switch-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  background: #fff;
+  border-radius: 50%;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  transition: transform 0.18s ease;
+}
+
+.switch input:checked ~ .switch-track {
+  background: var(--accent);
+}
+
+.switch input:checked ~ .switch-thumb {
+  transform: translateX(16px);
+}
+
+.switch input:focus-visible ~ .switch-track {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.switch input:disabled ~ .switch-track,
+.switch input:disabled ~ .switch-thumb {
+  opacity: 0.55;
+  cursor: default;
 }
 
 .tuning-unit {

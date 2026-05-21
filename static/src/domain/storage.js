@@ -15,7 +15,6 @@ export function loadTtsGlobalConfig() {
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== 'object') return null;
     const out = {};
-    if (typeof parsed.enabled === 'boolean') out.enabled = parsed.enabled;
     if (typeof parsed.backend === 'string' && parsed.backend) out.backend = parsed.backend;
     if (parsed.kokoro_voices && typeof parsed.kokoro_voices === 'object') {
       const voices = {};
@@ -49,7 +48,6 @@ export function loadTtsGlobalConfig() {
 export function persistTtsGlobalConfig(ttsSettings) {
   try {
     const payload = {
-      enabled: Boolean(ttsSettings.enabled),
       backend: String(ttsSettings.backend || ''),
       kokoro_voices: { ...(ttsSettings.kokoro?.voices || {}) },
     };

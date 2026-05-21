@@ -15,7 +15,6 @@ import {
   applyTtsConfig,
   mergeStoredTtsConfigIntoState,
   syncVoxcpm2VoiceConfigToBackend,
-  handleTtsEnabledChange,
   handleTtsBackendChange,
   handleTtsSettingChange,
   handleTtsSettingsClick,
@@ -143,7 +142,6 @@ async function init() {
   els.micAutoOffCue?.addEventListener('change', handleAutoOffCueChange);
   els.audioSettingsReset.addEventListener('click', resetAudioSettings);
   els.tuningSettingsGroups.addEventListener('change', handleTuningSettingChange);
-  els.ttsEnabled.addEventListener('change', handleTtsEnabledChange);
   els.ttsBackendSelect.addEventListener('change', handleTtsBackendChange);
   els.ttsSettingsGroups.addEventListener('change', handleTtsSettingChange);
   els.ttsSettingsGroups.addEventListener('click', handleTtsSettingsClick);

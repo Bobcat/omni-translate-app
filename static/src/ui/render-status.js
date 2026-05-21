@@ -31,7 +31,8 @@ export function renderLifecycle() {
   els.micToggleButton.hidden = !running;
   els.pcExportButton.hidden = !(running && micOff && state.devToolsSettings.showPcExport);
   els.startButton.disabled = state.status === 'connecting';
-  els.settingsStartButton.disabled = !(setup || micOff) || state.status === 'connecting';
+  els.settingsStartButton.disabled = state.status === 'connecting';
+  els.settingsStartButton.textContent = (running && micListening) ? 'Stop recording' : 'Start recording';
   els.setupSwapButton.disabled = !setup || state.status === 'connecting';
   els.turnModeButton?.classList.toggle('is-active', state.viewMode === 'turn');
   els.turnModeButton?.setAttribute('aria-pressed', state.viewMode === 'turn' ? 'true' : 'false');

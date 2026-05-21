@@ -69,7 +69,6 @@ export function mergeStoredTtsConfigIntoState() {
   }
   const ttsGlobal = loadTtsGlobalConfig();
   if (ttsGlobal) {
-    if (typeof ttsGlobal.enabled === 'boolean') state.ttsSettings.enabled = ttsGlobal.enabled;
     if (ttsGlobal.backend) state.ttsSettings.backend = ttsGlobal.backend;
     if (ttsGlobal.kokoro_voices) {
       state.ttsSettings.kokoro = state.ttsSettings.kokoro || { voices: {} };
@@ -146,15 +145,6 @@ function normalizeVoxcpm2LanguageEntry(entry) {
     out.trim_seconds = Math.min(60, Math.max(1, trimRaw));
   }
   return out;
-}
-
-export function handleTtsEnabledChange() {
-  const previous = cloneSettings(state.ttsSettings);
-  const enabled = Boolean(els.ttsEnabled.checked);
-  state.ttsSettings.enabled = enabled;
-  persistTtsGlobalConfig(state.ttsSettings);
-  renderTtsSettings({ preserveScroll: true });
-  submitTtsSettings({ enabled }, previous);
 }
 
 export function handleTtsBackendChange() {
@@ -383,9 +373,7 @@ function expandSelectedBackendGroup(previousBackend) {
 
 export function renderTtsSettings({ preserveScroll = false } = {}) {
   els.ttsOutputState.textContent = ttsSummary();
-  if (!els.ttsEnabled || !els.ttsBackendSelect) return;
-  els.ttsEnabled.checked = Boolean(state.ttsSettings.enabled);
-  els.ttsEnabled.disabled = state.ttsUpdateBusy;
+  if (!els.ttsBackendSelect) return;
   renderTtsBackendSelect();
   if (!els.ttsSettingsGroups || els.settingsSheet.hidden || state.settingsPage !== 'audio') return;
   const scrollEl = preserveScroll ? tuningScrollElement() : null;
@@ -592,14 +580,24 @@ function createUltimateToggleRow({ label, checked, source }) {
   const labelEl = document.createElement('span');
   labelEl.className = 'tuning-label';
   labelEl.textContent = label;
+  const switchEl = document.createElement('span');
+  switchEl.className = 'switch';
   const input = document.createElement('input');
   input.type = 'checkbox';
+  input.setAttribute('role', 'switch');
   input.dataset.ttsKind = 'voxcpm2-ultimate-enabled';
   input.dataset.ttsSource = source;
   input.checked = checked;
+  const track = document.createElement('span');
+  track.className = 'switch-track';
+  track.setAttribute('aria-hidden', 'true');
+  const thumb = document.createElement('span');
+  thumb.className = 'switch-thumb';
+  thumb.setAttribute('aria-hidden', 'true');
+  switchEl.append(input, track, thumb);
   const valueWrap = document.createElement('span');
   valueWrap.className = 'tuning-value-wrap';
-  valueWrap.append(input);
+  valueWrap.append(switchEl);
   row.append(labelEl, valueWrap);
   return row;
 }

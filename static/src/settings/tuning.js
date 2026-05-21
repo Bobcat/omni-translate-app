@@ -170,10 +170,20 @@ function createTuningInput(control) {
   if (control.type === 'checkbox') {
     const checkbox = document.createElement('input');
     checkbox.type = 'checkbox';
+    checkbox.setAttribute('role', 'switch');
     checkbox.dataset.tuningKey = control.key;
     checkbox.checked = Boolean(value);
     checkbox.disabled = disabled;
-    return checkbox;
+    const wrap = document.createElement('span');
+    wrap.className = 'switch';
+    const track = document.createElement('span');
+    track.className = 'switch-track';
+    track.setAttribute('aria-hidden', 'true');
+    const thumb = document.createElement('span');
+    thumb.className = 'switch-thumb';
+    thumb.setAttribute('aria-hidden', 'true');
+    wrap.append(checkbox, track, thumb);
+    return wrap;
   }
   const input = document.createElement('input');
   input.dataset.tuningKey = control.key;
