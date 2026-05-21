@@ -324,6 +324,9 @@ class ConversationRuntime:
         if msg_type == "translate_now":
             await self._translate_now()
             return True
+        if msg_type == "discard_inflight":
+            self._discard_inflight()
+            return True
         if msg_type == "replay_tts":
             await self._replay_tts(payload)
             return True
@@ -1268,6 +1271,16 @@ class ConversationRuntime:
         if translation is not None:
             payload["translation"] = translation
         await self._send(payload)
+
+    def _discard_inflight(self) -> None:
+        # Frontend sends this when the user stops the mic so the server
+        # drops any audio/ASR work already in flight; without it the ASR
+        # pipeline keeps producing commits from buffered audio and an
+        # "extra bubble" appears after the user thought they stopped.
+        if self.current_turn.state == TurnState.OPEN_SPEAKING:
+            return
+        lane = self._current_lane()
+        self._close_asr_scope_for_turn(lane)
 
     def _close_asr_scope_for_turn(self, lane: ConversationLane) -> None:
         inflight = lane.asr_inflight

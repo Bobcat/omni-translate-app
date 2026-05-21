@@ -148,6 +148,12 @@ export class SessionSocket {
     return true;
   }
 
+  discardInflight() {
+    if (!this.isOpen()) return false;
+    this.ws.send(JSON.stringify({ type: 'discard_inflight' }));
+    return true;
+  }
+
   updateLiveSettings(settings) {
     if (!this.isOpen()) return false;
     this.ws.send(JSON.stringify({ type: 'update_live_settings', settings: settings || {} }));
