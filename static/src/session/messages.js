@@ -140,7 +140,7 @@ function applyTurnUpdate(msg) {
   for (const laneId of Object.keys(msg.lanes || {})) {
     mergeLanePayload(laneId, msg.lanes[laneId]);
   }
-  applyCurrentTurn(msg.current_turn || state.currentTurn);
+  applyCurrentTurn(applySpeakInflightFilter(msg));
   clearSpeakNowPending();
   const laneChanged = previousLaneId !== currentLaneId();
   if (laneChanged || msg.reason === 'next_turn') {
@@ -184,6 +184,24 @@ function applyMicAutoOffSideEffects(previousTurnState, reason) {
 
 function applyCurrentTurn(payload) {
   state.currentTurn = normalizeTurnPayload(payload);
+}
+
+function applySpeakInflightFilter(msg) {
+  // Drop parts created by in-flight ASR commits that landed between
+  // the user's Speak click and speak_now's own turn_update — they would
+  // otherwise flash into the transcript right before TTS starts.
+  const filter = state.speakInflightFilter;
+  const turn = msg.current_turn;
+  if (!filter || !turn) return turn || state.currentTurn;
+  if (String(turn.turn_id || '') !== filter.turnId) return turn;
+  if (msg.reason === 'speak_now') {
+    state.speakInflightFilter = null;
+    return turn;
+  }
+  const parts = Array.isArray(turn.parts) ? turn.parts : [];
+  const filteredParts = parts.filter((p) => filter.knownPartIds.has(String(p?.part_id || '')));
+  if (filteredParts.length === parts.length) return turn;
+  return { ...turn, parts: filteredParts };
 }
 
 function renderTurnStatus(reason) {

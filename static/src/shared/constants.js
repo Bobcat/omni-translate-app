@@ -91,6 +91,10 @@ export const DEFAULT_TTS_SETTINGS = {
   },
   voxcpm2: {
     languages: {},
+    ultimate_cloning: {
+      stable_generated: { enabled: true, also_use_as_reference: true },
+      last_speech: { enabled: false, also_use_as_reference: true },
+    },
   },
 };
 
@@ -118,6 +122,5 @@ export const DEFAULT_TTS_OPTIONS = {
   voxcpm2_reference_sources: [
     { value: 'last_speech', label: 'Last speech fragment' },
     { value: 'stable_generated', label: 'Stable generated' },
-    { value: 'own_voice', label: 'Own voice (later)', disabled: true },
   ],
 };

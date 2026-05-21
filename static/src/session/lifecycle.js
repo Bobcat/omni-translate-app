@@ -189,6 +189,7 @@ export function stopMicrophoneCapture() {
   state.capture?.stop();
   state.capture = null;
   state.micState = MIC_STATES.OFF;
+  state.socket?.discardInflight();
   if (state.audioSettings.autoOffCueEnabled) {
     try { playMicOffCue(); } catch {}
   }
@@ -273,6 +274,7 @@ export function cleanupClientSession({ keepSocket = false } = {}) {
   state.micState = MIC_STATES.OFF;
   state.pcExportBusy = false;
   state.captureMutedForPlayback = false;
+  state.speakInflightFilter = null;
   hideVadHint();
   renderMicLevel(0);
   renderAudioSettings();

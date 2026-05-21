@@ -25,6 +25,20 @@ export function loadTtsGlobalConfig() {
       }
       if (Object.keys(voices).length) out.kokoro_voices = voices;
     }
+    if (parsed.ultimate_cloning && typeof parsed.ultimate_cloning === 'object') {
+      const cleaned = {};
+      for (const source of ['stable_generated', 'last_speech']) {
+        const entry = parsed.ultimate_cloning[source];
+        if (!entry || typeof entry !== 'object') continue;
+        const out2 = {};
+        if (typeof entry.enabled === 'boolean') out2.enabled = entry.enabled;
+        if (typeof entry.also_use_as_reference === 'boolean') {
+          out2.also_use_as_reference = entry.also_use_as_reference;
+        }
+        if (Object.keys(out2).length) cleaned[source] = out2;
+      }
+      if (Object.keys(cleaned).length) out.ultimate_cloning = cleaned;
+    }
     return Object.keys(out).length ? out : null;
   } catch (_) {
     return null;
@@ -38,6 +52,19 @@ export function persistTtsGlobalConfig(ttsSettings) {
       backend: String(ttsSettings.backend || ''),
       kokoro_voices: { ...(ttsSettings.kokoro?.voices || {}) },
     };
+    const ultimate = ttsSettings.voxcpm2?.ultimate_cloning;
+    if (ultimate && typeof ultimate === 'object') {
+      const cleaned = {};
+      for (const source of ['stable_generated', 'last_speech']) {
+        const entry = ultimate[source];
+        if (!entry || typeof entry !== 'object') continue;
+        cleaned[source] = {
+          enabled: Boolean(entry.enabled),
+          also_use_as_reference: Boolean(entry.also_use_as_reference),
+        };
+      }
+      if (Object.keys(cleaned).length) payload.ultimate_cloning = cleaned;
+    }
     localStorage.setItem(TTS_GLOBAL_STORAGE_KEY, JSON.stringify(payload));
   } catch (_) {
     // ignore quota / disabled storage

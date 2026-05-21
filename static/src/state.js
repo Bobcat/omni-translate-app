@@ -56,6 +56,7 @@ export const state = {
   ttsExpandedGroups: new Set(),
   ttsVoxcpm2SelectedTag: '',
   ttsPromptInspectOpen: false,
+  ttsUltimateCloningOpen: false,
   ttsUpdateBusy: false,
   voiceLibraryStable: {},
   voiceLibraryPrompts: {},
@@ -71,5 +72,9 @@ export const state = {
   voiceLibraryGender: 'female',
   speakNowPending: false,
   speakNowPendingTimer: null,
+  // While set, applyTurnUpdate drops parts not present at speak_now click
+  // time. Cleared on speak_now's own turn_update, on session/turn change,
+  // or by the speakNowPendingTimer fallback. See actions.speakNow.
+  speakInflightFilter: null,
   audioPlayback: null,
 };

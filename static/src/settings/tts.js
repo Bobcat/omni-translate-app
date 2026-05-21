@@ -16,6 +16,12 @@ import { cloneSettings, mergeSettings } from '../shared/utils.js';
 import { loadTtsGlobalConfig, persistTtsGlobalConfig } from '../domain/storage.js';
 import { currentLane } from '../domain/lanes.js';
 
+const TTS_BACKEND_GROUP_NAMES = {
+  kokoro: 'Kokoro',
+  voxcpm2: 'VoxCPM2',
+  nanovllm_voxcpm: 'NanoVLLM VoxCPM',
+};
+
 export const VOXCPM2_DEFAULT_LANGUAGE_CONFIG = {
   mode: 'reference_audio',
   reference_source: 'stable_generated',
@@ -42,9 +48,15 @@ export function applyTtsConfig(tts) {
   const settings = cloneSettings(tts || {});
   const options = cloneSettings(settings.options || {});
   delete settings.options;
-  state.ttsSettings = mergeSettings(DEFAULT_TTS_SETTINGS, settings);
-  state.ttsOptions = mergeSettings(DEFAULT_TTS_OPTIONS, options);
-  renderTtsSettings();
+  const previousBackend = state.ttsSettings.backend;
+  const nextSettings = mergeSettings(DEFAULT_TTS_SETTINGS, settings);
+  const nextOptions = mergeSettings(DEFAULT_TTS_OPTIONS, options);
+  const unchanged = JSON.stringify(state.ttsSettings) === JSON.stringify(nextSettings)
+    && JSON.stringify(state.ttsOptions) === JSON.stringify(nextOptions);
+  state.ttsSettings = nextSettings;
+  state.ttsOptions = nextOptions;
+  expandSelectedBackendGroup(previousBackend);
+  if (!unchanged) renderTtsSettings({ preserveScroll: true });
 }
 
 export function mergeStoredTtsConfigIntoState() {
@@ -66,7 +78,17 @@ export function mergeStoredTtsConfigIntoState() {
         ...ttsGlobal.kokoro_voices,
       };
     }
+    if (ttsGlobal.ultimate_cloning) {
+      state.ttsSettings.voxcpm2 = state.ttsSettings.voxcpm2 || {};
+      const current = state.ttsSettings.voxcpm2.ultimate_cloning || {};
+      const merged = { ...current };
+      for (const source of ['stable_generated', 'last_speech']) {
+        merged[source] = { ...(current[source] || {}), ...(ttsGlobal.ultimate_cloning[source] || {}) };
+      }
+      state.ttsSettings.voxcpm2.ultimate_cloning = merged;
+    }
   }
+  expandSelectedBackendGroup(null);
   renderTtsSettings();
 }
 
@@ -137,9 +159,11 @@ export function handleTtsEnabledChange() {
 
 export function handleTtsBackendChange() {
   const previous = cloneSettings(state.ttsSettings);
+  const previousBackend = state.ttsSettings.backend;
   const backend = String(els.ttsBackendSelect.value || '');
   if (!backend) return;
   state.ttsSettings.backend = backend;
+  expandSelectedBackendGroup(previousBackend);
   persistTtsGlobalConfig(state.ttsSettings);
   renderTtsSettings({ preserveScroll: true });
   submitTtsSettings({ backend }, previous);
@@ -162,6 +186,20 @@ export function handleTtsSettingChange(event) {
   if (kind === 'voxcpm2-picker-language') {
     state.ttsVoxcpm2SelectedTag = String(input.value || '').toLowerCase();
     renderTtsSettings({ preserveScroll: true });
+    return;
+  }
+  if (kind === 'voxcpm2-ultimate-enabled') {
+    const source = String(input.dataset.ttsSource || '');
+    if (source !== 'stable_generated' && source !== 'last_speech') return;
+    const enabled = Boolean(input.checked);
+    updateUltimateCloningSource(source, { enabled }, previous);
+    return;
+  }
+  if (kind === 'voxcpm2-ultimate-mode') {
+    const source = String(input.dataset.ttsSource || '');
+    if (source !== 'stable_generated' && source !== 'last_speech') return;
+    const value = input.value === 'uc2' ? true : false;
+    updateUltimateCloningSource(source, { also_use_as_reference: value }, previous);
     return;
   }
   const tag = String(language || '').toLowerCase();
@@ -276,7 +314,10 @@ export function syncVoxcpm2VoiceConfigToBackend() {
     enabled: Boolean(state.ttsSettings.enabled),
     backend: String(state.ttsSettings.backend || ''),
     kokoro: { voices: { ...(state.ttsSettings.kokoro?.voices || {}) } },
-    voxcpm2: { languages: state.ttsSettings.voxcpm2.languages || {} },
+    voxcpm2: {
+      languages: state.ttsSettings.voxcpm2.languages || {},
+      ultimate_cloning: state.ttsSettings.voxcpm2.ultimate_cloning || {},
+    },
   };
   submitTtsSettings(delta, cloneSettings(state.ttsSettings));
 }
@@ -287,7 +328,23 @@ export function handleTtsSettingsClick(event) {
   if (button.dataset.ttsAction === 'toggle-prompt-preview') {
     state.ttsPromptInspectOpen = !state.ttsPromptInspectOpen;
     renderTtsSettings({ preserveScroll: true });
+  } else if (button.dataset.ttsAction === 'toggle-ultimate-cloning') {
+    state.ttsUltimateCloningOpen = !state.ttsUltimateCloningOpen;
+    renderTtsSettings({ preserveScroll: true });
   }
+}
+
+function updateUltimateCloningSource(source, patch, previous) {
+  const voxcpm2 = state.ttsSettings.voxcpm2 = state.ttsSettings.voxcpm2 || {};
+  const current = voxcpm2.ultimate_cloning || {};
+  const entry = { ...(current[source] || {}), ...patch };
+  voxcpm2.ultimate_cloning = { ...current, [source]: entry };
+  persistTtsGlobalConfig(state.ttsSettings);
+  renderTtsSettings({ preserveScroll: true });
+  submitTtsSettings(
+    { voxcpm2: { ultimate_cloning: { [source]: patch } } },
+    previous,
+  );
 }
 
 export function stableSampleInfo(tag, gender) {
@@ -295,16 +352,12 @@ export function stableSampleInfo(tag, gender) {
 }
 
 async function submitTtsSettings(delta, previousSettings) {
-  state.ttsUpdateBusy = true;
-  renderTtsSettings({ preserveScroll: true });
   try {
     const payload = await api.updateTtsSettings(delta);
     applyTtsConfig(payload.tts || {});
   } catch (error) {
     state.ttsSettings = previousSettings;
     state.status = 'error';
-  } finally {
-    state.ttsUpdateBusy = false;
     renderTtsSettings({ preserveScroll: true });
   }
 }
@@ -319,6 +372,15 @@ function toggleTtsGroup(groupName) {
   renderTtsSettings({ preserveScroll: true });
 }
 
+function expandSelectedBackendGroup(previousBackend) {
+  const previousName = TTS_BACKEND_GROUP_NAMES[previousBackend];
+  if (previousName && previousBackend !== state.ttsSettings.backend) {
+    state.ttsExpandedGroups.delete(previousName);
+  }
+  const name = TTS_BACKEND_GROUP_NAMES[state.ttsSettings.backend];
+  if (name) state.ttsExpandedGroups.add(name);
+}
+
 export function renderTtsSettings({ preserveScroll = false } = {}) {
   els.ttsOutputState.textContent = ttsSummary();
   if (!els.ttsEnabled || !els.ttsBackendSelect) return;
@@ -330,10 +392,10 @@ export function renderTtsSettings({ preserveScroll = false } = {}) {
   const scrollTop = scrollEl?.scrollTop || 0;
   const availableBackends = new Set(ttsBackendOptions().map((option) => option.value));
   const groups = [
-    { name: 'Kokoro', backend: 'kokoro', rows: kokoroTtsRows() },
-    { name: 'VoxCPM2', backend: 'voxcpm2', rows: voxcpm2TtsRows('voxcpm2') },
-    { name: 'NanoVLLM VoxCPM', backend: 'nanovllm_voxcpm', rows: voxcpm2TtsRows('nanovllm_voxcpm') },
-  ].filter((group) => availableBackends.has(group.backend));
+    { name: 'Kokoro', show: availableBackends.has('kokoro'), rows: kokoroTtsRows },
+    { name: 'VoxCPM2', show: availableBackends.has('voxcpm2'), rows: () => voxcpm2TtsRows('voxcpm2') },
+    { name: 'NanoVLLM VoxCPM', show: availableBackends.has('nanovllm_voxcpm'), rows: () => voxcpm2TtsRows('nanovllm_voxcpm') },
+  ].filter((group) => group.show);
   const fragment = document.createDocumentFragment();
   for (const group of groups) {
     const expanded = state.ttsExpandedGroups.has(group.name);
@@ -357,7 +419,7 @@ export function renderTtsSettings({ preserveScroll = false } = {}) {
     body.className = 'tuning-group-body';
     body.hidden = !expanded;
     if (expanded) {
-      for (const row of group.rows) body.append(row);
+      for (const row of group.rows()) body.append(row);
     }
     section.append(title, body);
     fragment.append(section);
@@ -477,7 +539,92 @@ function voxcpm2TtsRows(backend) {
     }
   }
   rows.push(createTtsPromptInspectRows(active, tag, config));
+  rows.push(createUltimateInlineToggleRow());
+  if (state.ttsUltimateCloningOpen) {
+    for (const row of ultimateCloningRows()) rows.push(row);
+  }
   return rows;
+}
+
+function ultimateCloningRows() {
+  const rows = [];
+  const cloning = state.ttsSettings.voxcpm2?.ultimate_cloning || {};
+  const sources = [
+    { key: 'stable_generated', label: 'Stable sample' },
+    { key: 'last_speech', label: 'Last speech fragment' },
+  ];
+  for (const source of sources) {
+    const entry = cloning[source.key] || {};
+    rows.push(createUltimateToggleRow({
+      label: source.label,
+      checked: Boolean(entry.enabled),
+      source: source.key,
+    }));
+    rows.push(createUltimateModeRow({
+      label: `${source.label} mode`,
+      value: entry.also_use_as_reference === false ? 'uc1' : 'uc2',
+      source: source.key,
+    }));
+  }
+  return rows;
+}
+
+function createUltimateInlineToggleRow() {
+  const open = Boolean(state.ttsUltimateCloningOpen);
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = open ? 'tts-subgroup-toggle is-expanded' : 'tts-subgroup-toggle';
+  button.dataset.ttsAction = 'toggle-ultimate-cloning';
+  button.setAttribute('aria-expanded', open ? 'true' : 'false');
+  const title = document.createElement('span');
+  title.className = 'tts-subgroup-title';
+  title.textContent = 'Ultimate cloning';
+  const icon = document.createElement('span');
+  icon.className = 'tts-subgroup-icon';
+  icon.setAttribute('aria-hidden', 'true');
+  button.append(title, icon);
+  return button;
+}
+
+function createUltimateToggleRow({ label, checked, source }) {
+  const row = document.createElement('label');
+  row.className = 'tuning-row';
+  const labelEl = document.createElement('span');
+  labelEl.className = 'tuning-label';
+  labelEl.textContent = label;
+  const input = document.createElement('input');
+  input.type = 'checkbox';
+  input.dataset.ttsKind = 'voxcpm2-ultimate-enabled';
+  input.dataset.ttsSource = source;
+  input.checked = checked;
+  const valueWrap = document.createElement('span');
+  valueWrap.className = 'tuning-value-wrap';
+  valueWrap.append(input);
+  row.append(labelEl, valueWrap);
+  return row;
+}
+
+function createUltimateModeRow({ label, value, source }) {
+  const row = document.createElement('label');
+  row.className = 'tuning-row';
+  const labelEl = document.createElement('span');
+  labelEl.className = 'tuning-label';
+  labelEl.textContent = label;
+  const select = document.createElement('select');
+  select.dataset.ttsKind = 'voxcpm2-ultimate-mode';
+  select.dataset.ttsSource = source;
+  for (const [v, lbl] of [['uc2', 'Prompt + reference'], ['uc1', 'Prompt only']]) {
+    const option = document.createElement('option');
+    option.value = v;
+    option.textContent = lbl;
+    select.append(option);
+  }
+  select.value = value;
+  const valueWrap = document.createElement('span');
+  valueWrap.className = 'tuning-value-wrap';
+  valueWrap.append(select);
+  row.append(labelEl, valueWrap);
+  return row;
 }
 
 function createDescriptionModeWarningRow() {

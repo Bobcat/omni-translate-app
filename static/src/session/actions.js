@@ -29,10 +29,19 @@ export function speakNow() {
   }
   if (state.currentTurn.speakableTargetText && state.currentTurn.state !== TURN_STATES.OPEN_SPEAKING && state.socket?.speakNow()) {
     state.speakNowPending = true;
+    state.speakInflightFilter = {
+      turnId: String(state.currentTurn.turnId || ''),
+      knownPartIds: new Set(
+        (state.currentTurn.parts || [])
+          .map((part) => String(part.partId || ''))
+          .filter(Boolean),
+      ),
+    };
     if (state.speakNowPendingTimer) clearTimeout(state.speakNowPendingTimer);
     state.speakNowPendingTimer = setTimeout(() => {
       state.speakNowPending = false;
       state.speakNowPendingTimer = null;
+      state.speakInflightFilter = null;
       updateActionButtons();
     }, 1500);
     if (state.micState === MIC_STATES.LISTENING) {
