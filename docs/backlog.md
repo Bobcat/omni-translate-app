@@ -23,15 +23,6 @@ session-wide?).
 Open: where does the toggle live — Microphone subpage no, TTS options
 yes probably; per-language config or global?
 
-### A2. Ultimate cloning / Hi-Fi / audio continuation
-**Status:** open. The official VoxCPM2 recipe (pair the reference WAV
-with its transcript as `prompt_wav_path` + `prompt_text`, additionally
-to `reference_wav_path`). Background in
-[voxcpm-research-notes.md](voxcpm-research-notes.md) §2.
-
-Open: per-language opt-in, or a global toggle? Quality vs latency
-trade-off needs measurement.
-
 ### A3. Vary the prompt in the voice library sheet
 **Status:** open. Today the stable-library prompt is fixed per gender
 (`_STABLE_LIBRARY_PROMPTS` in `app/voice_library.py`). The voice

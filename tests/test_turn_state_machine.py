@@ -34,7 +34,7 @@ class FastTTS:
     def __init__(self) -> None:
         self.count = 0
 
-    def synthesize(self, *, session_id: str, text: str, language: str, reference_wav_path: str | None = None) -> dict:
+    def synthesize(self, *, session_id: str, text: str, language: str, reference_wav_path: str | None = None, reference_prompt_text: str | None = None) -> dict:
         self.count += 1
         return {
             "artifact_id": f"artifact_{self.count}",
@@ -48,7 +48,7 @@ class FastTTS:
 class SlowTTS:
     enabled = True
 
-    def synthesize(self, *, session_id: str, text: str, language: str, reference_wav_path: str | None = None) -> dict:
+    def synthesize(self, *, session_id: str, text: str, language: str, reference_wav_path: str | None = None, reference_prompt_text: str | None = None) -> dict:
         time.sleep(0.2)
         return {
             "artifact_id": "late_artifact",

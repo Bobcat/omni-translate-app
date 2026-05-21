@@ -625,6 +625,59 @@ button {
   background: var(--border);
 }
 
+.tts-subgroup-toggle {
+  width: 100%;
+  min-height: 32px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  padding: 6px 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tts-subgroup-toggle:hover,
+.tts-subgroup-toggle:focus {
+  outline: none;
+  color: var(--text-strong);
+}
+
+.tts-subgroup-title {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.tts-subgroup-icon {
+  width: 12px;
+  height: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+}
+
+.tts-subgroup-icon::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(-45deg);
+}
+
+.tts-subgroup-toggle.is-expanded .tts-subgroup-icon::before {
+  transform: rotate(45deg);
+}
+
 .tts-warning-row {
   display: grid;
   grid-template-columns: auto 1fr;

@@ -805,6 +805,7 @@ class ConversationRuntime:
             pass
         else:
             self._snapshot_part_reference_wav(speaking_part_ids, reference_wav_path, low_quality=low_quality)
+        reference_prompt_text = _last_speech_prompt_text(lane, reference_wav_path)
         try:
             tts_payload = await asyncio.to_thread(
                 self.tts_bridge.synthesize,
@@ -812,6 +813,7 @@ class ConversationRuntime:
                 text=text,
                 language=lane.target_language,
                 reference_wav_path=reference_wav_path,
+                reference_prompt_text=reference_prompt_text,
             )
         except asyncio.CancelledError:
             raise
@@ -1536,6 +1538,30 @@ def _last_speech_quality_score(segments: list[dict[str, Any]], wav_path: str) ->
     coverage = min(1.0, speech_ms / duration_ms)
     silence_penalty = max(0.0, 1.0 - (max_gap_ms / 1000.0))
     return min(min(1.0, duration_s / 3.0), coverage, silence_penalty)
+
+
+def _last_speech_prompt_text(lane: ConversationLane, reference_wav_path: str | None) -> str | None:
+    """Build the transcript paired with the just-chosen last_speech WAV
+    for ultimate-cloning. Only safe to return when the WAV matches the
+    *latest* ASR result — the segments stored on the lane line up with
+    that WAV only. When the holdover (last_qualifying_asr_wav_path) is
+    picked instead, we have no matching transcript snapshot, so return
+    None and let the bridge fall back to reference-only mode.
+    """
+    if not reference_wav_path:
+        return None
+    current = (lane.last_asr_wav_path or "").strip()
+    if not current or current != reference_wav_path:
+        return None
+    parts = []
+    for segment in lane.last_asr_segments or []:
+        if not isinstance(segment, dict):
+            continue
+        text = str(segment.get("text") or "").strip()
+        if text:
+            parts.append(text)
+    joined = " ".join(parts).strip()
+    return joined or None
 
 
 def _last_speech_reference_choice(lane: ConversationLane) -> tuple[str | None, bool]:

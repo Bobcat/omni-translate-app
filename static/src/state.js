@@ -56,6 +56,7 @@ export const state = {
   ttsExpandedGroups: new Set(),
   ttsVoxcpm2SelectedTag: '',
   ttsPromptInspectOpen: false,
+  ttsUltimateCloningOpen: false,
   ttsUpdateBusy: false,
   voiceLibraryStable: {},
   voiceLibraryPrompts: {},

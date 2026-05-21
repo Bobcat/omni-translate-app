@@ -120,11 +120,9 @@ VOXCPM2_STYLE_OPTIONS = (
     ("calm", "Calm"),
     ("clear", "Clear"),
 )
-# (value, label, disabled) — own_voice arrives in Phase 4.
 VOXCPM2_REFERENCE_SOURCE_OPTIONS = (
     ("last_speech", "Last speech fragment", False),
     ("stable_generated", "Stable generated", False),
-    ("own_voice", "Own voice (later)", True),
 )
 VOXCPM2_DEFAULT_TRIM_SECONDS = 4.0
 VOXCPM2_DEFAULT_LANGUAGE_CONFIG = {
@@ -206,6 +204,7 @@ class TTSBridge:
         text: str,
         language: str,
         reference_wav_path: str | None = None,
+        reference_prompt_text: str | None = None,
     ) -> dict[str, Any]:
         call_started = time.perf_counter()
         safe_text = str(text or "").strip()
@@ -219,6 +218,7 @@ class TTSBridge:
             text=safe_text,
             language=language,
             reference_wav_path=reference_wav_path,
+            reference_prompt_text=reference_prompt_text,
         )
         request_started = time.perf_counter()
         response = _post_json(
@@ -339,6 +339,7 @@ def _tts_pool_request_payload(
     text: str,
     language: str,
     reference_wav_path: str | None,
+    reference_prompt_text: str | None = None,
 ) -> tuple[dict[str, Any], dict[str, float], dict[str, Any]]:
     settings = _current_tts_settings()
     backend = settings["backend"]
@@ -377,9 +378,17 @@ def _tts_pool_request_payload(
             voice["instructions"] = instructions
         if has_reference_audio:
             trim_s = float(config.get("trim_seconds", VOXCPM2_DEFAULT_TRIM_SECONDS))
+            prompt_text, also_use_as_reference = _ultimate_cloning_choice(
+                settings=settings,
+                reference_source=reference_source,
+                resolved_reference_path=resolved_reference_path,
+                last_speech_prompt_text=reference_prompt_text,
+            )
             reference_audio, reference_metrics, reference_metadata = _reference_audio_payload(
                 resolved_reference_path,
                 max_duration_s=trim_s,
+                prompt_text=prompt_text,
+                also_use_as_reference=also_use_as_reference,
             )
             voice["reference_audio"] = reference_audio
             request_metrics.update(reference_metrics)
@@ -459,7 +468,46 @@ def _bcp47_tag_for_language_name(language: Any) -> str | None:
     return None
 
 
-def _reference_audio_payload(reference_wav_path: str, *, max_duration_s: float) -> tuple[dict[str, Any], dict[str, float], dict[str, Any]]:
+def _ultimate_cloning_choice(
+    *,
+    settings: dict[str, Any],
+    reference_source: str,
+    resolved_reference_path: str,
+    last_speech_prompt_text: str | None,
+) -> tuple[str | None, bool]:
+    """Decide whether to engage ultimate cloning for this synth call.
+    Returns (prompt_text, also_use_as_reference). prompt_text=None
+    means reference-only mode — the rest is irrelevant in that case.
+
+    Toggle and UC1/UC2 selection live in
+    settings["voxcpm2"]["ultimate_cloning"][<reference_source>].
+    """
+    cfg = (
+        (settings.get("voxcpm2") or {}).get("ultimate_cloning") or {}
+    ).get(reference_source) or {}
+    if not bool(cfg.get("enabled")):
+        return None, True
+    also_use_as_reference = bool(cfg.get("also_use_as_reference", True))
+    if reference_source == "stable_generated":
+        # Read the canonical transcript from the meta.json that sits
+        # alongside the resolved WAV. If meta is missing or empty we
+        # silently fall back to reference-only — never send half-paired
+        # ultimate cloning.
+        prompt_text = _stable_sample_reference_text(resolved_reference_path)
+        return prompt_text, also_use_as_reference
+    if reference_source == "last_speech":
+        text = str(last_speech_prompt_text or "").strip()
+        return (text or None), also_use_as_reference
+    return None, True
+
+
+def _reference_audio_payload(
+    reference_wav_path: str,
+    *,
+    max_duration_s: float,
+    prompt_text: str | None = None,
+    also_use_as_reference: bool = True,
+) -> tuple[dict[str, Any], dict[str, float], dict[str, Any]]:
     started = time.perf_counter()
     path = Path(reference_wav_path).expanduser().resolve()
     source_duration_ms = _wav_duration_ms(path)
@@ -472,18 +520,46 @@ def _reference_audio_payload(reference_wav_path: str, *, max_duration_s: float) 
         duration_ms = source_duration_ms
         clipped = False
     prepare_wall_ms = (time.perf_counter() - started) * 1000.0
-    return {
+    reference_audio: dict[str, Any] = {
         "mime_type": "audio/wav",
         "data_base64": base64.b64encode(audio_bytes).decode("ascii"),
         "max_duration_s": float(max_duration_s),
-    }, {
+    }
+    safe_prompt_text = str(prompt_text or "").strip()
+    if safe_prompt_text:
+        reference_audio["prompt_text"] = safe_prompt_text
+        reference_audio["also_use_as_reference"] = bool(also_use_as_reference)
+    return reference_audio, {
         "tts_reference_prepare_wall_ms": prepare_wall_ms,
         "tts_reference_payload_bytes": float(len(audio_bytes)),
     }, {
         "reference_client_source_duration_ms": source_duration_ms,
         "reference_client_duration_ms": duration_ms,
         "reference_client_clipped": clipped,
+        "reference_client_prompt_text": bool(safe_prompt_text),
+        "reference_client_also_use_as_reference": (
+            bool(also_use_as_reference) if safe_prompt_text else False
+        ),
     }
+
+
+def _stable_sample_reference_text(wav_path: str) -> str | None:
+    """Read the reference text from the meta.json that sits next to a
+    stable-library audio.wav. Returns None when the meta is missing or
+    has no reference_text — caller treats that as "no transcript
+    available; stay in reference-only mode".
+    """
+    meta_path = Path(wav_path).expanduser().resolve().parent / "meta.json"
+    if not meta_path.exists():
+        return None
+    try:
+        data = json.loads(meta_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    text = str(data.get("reference_text") or "").strip()
+    return text or None
 
 
 def _wav_duration_ms(path: Path) -> int:
@@ -637,6 +713,20 @@ def _current_tts_settings() -> dict[str, Any]:
         },
         "voxcpm2": {
             "languages": {},
+            "ultimate_cloning": {
+                "stable_generated": {
+                    "enabled": get_bool("tts.voxcpm2.ultimate_cloning.stable_generated.enabled", True),
+                    "also_use_as_reference": get_bool(
+                        "tts.voxcpm2.ultimate_cloning.stable_generated.also_use_as_reference", True
+                    ),
+                },
+                "last_speech": {
+                    "enabled": get_bool("tts.voxcpm2.ultimate_cloning.last_speech.enabled", False),
+                    "also_use_as_reference": get_bool(
+                        "tts.voxcpm2.ultimate_cloning.last_speech.also_use_as_reference", True
+                    ),
+                },
+            },
         },
     }
     with _TTS_SETTINGS_LOCK:
@@ -694,9 +784,34 @@ def _normalize_tts_settings_delta(delta: dict[str, Any]) -> tuple[dict[str, Any]
                     errors["voxcpm2.languages"] = "must be an object"
                 else:
                     normalized_voxcpm2["languages"] = _normalize_voxcpm2_languages(languages, errors)
+            if "ultimate_cloning" in voxcpm2:
+                ultimate = voxcpm2.get("ultimate_cloning")
+                if not isinstance(ultimate, dict):
+                    errors["voxcpm2.ultimate_cloning"] = "must be an object"
+                else:
+                    normalized_voxcpm2["ultimate_cloning"] = _normalize_ultimate_cloning(ultimate, errors)
     if errors:
         return {}, errors
     return normalized, {}
+
+
+def _normalize_ultimate_cloning(value: dict[str, Any], errors: dict[str, str]) -> dict[str, dict[str, Any]]:
+    normalized: dict[str, dict[str, Any]] = {}
+    for source_key in ("stable_generated", "last_speech"):
+        if source_key not in value:
+            continue
+        source = value.get(source_key)
+        if not isinstance(source, dict):
+            errors[f"voxcpm2.ultimate_cloning.{source_key}"] = "must be an object"
+            continue
+        entry: dict[str, Any] = {}
+        if "enabled" in source:
+            entry["enabled"] = bool(source.get("enabled"))
+        if "also_use_as_reference" in source:
+            entry["also_use_as_reference"] = bool(source.get("also_use_as_reference"))
+        if entry:
+            normalized[source_key] = entry
+    return normalized
 
 
 def _normalize_kokoro_voices(voices: dict[str, Any], errors: dict[str, str]) -> dict[str, str]:
