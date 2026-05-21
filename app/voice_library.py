@@ -45,16 +45,27 @@ def stable_voice_wav_path(language: str, gender: str) -> Path | None:
 
 def _sample_entry(tag: str, gender: str) -> dict[str, Any]:
     wav_path = (STABLE_VOICE_LIBRARY_ROOT / tag / gender / "audio.wav").resolve()
-    meta_path = (STABLE_VOICE_LIBRARY_ROOT / tag / gender / "meta.json").resolve()
-    generated_at: str | None = None
-    if meta_path.exists():
-        try:
-            data = json.loads(meta_path.read_text(encoding="utf-8"))
-            value = data.get("generated_at") if isinstance(data, dict) else None
-            generated_at = str(value) if value else None
-        except (OSError, ValueError):
-            generated_at = None
-    return {"exists": wav_path.exists(), "generated_at": generated_at}
+    pending_wav_path = (STABLE_VOICE_LIBRARY_ROOT / tag / gender / "audio.pending.wav").resolve()
+    return {
+        "exists": wav_path.exists(),
+        "generated_at": _read_meta_generated_at(tag, gender, "meta.json"),
+        "has_pending": pending_wav_path.exists(),
+        "pending_generated_at": _read_meta_generated_at(tag, gender, "meta.pending.json"),
+    }
+
+
+def _read_meta_generated_at(tag: str, gender: str, meta_filename: str) -> str | None:
+    meta_path = (STABLE_VOICE_LIBRARY_ROOT / tag / gender / meta_filename).resolve()
+    if not meta_path.exists():
+        return None
+    try:
+        data = json.loads(meta_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    value = data.get("generated_at")
+    return str(value) if value else None
 
 
 def stable_voice_language_status(language_tag: str) -> dict[str, Any]:
@@ -138,7 +149,10 @@ def generate_stable_sample(language_tag: str, gender: str, engine: str) -> dict[
     audio_bytes = _decode_audio_payload(audio_payload)
     sample_dir = (STABLE_VOICE_LIBRARY_ROOT / tag / gender_key).resolve()
     sample_dir.mkdir(parents=True, exist_ok=True)
-    (sample_dir / "audio.wav").write_bytes(audio_bytes)
+    # Two-slot model: the new generation goes into audio.pending.wav
+    # without touching the current audio.wav. The user explicitly
+    # promotes it via Keep, or discards it via Don't keep. Regenerate
+    # overwrites the pending slot.
     meta = {
         "language": tag,
         "gender": gender_key,
@@ -146,8 +160,46 @@ def generate_stable_sample(language_tag: str, gender: str, engine: str) -> dict[
         "tts_backend": engine_key,
         "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
-    (sample_dir / "meta.json").write_text(
+    (sample_dir / "audio.pending.wav").write_bytes(audio_bytes)
+    (sample_dir / "meta.pending.json").write_text(
         json.dumps(meta, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
     return _sample_entry(tag, gender_key)
+
+
+def keep_pending_stable_sample(language_tag: str, gender: str) -> dict[str, Any]:
+    sample_dir = _sample_dir_for(language_tag, gender)
+    pending_wav = sample_dir / "audio.pending.wav"
+    pending_meta = sample_dir / "meta.pending.json"
+    if not pending_wav.exists():
+        raise FileNotFoundError("no_pending_sample")
+    # Promote pending → current. Whatever was at audio.wav is overwritten
+    # (and lost — there is no rollback by design).
+    pending_wav.replace(sample_dir / "audio.wav")
+    if pending_meta.exists():
+        pending_meta.replace(sample_dir / "meta.json")
+    return _sample_entry(language_tag.strip().lower(), gender.strip().lower())
+
+
+def discard_pending_stable_sample(language_tag: str, gender: str) -> dict[str, Any]:
+    sample_dir = _sample_dir_for(language_tag, gender)
+    pending_wav = sample_dir / "audio.pending.wav"
+    pending_meta = sample_dir / "meta.pending.json"
+    if not pending_wav.exists() and not pending_meta.exists():
+        raise FileNotFoundError("no_pending_sample")
+    if pending_wav.exists():
+        pending_wav.unlink()
+    if pending_meta.exists():
+        pending_meta.unlink()
+    return _sample_entry(language_tag.strip().lower(), gender.strip().lower())
+
+
+def _sample_dir_for(language_tag: str, gender: str) -> Path:
+    tag = str(language_tag or "").strip().lower()
+    if tag not in _KNOWN_TAGS:
+        raise ValueError("unsupported_language_tag")
+    gender_key = str(gender or "").strip().lower()
+    if gender_key not in _KNOWN_GENDERS:
+        raise ValueError("unsupported_gender")
+    return (STABLE_VOICE_LIBRARY_ROOT / tag / gender_key).resolve()

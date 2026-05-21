@@ -13,7 +13,10 @@ export class AudioQueue {
     this.audio.addEventListener('ended', () => {
       const ended = this.current;
       const playbackWillComplete = this.queue.length === 0;
-      if (ended) this.onItemEnded?.(ended);
+      if (ended) {
+        this.onItemEnded?.(ended);
+        try { ended.onComplete?.(ended); } catch {}
+      }
       this.playNext();
       if (playbackWillComplete) this.onPlaybackComplete?.(ended);
     });

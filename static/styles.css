@@ -1329,8 +1329,22 @@ button {
 }
 
 .voice-library-status {
+  display: grid;
+  grid-template-columns: minmax(0, 100px) 1fr;
+  align-items: center;
+  gap: 8px;
   color: var(--muted);
   font-size: 0.78rem;
+}
+
+.voice-library-status-value {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.voice-library-status-text {
+  flex: 1 1 auto;
 }
 
 .voice-library-actions {
@@ -1341,6 +1355,50 @@ button {
 
 .voice-library-actions .tts-inspect-button {
   flex: 1 1 auto;
+}
+
+.voice-library-action-replay {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.voice-library-action-icon {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.voice-library-decision {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-soft);
+}
+
+.voice-library-decision-label {
+  flex: 1 1 auto;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.voice-library-decision .tts-inspect-button {
+  flex: 0 0 auto;
+  width: auto;
+  padding: 0 14px;
+}
+
+.voice-library-decision-keep {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 .voice-library-group .select-row {

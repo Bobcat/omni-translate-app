@@ -6,13 +6,17 @@ import { state } from '../state.js';
 import { els } from '../els.js';
 import { renderTuningSettings } from './tuning.js';
 import { renderTtsSettings } from './tts.js';
-import { renderVoiceLibraryPage } from './voice-library.js';
+import { renderVoiceLibraryPage, voiceLibraryOnExit } from './voice-library.js';
 import { renderDevToolsSettings } from './dev-tools.js';
 
 const PAGES = ['microphone', 'audio', 'history', 'dev-tools', 'tuning', 'voice-library'];
 
 export function setSettingsPage(page) {
+  const previous = state.settingsPage;
   state.settingsPage = PAGES.includes(page) ? page : 'home';
+  if (previous === 'voice-library' && state.settingsPage !== 'voice-library') {
+    voiceLibraryOnExit();
+  }
   renderSettingsPage();
   if (state.settingsPage === 'dev-tools') renderDevToolsSettings();
   if (state.settingsPage === 'tuning') renderTuningSettings();

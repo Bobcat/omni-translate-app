@@ -18,7 +18,9 @@ from app.sessions import SESSIONS
 from app.tts_bridge import artifact_path
 from app.tts_bridge import tts_settings_payload
 from app.tts_bridge import update_tts_settings
+from app.voice_library import discard_pending_stable_sample
 from app.voice_library import generate_stable_sample
+from app.voice_library import keep_pending_stable_sample
 from app.voice_library import stable_voice_library_status
 
 
@@ -97,6 +99,32 @@ async def post_stable_voice_sample(payload: GenerateStableVoiceSampleRequest) ->
     return {"language": tag, "gender": gender, "engine": engine, "info": info}
 
 
+@api_router.post("/voice-library/stable/{language}/{gender}/keep-pending")
+async def post_keep_pending_stable_sample(language: str, gender: str) -> dict[str, Any]:
+    tag = (language or "").strip().lower()
+    gender_key = (gender or "").strip().lower()
+    try:
+        info = keep_pending_stable_sample(tag, gender_key)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"language": tag, "gender": gender_key, "info": info}
+
+
+@api_router.post("/voice-library/stable/{language}/{gender}/discard-pending")
+async def post_discard_pending_stable_sample(language: str, gender: str) -> dict[str, Any]:
+    tag = (language or "").strip().lower()
+    gender_key = (gender or "").strip().lower()
+    try:
+        info = discard_pending_stable_sample(tag, gender_key)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"language": tag, "gender": gender_key, "info": info}
+
+
 @api_router.post("/sessions")
 async def create_session(request: Request, payload: CreateSessionRequest) -> dict[str, Any]:
     side_a_language = str(payload.side_a_language or get_str("translation.source_language", "Dutch"))
@@ -129,6 +157,15 @@ async def create_session(request: Request, payload: CreateSessionRequest) -> dic
 
 @api_router.get("/voice-library/stable/{language}/{gender}/audio.wav")
 async def get_stable_voice_audio(language: str, gender: str) -> FileResponse:
+    return _serve_stable_voice_audio(language, gender, filename="audio.wav")
+
+
+@api_router.get("/voice-library/stable/{language}/{gender}/audio.pending.wav")
+async def get_stable_voice_audio_pending(language: str, gender: str) -> FileResponse:
+    return _serve_stable_voice_audio(language, gender, filename="audio.pending.wav")
+
+
+def _serve_stable_voice_audio(language: str, gender: str, *, filename: str) -> FileResponse:
     from app.voice_library import STABLE_VOICE_GENDERS, STABLE_VOICE_LIBRARY_ROOT
     tag = (language or "").strip().lower()
     gender_key = (gender or "").strip().lower()
@@ -137,13 +174,13 @@ async def get_stable_voice_audio(language: str, gender: str) -> FileResponse:
         raise HTTPException(status_code=404, detail="Sample not found")
     if gender_key not in STABLE_VOICE_GENDERS:
         raise HTTPException(status_code=404, detail="Sample not found")
-    path = (STABLE_VOICE_LIBRARY_ROOT / tag / gender_key / "audio.wav").resolve()
+    path = (STABLE_VOICE_LIBRARY_ROOT / tag / gender_key / filename).resolve()
     if not str(path).startswith(str(STABLE_VOICE_LIBRARY_ROOT)) or not path.exists():
         raise HTTPException(status_code=404, detail="Sample not found")
     return FileResponse(
         path,
         media_type="audio/wav",
-        filename=f"stable-{tag}-{gender_key}.wav",
+        filename=f"stable-{tag}-{gender_key}-{filename}",
         content_disposition_type="inline",
     )
 

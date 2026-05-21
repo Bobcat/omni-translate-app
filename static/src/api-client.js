@@ -56,6 +56,22 @@ export const api = {
     });
   },
 
+  keepPendingStableVoiceSample({ language, gender }) {
+    const tag = encodeURIComponent(String(language || ''));
+    const genderKey = encodeURIComponent(String(gender || ''));
+    return fetchJson(`/api/voice-library/stable/${tag}/${genderKey}/keep-pending`, {
+      method: 'POST',
+    });
+  },
+
+  discardPendingStableVoiceSample({ language, gender }) {
+    const tag = encodeURIComponent(String(language || ''));
+    const genderKey = encodeURIComponent(String(gender || ''));
+    return fetchJson(`/api/voice-library/stable/${tag}/${genderKey}/discard-pending`, {
+      method: 'POST',
+    });
+  },
+
   async getSessionPcExport(sessionId) {
     const response = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/transcript.pc`, {
       headers: { Accept: 'text/plain' },

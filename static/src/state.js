@@ -60,6 +60,12 @@ export const state = {
   voiceLibraryStable: {},
   voiceLibraryPrompts: {},
   voiceLibraryBusyTag: '',
+  // Set to { tag, gender } while the just-generated sample is playing
+  // its initial auto-preview. The Replay-just-generated button and the
+  // Keep/Don't keep ribbon stay hidden during this window — they appear
+  // once the playback completes. Cleared on Keep, Don't keep,
+  // tag/gender change, or when the auto-playback ends.
+  voiceLibraryAwaitingFirstPlayback: null,
   voiceLibraryEngine: '',
   voiceLibraryLanguageTag: '',
   voiceLibraryGender: 'female',

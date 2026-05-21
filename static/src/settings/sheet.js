@@ -3,11 +3,13 @@
 // a time while scrim-tap / Escape / swipe-down collapses all levels.
 
 import { els } from '../els.js';
+import { state } from '../state.js';
 import { setSettingsPage } from './pages.js';
 import { renderAudioSettings } from './audio.js';
 import { renderTuningSettings } from './tuning.js';
 import { renderTtsSettings } from './tts.js';
 import { renderHistorySettings } from './dev-tools.js';
+import { voiceLibraryOnExit } from './voice-library.js';
 
 let _settingsSheetDepth = 0;
 // Popstates fired by our own programmatic history.go(-N) inside
@@ -35,6 +37,12 @@ export function closeSettingsSheet() {
   // Hide synchronously so the swipe-close animation doesn't leave a
   // visible gap while we wait for the popstate burst to drain.
   if (els.settingsSheet.hidden) return;
+  // The popstate burst from history.go(-depth) is no-op'd here, so the
+  // per-page exit hook in setSettingsPage doesn't fire. Trigger the
+  // voice-library cleanup explicitly when closing from that page.
+  if (state.settingsPage === 'voice-library') {
+    voiceLibraryOnExit();
+  }
   if (_settingsSheetDepth > 0) {
     const depth = _settingsSheetDepth;
     _settingsSheetDepth = 0;
