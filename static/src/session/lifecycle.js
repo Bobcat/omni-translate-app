@@ -46,7 +46,7 @@ import { handleSettingsSheetPopstate } from '../settings/sheet.js';
 import { audioQueue } from './audio-queue.js';
 import { handleMessage } from './messages.js';
 
-export async function startListening() {
+export async function startListening({ withMic = true } = {}) {
   const startLaneId = currentLaneId();
   clearAllLanes({ laneId: startLaneId });
   state.requestedStartLaneId = startLaneId;
@@ -57,7 +57,9 @@ export async function startListening() {
   let socket = null;
   let capture = null;
   try {
-    const capturePromise = createStartedAudioCapture({ targetSampleRate: state.audioInputSampleRate });
+    const capturePromise = withMic
+      ? createStartedAudioCapture({ targetSampleRate: state.audioInputSampleRate })
+      : Promise.resolve(null);
     const session = await api.createSession({
       sideALanguage: state.sideALanguage,
       sideBLanguage: state.sideBLanguage,
@@ -84,12 +86,17 @@ export async function startListening() {
     ]);
     state.socket = socket;
     state.audioInputSampleRate = session.audio_input?.sample_rate_hz || 16000;
-    state.capture = capture;
-    state.audioSettings.autoGainControl = state.capture.autoGainControl;
     state.socket.startListening();
-    state.micState = MIC_STATES.LISTENING;
-    if (state.audioSettings.autoOffCueEnabled) {
-      try { playMicOnCue(); } catch {}
+    if (withMic) {
+      state.capture = capture;
+      state.audioSettings.autoGainControl = state.capture.autoGainControl;
+      state.micState = MIC_STATES.LISTENING;
+      if (state.audioSettings.autoOffCueEnabled) {
+        try { playMicOnCue(); } catch {}
+      }
+    } else {
+      state.capture = null;
+      state.micState = MIC_STATES.OFF;
     }
     renderAudioSettings();
     setSessionState(SESSION_STATES.RUNNING);

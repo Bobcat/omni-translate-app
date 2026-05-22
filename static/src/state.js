@@ -72,6 +72,9 @@ export const state = {
   voiceLibraryGender: 'female',
   speakNowPending: false,
   speakNowPendingTimer: null,
+  // Set while the fixture-inject button is replaying its WAV; gates the
+  // button to prevent re-entry and is read by render-status.
+  fixtureBusy: false,
   // While set, applyTurnUpdate drops parts not present at speak_now click
   // time. Cleared on speak_now's own turn_update, on session/turn change,
   // or by the speakNowPendingTimer fallback. See actions.speakNow.

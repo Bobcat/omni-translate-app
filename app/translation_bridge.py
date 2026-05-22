@@ -98,11 +98,21 @@ class TranslationBridge:
     def __init__(self, *, source_language: str, target_language: str) -> None:
         self.source_language = str(source_language or "Dutch")
         self.target_language = str(target_language or "English")
+        # Same-language pair: skip the LLM entirely and echo the source text
+        # as the "translation". Originally added to isolate LLM cost during
+        # concurrent-session investigation; also avoids a wasted round-trip
+        # if a user picks e.g. English -> English.
+        self._echo_mode = (
+            self.source_language.strip().casefold()
+            == self.target_language.strip().casefold()
+        )
         self.model = get_str("translation.model", "")
         self.second_pass_model = get_str("translation.second_pass_model", "")
         self.prompt = get_str("translation.prompt", "")
         request_format = get_str("translation.request_format", "instructions").strip().lower()
-        if request_format == "translategemma_template":
+        if self._echo_mode:
+            self.translator = None
+        elif request_format == "translategemma_template":
             self.second_pass_model = ""
             self.translator = TranslateGemmaLlmPoolTranslator(
                 model=self.model,
@@ -124,6 +134,18 @@ class TranslationBridge:
     def run(self, request: LiveDispatchRequest) -> TranslationRunResult:
         started = time.perf_counter()
         opportunity = request.opportunity
+        if self._echo_mode:
+            source_text = str(opportunity.source_window or "")
+            wall_ms = (time.perf_counter() - started) * 1000.0
+            return TranslationRunResult(
+                text=source_text,
+                request_id="",
+                model="echo",
+                first_pass_model="echo",
+                second_pass_model="",
+                wall_ms=wall_ms,
+                metrics=TranslationMetrics(),
+            )
         first = self.translator.translate(opportunity.source_window)
         final = first
         second_pass_model = ""

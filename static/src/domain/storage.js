@@ -73,9 +73,13 @@ export function persistTtsGlobalConfig(ttsSettings) {
 export function loadDevToolsSettings() {
   try {
     const saved = JSON.parse(localStorage.getItem(DEV_TOOLS_SETTINGS_KEY) || '{}');
-    return { showPcExport: Boolean(saved.showPcExport) };
+    // Migrate legacy `showPcExport` key → `showControls`.
+    const showControls = typeof saved.showControls === 'boolean'
+      ? saved.showControls
+      : Boolean(saved.showPcExport);
+    return { showControls };
   } catch {
-    return { showPcExport: false };
+    return { showControls: false };
   }
 }
 

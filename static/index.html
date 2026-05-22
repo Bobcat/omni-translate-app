@@ -17,7 +17,7 @@
     <link rel="stylesheet" href="/themes/tokens.css?v=20260518-theme-6">
     <link rel="stylesheet" href="/themes/light.css?v=20260518-theme-6">
     <link rel="stylesheet" href="/themes/dark.css?v=20260518-theme-6">
-    <link rel="stylesheet" href="/styles.css?v=20260521-switch-fixes">
+    <link rel="stylesheet" href="/styles.css?v=20260522-fixture-setup">
   </head>
   <body>
     <main class="app is-setup">
@@ -63,6 +63,9 @@
               <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
               <line x1="12" y1="19" x2="12" y2="22"></line>
             </svg>
+          </button>
+          <button class="setup-fixture-button" id="setupFixtureButton" type="button" hidden>
+            Start with fixture audio
           </button>
         </div>
       </section>
@@ -276,12 +279,12 @@
                   <small>Curate stable reference samples</small>
                 </span>
               </button>
-              <label class="settings-nav-row settings-toggle-row" for="devToolsShowPcExport">
+              <label class="settings-nav-row settings-toggle-row" for="devToolsShowControls">
                 <span>
-                  <strong>Show PC export button</strong>
+                  <strong>Show debug info and controls</strong>
                 </span>
                 <span class="switch">
-                  <input id="devToolsShowPcExport" type="checkbox" role="switch">
+                  <input id="devToolsShowControls" type="checkbox" role="switch">
                   <span class="switch-track" aria-hidden="true"></span>
                   <span class="switch-thumb" aria-hidden="true"></span>
                 </span>
@@ -321,6 +324,6 @@
       </div>
 
     </main>
-    <script type="module" src="/src/app.js?v=20260521-switch-fixes"></script>
+    <script type="module" src="/src/app.js?v=20260522-fixture-setup"></script>
   </body>
 </html>

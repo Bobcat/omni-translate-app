@@ -839,6 +839,29 @@ button {
   background: var(--pc-export-pressed);
 }
 
+.setup-fixture-button {
+  margin-top: 18px;
+  padding: 8px 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.setup-fixture-button:hover,
+.setup-fixture-button:focus-visible {
+  color: var(--text);
+  outline: none;
+}
+
+.setup-fixture-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .mic-toggle-action {
   position: relative;
   width: 60px;

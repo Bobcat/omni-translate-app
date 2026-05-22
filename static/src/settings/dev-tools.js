@@ -8,6 +8,7 @@
 import { state } from '../state.js';
 import { els } from '../els.js';
 import { saveDevToolsSettings } from '../domain/storage.js';
+import { renderLifecycle } from '../ui/render-status.js';
 
 let _installPrompt = null;
 
@@ -56,16 +57,13 @@ export async function handleInstallApp({ closeSettings } = {}) {
 }
 
 export function renderDevToolsSettings() {
-  els.devToolsShowPcExport.checked = state.devToolsSettings.showPcExport;
+  els.devToolsShowControls.checked = state.devToolsSettings.showControls;
 }
 
-export function handleDevToolsShowPcExportChange() {
-  state.devToolsSettings.showPcExport = els.devToolsShowPcExport.checked;
+export function handleDevToolsShowControlsChange() {
+  state.devToolsSettings.showControls = els.devToolsShowControls.checked;
   saveDevToolsSettings(state.devToolsSettings);
-  // NOTE: app.js called render() here, which is undefined — silent
-  // ReferenceError in the current code. Preserved as-is; flagged for a
-  // separate task.
-  render();
+  renderLifecycle();
 }
 
 export function renderHistorySettings() {

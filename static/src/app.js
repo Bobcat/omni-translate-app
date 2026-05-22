@@ -46,7 +46,7 @@ import {
   resetAudioSettings,
 } from './settings/audio.js';
 import {
-  handleDevToolsShowPcExportChange,
+  handleDevToolsShowControlsChange,
   handleInstallApp,
   updateInstallRow,
   renderHistorySettings,
@@ -86,6 +86,7 @@ import {
   setVisibleLanguage,
   swapSetupLanguages,
 } from './session/actions.js';
+import { handleSetupFixtureClick } from './session/fixture-player.js';
 
 setAudioQueue(audioQueue);
 
@@ -132,7 +133,8 @@ async function init() {
   els.settingsVoiceLibraryNav.addEventListener('click', () => navigateSettingsPage('voice-library'));
   els.voiceLibraryControls.addEventListener('change', handleVoiceLibraryChange);
   els.voiceLibraryControls.addEventListener('click', handleVoiceLibraryClick);
-  els.devToolsShowPcExport.addEventListener('change', handleDevToolsShowPcExportChange);
+  els.devToolsShowControls.addEventListener('change', handleDevToolsShowControlsChange);
+  els.setupFixtureButton.addEventListener('click', handleSetupFixtureClick);
   els.installAppRow.addEventListener('click', () => handleInstallApp({ closeSettings: closeSettingsSheet }));
   els.settingsStartButton.addEventListener('click', startFromSettings);
   els.micPreGain.addEventListener('input', handlePreGainInput);

@@ -29,7 +29,9 @@ export function renderLifecycle() {
   els.translateNowButton.hidden = !running;
   els.speakNowButton.hidden = !running;
   els.micToggleButton.hidden = !running;
-  els.pcExportButton.hidden = !(running && micOff && state.devToolsSettings.showPcExport);
+  els.pcExportButton.hidden = !(running && micOff && state.devToolsSettings.showControls);
+  els.setupFixtureButton.hidden = !(setup && state.devToolsSettings.showControls);
+  els.setupFixtureButton.disabled = state.status === 'connecting' || Boolean(state.fixtureBusy);
   els.startButton.disabled = state.status === 'connecting';
   els.settingsStartButton.disabled = state.status === 'connecting';
   els.settingsStartButton.textContent = (running && micListening) ? 'Stop recording' : 'Start recording';

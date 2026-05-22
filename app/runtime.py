@@ -27,6 +27,7 @@ from realtime_translation_engine.types import LiveDispatchRequest
 from app.asr_bridge import ASRJob
 from app.asr_bridge import LiveASRPoolBridge
 from app.config import get_bool, get_float, get_int, optional_str
+from app.live_metrics import log_event as _metric
 from app.live_settings import default_live_settings
 from app.live_settings import live_runner_config
 from app.live_settings import merge_live_settings
@@ -140,6 +141,7 @@ class ConversationTurn:
 class LaneASRJob:
     job: ASRJob
     turn_id: str
+    submitted_mono: float = 0.0
 
 
 @dataclass
@@ -396,6 +398,15 @@ class ConversationRuntime:
         )
         if not result.done:
             return
+        _metric(
+            "asr_done",
+            sess=self.session_id,
+            lane=lane.lane_id,
+            rid=str(job.request_id),
+            wall_ms=round((time.monotonic() - float(inflight.submitted_mono or time.monotonic())) * 1000.0, 2),
+            ok=bool(result.ok),
+            segs=len(result.segments or []) if result.ok else 0,
+        )
 
         is_current_turn = inflight.turn_id == self.current_turn.turn_id
         if result.ok:
@@ -495,7 +506,19 @@ class ConversationRuntime:
             return
         if not self.listening and not force:
             return
-        decision = lane.asr_runner.maybe_dispatch_work(now_mono=time.monotonic(), force=force)
+        _vad_t0 = time.monotonic()
+        decision = lane.asr_runner.maybe_dispatch_work(now_mono=_vad_t0, force=force)
+        _vad_ms = (time.monotonic() - _vad_t0) * 1000.0
+        _gate = decision.speech_gate_decision
+        _metric(
+            "vad",
+            sess=self.session_id,
+            lane=lane.lane_id,
+            ms=round(_vad_ms, 2),
+            dec=str(getattr(_gate, "next_state", "") or ""),
+            speech=bool(getattr(_gate, "speech_hit", False)) if _gate else False,
+            force_commit=bool(getattr(_gate, "force_commit_requested", False)) if _gate else False,
+        )
         await self._send_vad_state(lane, decision)
         if decision.error:
             await self._send(
@@ -515,6 +538,7 @@ class ConversationRuntime:
         work = decision.work_decision.work_item
         if work is None:
             return
+        _submit_t0 = time.monotonic()
         try:
             job = await asyncio.to_thread(
                 self.asr_bridge.enqueue_pcm16,
@@ -538,7 +562,21 @@ class ConversationRuntime:
                 )
             )
             return
-        lane.asr_inflight = LaneASRJob(job=job, turn_id=self.current_turn.turn_id)
+        lane.asr_inflight = LaneASRJob(
+            job=job,
+            turn_id=self.current_turn.turn_id,
+            submitted_mono=_submit_t0,
+        )
+        _metric(
+            "asr_submit",
+            sess=self.session_id,
+            lane=lane.lane_id,
+            rid=str(job.request_id),
+            t0=int(work.t0_ms),
+            t1=int(work.t1_ms),
+            audio_ms=int(work.t1_ms - work.t0_ms),
+            submit_ms=round((time.monotonic() - _submit_t0) * 1000.0, 2),
+        )
         await self._send(
             event(
                 "asr_status",
@@ -1026,8 +1064,25 @@ class ConversationRuntime:
     ) -> None:
         lane = self.lanes[lane_id]
         current_task = asyncio.current_task()
+        _xlate_t0 = time.monotonic()
+        _metric(
+            "xlate_submit",
+            sess=self.session_id,
+            lane=lane_id,
+            part=part_id,
+            src_chars=len(str(getattr(request.opportunity, "source_window", "") or "")),
+        )
         try:
             translation = await asyncio.to_thread(lane.translation_bridge.run, request)
+            _metric(
+                "xlate_done",
+                sess=self.session_id,
+                lane=lane_id,
+                part=part_id,
+                wall_ms=round((time.monotonic() - _xlate_t0) * 1000.0, 2),
+                ok=True,
+                model=str(getattr(translation, "model", "") or ""),
+            )
             if (
                 generation != lane.translation_generation
                 or self.current_turn.turn_id != turn_id
@@ -1038,6 +1093,15 @@ class ConversationRuntime:
         except asyncio.CancelledError:
             raise
         except Exception as exc:
+            _metric(
+                "xlate_done",
+                sess=self.session_id,
+                lane=lane_id,
+                part=part_id,
+                wall_ms=round((time.monotonic() - _xlate_t0) * 1000.0, 2),
+                ok=False,
+                err=str(exc)[:200],
+            )
             await self._send(
                 event(
                     "error",
