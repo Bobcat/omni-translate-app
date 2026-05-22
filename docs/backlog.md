@@ -120,12 +120,6 @@ text, the translation re-runs from the edited source.
 
 ## C. Observability / dev
 
-### C1. Concurrent sessions — verify async behaviour
-**Status:** open (validation, not implementation). Confirm that the
-backend genuinely handles multiple simultaneous sessions concurrently,
-not one-at-a-time blocking. Inspect uvicorn worker behaviour, the ASR
-pool consumer mechanics, and the LLM/TTS pool serialisation.
-
 ### C2. In-app dev info panel
 **Status:** open. Surface TTS RTF, LLM timings, TTS timings inside the
 app rather than only in exports. Likely path: broaden the existing
