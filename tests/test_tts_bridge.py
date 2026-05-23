@@ -4,8 +4,10 @@ import base64
 import io
 import json
 import shutil
+import tempfile
 import unittest
 import wave
+from pathlib import Path
 from unittest import mock
 
 from app.tts_bridge import TTSBridge
@@ -63,6 +65,19 @@ class TTSBridgeTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         clear_tts_runtime_overrides()
+
+    def _isolated_voice_library_root(self) -> Path:
+        # Redirect STABLE_VOICE_LIBRARY_ROOT to a tmp dir so tests never
+        # touch real data/voice_library/stable/ — previous version wrote
+        # into nl/female/ and rmtree'd nl/ on teardown, wiping any real
+        # samples the developer had generated for Dutch.
+        from app import voice_library
+        tmp_root = Path(tempfile.mkdtemp(prefix="test_stable_voice_lib_"))
+        patcher = mock.patch.object(voice_library, "STABLE_VOICE_LIBRARY_ROOT", tmp_root)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.addCleanup(lambda: shutil.rmtree(tmp_root, ignore_errors=True))
+        return tmp_root
 
     def test_synthesize_sends_kokoro_request_to_tts_pool_and_writes_artifact(self) -> None:
         update_tts_settings(
@@ -130,9 +145,9 @@ class TTSBridgeTests(unittest.TestCase):
         request = fake_pool.calls[0]["payload"]
         self.assertEqual(request["model"], "voxcpm2")
         self.assertNotIn("preset", request["voice"])
-        self.assertIn("Speak in Dutch", request["voice"]["instructions"])
-        self.assertIn("Use the reference audio as the voice reference", request["voice"]["instructions"])
-        self.assertNotIn("Use a natural adult voice", request["voice"]["instructions"])
+        # Reference-audio mode: no text instructions at all — the
+        # reference WAV is the voice signal.
+        self.assertNotIn("instructions", request["voice"])
         reference_audio = request["voice"]["reference_audio"]
         self.assertEqual(reference_audio["mime_type"], "audio/wav")
         self.assertEqual(reference_audio["max_duration_s"], 2.0)
@@ -146,7 +161,7 @@ class TTSBridgeTests(unittest.TestCase):
         self.assertIn("tts_reference_prepare_wall_ms", payload["metrics"])
         self.assertIn("tts_reference_payload_bytes", payload["metrics"])
 
-    def test_voxcpm2_description_mode_emits_gender_and_style_clauses(self) -> None:
+    def test_voxcpm2_description_mode_combines_identity_and_texture(self) -> None:
         update_tts_settings(
             {
                 "backend": "voxcpm2",
@@ -154,8 +169,8 @@ class TTSBridgeTests(unittest.TestCase):
                     "languages": {
                         "nl": {
                             "mode": "description",
-                            "gender": "female",
-                            "style": "warm",
+                            "identity": "adult_woman",
+                            "texture": "gentle_and_warm",
                         },
                     },
                 },
@@ -175,9 +190,10 @@ class TTSBridgeTests(unittest.TestCase):
 
         request = fake_pool.calls[0]["payload"]
         self.assertNotIn("preset", request["voice"])
-        self.assertIn("Speak in Dutch", request["voice"]["instructions"])
-        self.assertIn("Use a natural adult female voice", request["voice"]["instructions"])
-        self.assertIn("Use a warm, natural speaking style", request["voice"]["instructions"])
+        self.assertEqual(
+            request["voice"]["instructions"],
+            "adult female voice, gentle and warm tone",
+        )
         self.assertNotIn("reference_audio", request["voice"])
         self.assertFalse(tts_uses_asr_reference_wav("Dutch"))
 
@@ -215,8 +231,7 @@ class TTSBridgeTests(unittest.TestCase):
         request = fake_pool.calls[0]["payload"]
         self.assertEqual(request["model"], "nanovllm_voxcpm")
         self.assertNotIn("preset", request["voice"])
-        self.assertIn("Speak in Dutch", request["voice"]["instructions"])
-        self.assertIn("Use the reference audio as the voice reference", request["voice"]["instructions"])
+        self.assertNotIn("instructions", request["voice"])
         self.assertIn("reference_audio", request["voice"])
         self.assertTrue(tts_uses_asr_reference_wav("Dutch"))
 
@@ -242,14 +257,17 @@ class TTSBridgeTests(unittest.TestCase):
             settings["voxcpm2"]["languages"]["nl"],
             {
                 "mode": "reference_audio",
+                "texture": "",
+                "preset": "",
                 "reference_source": "last_speech",
                 "trim_seconds": 3.0,
+                "trim_to_source": True,
             },
         )
         self.assertTrue(tts_uses_asr_reference_wav("Dutch"))
 
     def test_synthesize_uses_stable_voice_sample_when_selected(self) -> None:
-        from app.voice_library import STABLE_VOICE_LIBRARY_ROOT
+        tmp_root = self._isolated_voice_library_root()
 
         update_tts_settings(
             {
@@ -265,12 +283,10 @@ class TTSBridgeTests(unittest.TestCase):
                 },
             }
         )
-        language_dir = (STABLE_VOICE_LIBRARY_ROOT / "nl").resolve()
-        stable_dir = language_dir / "female"
+        stable_dir = tmp_root / "nl" / "female"
         stable_dir.mkdir(parents=True, exist_ok=True)
         stable_path = stable_dir / "audio.wav"
         stable_path.write_bytes(_silent_wav(seconds=2.5))
-        self.addCleanup(lambda: shutil.rmtree(language_dir, ignore_errors=True))
 
         fake_pool = FakeTtsPool()
         session_id = "conv_test_stable_sample"
@@ -290,12 +306,12 @@ class TTSBridgeTests(unittest.TestCase):
         request = fake_pool.calls[0]["payload"]
         self.assertEqual(request["model"], "voxcpm2")
         self.assertIn("reference_audio", request["voice"])
-        self.assertIn("Use the reference audio as the voice reference", request["voice"]["instructions"])
+        self.assertNotIn("instructions", request["voice"])
         self.assertEqual(payload["metadata"]["reference_client_source"], "stable_generated")
         self.assertEqual(request["voice"]["reference_audio"]["max_duration_s"], 4.0)
 
     def test_stable_generated_ultimate_cloning_sends_prompt_text_from_meta(self) -> None:
-        from app.voice_library import STABLE_VOICE_LIBRARY_ROOT
+        tmp_root = self._isolated_voice_library_root()
 
         update_tts_settings(
             {
@@ -314,15 +330,13 @@ class TTSBridgeTests(unittest.TestCase):
                 },
             }
         )
-        language_dir = (STABLE_VOICE_LIBRARY_ROOT / "nl").resolve()
-        stable_dir = language_dir / "female"
+        stable_dir = tmp_root / "nl" / "female"
         stable_dir.mkdir(parents=True, exist_ok=True)
         (stable_dir / "audio.wav").write_bytes(_silent_wav(seconds=2.5))
         (stable_dir / "meta.json").write_text(
             json.dumps({"reference_text": "Ik lees dit korte bericht met een rustige stem."}),
             encoding="utf-8",
         )
-        self.addCleanup(lambda: shutil.rmtree(language_dir, ignore_errors=True))
 
         fake_pool = FakeTtsPool()
         session_id = "conv_test_uc2_stable"
@@ -344,7 +358,7 @@ class TTSBridgeTests(unittest.TestCase):
         self.assertTrue(reference_audio["also_use_as_reference"])
 
     def test_stable_generated_toggle_off_stays_reference_only(self) -> None:
-        from app.voice_library import STABLE_VOICE_LIBRARY_ROOT
+        tmp_root = self._isolated_voice_library_root()
 
         update_tts_settings(
             {
@@ -363,14 +377,12 @@ class TTSBridgeTests(unittest.TestCase):
                 },
             }
         )
-        language_dir = (STABLE_VOICE_LIBRARY_ROOT / "nl").resolve()
-        stable_dir = language_dir / "female"
+        stable_dir = tmp_root / "nl" / "female"
         stable_dir.mkdir(parents=True, exist_ok=True)
         (stable_dir / "audio.wav").write_bytes(_silent_wav(seconds=2.5))
         (stable_dir / "meta.json").write_text(
             json.dumps({"reference_text": "Curated transcript."}), encoding="utf-8"
         )
-        self.addCleanup(lambda: shutil.rmtree(language_dir, ignore_errors=True))
 
         fake_pool = FakeTtsPool()
         session_id = "conv_test_no_uc_stable"
@@ -479,7 +491,7 @@ class TTSBridgeTests(unittest.TestCase):
                 "backend": "voxcpm2",
                 "voxcpm2": {
                     "languages": {
-                        "nl": {"mode": "description", "gender": "male", "style": "warm"},
+                        "nl": {"mode": "description", "identity": "adult_man", "texture": "gentle_and_warm"},
                     },
                 },
             }
@@ -503,8 +515,11 @@ class TTSBridgeTests(unittest.TestCase):
             settings["voxcpm2"]["languages"]["nl"],
             {
                 "mode": "reference_audio",
+                "texture": "",
+                "preset": "",
                 "reference_source": "last_speech",
                 "trim_seconds": 5.0,
+                "trim_to_source": True,
             },
         )
 
@@ -529,10 +544,12 @@ class TTSBridgeTests(unittest.TestCase):
             [option["value"] for option in payload["options"]["voxcpm2_genders"]],
             ["female", "male"],
         )
-        self.assertEqual(
-            [option["value"] for option in payload["options"]["voxcpm2_styles"]],
-            ["neutral", "warm", "calm", "clear"],
-        )
+        identity_values = [option["value"] for option in payload["options"]["voxcpm2_identities"]]
+        self.assertIn("adult_woman", identity_values)
+        self.assertIn("elderly_man", identity_values)
+        texture_values = [option["value"] for option in payload["options"]["voxcpm2_textures"]]
+        self.assertEqual(texture_values[0], "")
+        self.assertIn("gentle_and_warm", texture_values)
         reference_sources = payload["options"]["voxcpm2_reference_sources"]
         self.assertEqual(
             [option["value"] for option in reference_sources],

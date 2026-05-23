@@ -84,6 +84,10 @@ export async function handleAutoGainControlChange() {
 }
 
 export async function resetAudioSettings() {
+  // Brief tap-flash. Button isn't re-rendered by reset so we remove it
+  // ourselves; see tts.js for the rerender-driven variant.
+  els.audioSettingsReset?.classList.add('is-flashing');
+  setTimeout(() => els.audioSettingsReset?.classList.remove('is-flashing'), 140);
   state.audioSettings.preGain = DEFAULT_AUDIO_SETTINGS.preGain;
   state.audioSettings.autoOffSilenceSeconds = DEFAULT_AUDIO_SETTINGS.autoOffSilenceSeconds;
   state.audioSettings.autoOffAfterBubble = DEFAULT_AUDIO_SETTINGS.autoOffAfterBubble;

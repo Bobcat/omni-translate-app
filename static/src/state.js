@@ -12,16 +12,20 @@ import {
 } from './shared/constants.js';
 import { cloneSettings } from './shared/utils.js';
 import { buildLocalLanes, createLocalTurn } from './domain/lanes.js';
-import { loadDevToolsSettings } from './domain/storage.js';
+import { loadDevToolsSettings, loadSetupLanguages } from './domain/storage.js';
+import { guessSetupLanguages, normalizeLanguageName } from './domain/languages.js';
 
-const initialLanes = buildLocalLanes('Dutch', 'English');
+const _initialSetupLanguages = loadSetupLanguages() || guessSetupLanguages();
+const _initialSourceLanguage = normalizeLanguageName(_initialSetupLanguages.source);
+const _initialTargetLanguage = normalizeLanguageName(_initialSetupLanguages.target);
+const initialLanes = buildLocalLanes(_initialSourceLanguage, _initialTargetLanguage);
 
 export const state = {
   socket: null,
   sessionId: null,
   capture: null,
-  sideALanguage: 'Dutch',
-  sideBLanguage: 'English',
+  sideALanguage: _initialSourceLanguage,
+  sideBLanguage: _initialTargetLanguage,
   requestedStartLaneId: 'a_to_b',
   lanes: initialLanes,
   currentTurn: createLocalTurn('a_to_b', initialLanes),

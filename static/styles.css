@@ -1463,6 +1463,12 @@ button {
   max-height: 100dvh;
 }
 
+#settingsSheet .bottom-sheet:has(#settingsAudioPage:not([hidden])) {
+  /* Only lift the height cap; don't force full height, so short
+     content keeps a short sheet without empty bottom space. */
+  max-height: 100dvh;
+}
+
 .voice-library-group {
   display: flex;
   flex-direction: column;
@@ -1651,6 +1657,10 @@ button {
 .settings-start-button:disabled {
   cursor: default;
   opacity: 0.48;
+}
+
+.audio-reset-button.is-flashing {
+  background-color: var(--border);
 }
 
 .setting-group {

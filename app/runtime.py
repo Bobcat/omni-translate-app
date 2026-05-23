@@ -847,6 +847,7 @@ class ConversationRuntime:
         else:
             self._snapshot_part_reference_wav(speaking_part_ids, reference_wav_path, low_quality=low_quality)
         reference_prompt_text = _last_speech_prompt_text(lane, reference_wav_path)
+        source_audio_duration_ms = _source_bubble_duration_ms(lane)
         try:
             tts_payload = await asyncio.to_thread(
                 self.tts_bridge.synthesize,
@@ -855,6 +856,7 @@ class ConversationRuntime:
                 language=lane.target_language,
                 reference_wav_path=reference_wav_path,
                 reference_prompt_text=reference_prompt_text,
+                source_audio_duration_ms=source_audio_duration_ms,
             )
         except asyncio.CancelledError:
             raise
@@ -1639,6 +1641,18 @@ def _last_speech_prompt_text(lane: ConversationLane, reference_wav_path: str | N
             parts.append(text)
     joined = " ".join(parts).strip()
     return joined or None
+
+
+def _source_bubble_duration_ms(lane: ConversationLane) -> int | None:
+    """Duration of the WAV the most recent ASR commit was based on.
+    Used by the TTS bridge's trim_to_source clamp."""
+    path = (lane.last_asr_wav_path or "").strip()
+    if not path or not Path(path).is_file():
+        return None
+    try:
+        return _wav_duration_ms(path)
+    except Exception:
+        return None
 
 
 def _last_speech_reference_choice(lane: ConversationLane) -> tuple[str | None, bool]:

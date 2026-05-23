@@ -68,7 +68,14 @@ export function navigateSettingsPage(page) {
 }
 
 export function handleSettingsBack() {
-  // In-sheet back arrow and browser back: pop one level only.
+  // On home: button is in "close" mode — collapse the whole sheet at
+  // once (pops every settings history entry, regardless of how we got
+  // here). On a sub-page: button is "back" — pop one level so popstate
+  // can swap the page back.
+  if (state.settingsPage === 'home') {
+    closeSettingsSheet();
+    return;
+  }
   if (history.state?.view === 'settingsSheet') {
     history.back();
     return;

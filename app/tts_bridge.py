@@ -114,12 +114,46 @@ VOXCPM2_GENDER_OPTIONS = (
     ("female", "Female"),
     ("male", "Male"),
 )
-VOXCPM2_STYLE_OPTIONS = (
-    ("neutral", "Neutral"),
-    ("warm", "Warm"),
-    ("calm", "Calm"),
-    ("clear", "Clear"),
+# Description-mode dropdowns. Identity is required; role and texture
+# are optional ("" = skip that segment). Phrasing follows VoxCPM2
+# voice-design conventions — see vocabularies in docs/cookbook.html.
+VOXCPM2_IDENTITY_OPTIONS = (
+    ("young_woman", "Young woman"),
+    ("young_man", "Young man"),
+    ("adult_woman", "Adult woman"),
+    ("adult_man", "Adult man"),
+    ("middle_aged_woman", "Middle-aged woman"),
+    ("middle_aged_man", "Middle-aged man"),
+    ("elderly_woman", "Elderly woman"),
+    ("elderly_man", "Elderly man"),
 )
+VOXCPM2_TEXTURE_OPTIONS = (
+    ("", "(none)"),
+    ("calm_and_balanced", "Calm and balanced"),
+    ("gentle_and_warm", "Gentle and warm"),
+    ("soft_and_measured", "Soft and measured"),
+    ("clear_and_articulate", "Clear and articulate"),
+    ("low_and_resonant", "Low and resonant"),
+    ("bright_and_energetic", "Bright and energetic"),
+    ("warm_and_intimate", "Warm and intimate"),
+    ("breathy_and_quiet", "Breathy and quiet"),
+    ("enthusiastic_and_dynamic", "Enthusiastic and dynamic"),
+    ("slow_and_reflective", "Slow and reflective"),
+)
+# Full-instruction presets. When set, override identity/texture entirely
+# and send the preset string as the model's control instruction. Mostly
+# for the "Song: …" voice-design recipes from the VoxCPM demo page.
+VOXCPM2_PRESET_OPTIONS = (
+    ("", "(none)"),
+    ("song_piano_sad", "Song · sad piano"),
+    ("song_pop_happy", "Song · happy pop, passionate"),
+    ("song_acoustic_calm", "Song · calm acoustic"),
+)
+VOXCPM2_PRESET_PHRASES = {
+    "song_piano_sad": "Song: Music, Piano, Sad",
+    "song_pop_happy": "Song: Pop Music, Beat, Happy, Passion",
+    "song_acoustic_calm": "Song: Acoustic Guitar, Calm",
+}
 VOXCPM2_REFERENCE_SOURCE_OPTIONS = (
     ("last_speech", "Last speech fragment", False),
     ("stable_generated", "Stable generated", False),
@@ -131,15 +165,24 @@ VOXCPM2_DEFAULT_LANGUAGE_CONFIG = {
     "stable_gender": "female",
     "trim_seconds": VOXCPM2_DEFAULT_TRIM_SECONDS,
 }
-VOXCPM2_GENDER_PROMPT_CLAUSES = {
-    "female": "Use a natural adult female voice.",
-    "male": "Use a natural adult male voice.",
+# Maps option values to the lowercase phrase the model expects. Comma-
+# joined into "{identity}, {role}, {texture} tone" — role/texture
+# omitted when their value is "".
+# Prompt-phrase form per identity. "{age} {gender} voice" reads better
+# to the model than "{age} woman/man" — the UI label keeps the short
+# form, but this is what ships in the instruction string.
+VOXCPM2_IDENTITY_PHRASES = {
+    "young_woman": "young female voice",
+    "young_man": "young male voice",
+    "adult_woman": "adult female voice",
+    "adult_man": "adult male voice",
+    "middle_aged_woman": "middle-aged female voice",
+    "middle_aged_man": "middle-aged male voice",
+    "elderly_woman": "elderly female voice",
+    "elderly_man": "elderly male voice",
 }
-VOXCPM2_STYLE_PROMPT_CLAUSES = {
-    "neutral": "Use a neutral, natural speaking style.",
-    "warm": "Use a warm, natural speaking style.",
-    "calm": "Use a calm, measured speaking style.",
-    "clear": "Use a clear, articulate speaking style.",
+VOXCPM2_TEXTURE_PHRASES = {
+    value: label.lower() for value, label in VOXCPM2_TEXTURE_OPTIONS if value
 }
 # Display name -> BCP-47 lowercase tag. Mirrors static/src/shared/languages.js.
 LANGUAGE_BCP47_BY_NAME = {
@@ -205,6 +248,7 @@ class TTSBridge:
         language: str,
         reference_wav_path: str | None = None,
         reference_prompt_text: str | None = None,
+        source_audio_duration_ms: int | None = None,
     ) -> dict[str, Any]:
         call_started = time.perf_counter()
         safe_text = str(text or "").strip()
@@ -219,6 +263,7 @@ class TTSBridge:
             language=language,
             reference_wav_path=reference_wav_path,
             reference_prompt_text=reference_prompt_text,
+            source_audio_duration_ms=source_audio_duration_ms,
         )
         request_started = time.perf_counter()
         response = _post_json(
@@ -292,7 +337,9 @@ def tts_settings_payload() -> dict[str, Any]:
         },
         "voxcpm2_modes": _options_payload(VOXCPM2_MODE_OPTIONS),
         "voxcpm2_genders": _options_payload(VOXCPM2_GENDER_OPTIONS),
-        "voxcpm2_styles": _options_payload(VOXCPM2_STYLE_OPTIONS),
+        "voxcpm2_identities": _options_payload(VOXCPM2_IDENTITY_OPTIONS),
+        "voxcpm2_textures": _options_payload(VOXCPM2_TEXTURE_OPTIONS),
+        "voxcpm2_presets": _options_payload(VOXCPM2_PRESET_OPTIONS),
         "voxcpm2_reference_sources": [
             {"value": str(value), "label": str(label), "disabled": bool(disabled)}
             for value, label, disabled in VOXCPM2_REFERENCE_SOURCE_OPTIONS
@@ -340,6 +387,7 @@ def _tts_pool_request_payload(
     language: str,
     reference_wav_path: str | None,
     reference_prompt_text: str | None = None,
+    source_audio_duration_ms: int | None = None,
 ) -> tuple[dict[str, Any], dict[str, float], dict[str, Any]]:
     settings = _current_tts_settings()
     backend = settings["backend"]
@@ -378,6 +426,15 @@ def _tts_pool_request_payload(
             voice["instructions"] = instructions
         if has_reference_audio:
             trim_s = float(config.get("trim_seconds", VOXCPM2_DEFAULT_TRIM_SECONDS))
+            # Optional clamp: when trim_to_source is on and the source-bubble
+            # audio (what ASR was based on) is shorter than the trim cap,
+            # trim the reference further down to that length. Mostly useful
+            # for stable_generated mode — last_speech is already that audio.
+            if bool(config.get("trim_to_source")) and source_audio_duration_ms is not None:
+                source_s = max(0.0, float(source_audio_duration_ms) / 1000.0)
+                if 0.5 <= source_s < trim_s:
+                    trim_s = source_s
+                    request_metadata["reference_trimmed_to_source_ms"] = int(source_audio_duration_ms)
             prompt_text, also_use_as_reference = _ultimate_cloning_choice(
                 settings=settings,
                 reference_source=reference_source,
@@ -418,32 +475,41 @@ def _voxcpm2_voice_instructions(
             raise TtsReferenceUnavailableError(
                 f"no reference audio available for language={target_lang!r}"
             )
-        return _voxcpm2_reference_instructions(target_lang)
+        return _voxcpm2_reference_instructions(target_lang, config)
     return _voxcpm2_description_instructions(target_lang, config)
 
 
 def _voxcpm2_description_instructions(target_lang: str, config: dict[str, Any]) -> str:
-    gender = str(config.get("gender") or "female")
-    style = str(config.get("style") or "neutral")
-    gender_clause = VOXCPM2_GENDER_PROMPT_CLAUSES.get(gender, VOXCPM2_GENDER_PROMPT_CLAUSES["female"])
-    style_clause = VOXCPM2_STYLE_PROMPT_CLAUSES.get(style, VOXCPM2_STYLE_PROMPT_CLAUSES["neutral"])
-    return (
-        f"Speak in {target_lang}. "
-        f"Pronounce numbers, abbreviations, and short fragments in {target_lang}. "
-        f"{gender_clause} {style_clause} "
-        "Speak clearly and generate only the requested text."
-    )
+    del target_lang  # language is implicit from the input text
+    identity_key = str(config.get("identity") or "adult_woman")
+    identity = VOXCPM2_IDENTITY_PHRASES.get(identity_key, VOXCPM2_IDENTITY_PHRASES["adult_woman"])
+    preset_phrase = VOXCPM2_PRESET_PHRASES.get(str(config.get("preset") or ""))
+    if preset_phrase:
+        # Song-vocabulary: VoxCPM's Song: format uses "vocals" instead of
+        # "voice". Texture is intentionally dropped — both texture and
+        # style are tonal descriptors and tend to fight.
+        return f"{preset_phrase}, {identity.replace('voice', 'vocals')}"
+    parts = [identity]
+    texture_key = str(config.get("texture") or "")
+    texture_phrase = VOXCPM2_TEXTURE_PHRASES.get(texture_key)
+    if texture_phrase:
+        parts.append(f"{texture_phrase} tone")
+    return ", ".join(parts)
 
 
-def _voxcpm2_reference_instructions(target_lang: str) -> str:
-    return (
-        f"Speak in {target_lang}. "
-        f"Pronounce numbers, abbreviations, and short fragments in {target_lang}. "
-        "Use the reference audio as the voice reference. "
-        f"Do not infer the output language from the reference audio; the output language is {target_lang}. "
-        "Do not copy or continue the content of the reference audio. "
-        "Speak clearly and generate only the requested text."
-    )
+def _voxcpm2_reference_instructions(target_lang: str, config: dict[str, Any] | None = None) -> str:
+    # Reference-audio mode: identity comes from the reference WAV, so we
+    # only optionally add texture. Empty -> no instructions. Preset, when
+    # set, overrides everything.
+    del target_lang
+    cfg = config or {}
+    preset_phrase = VOXCPM2_PRESET_PHRASES.get(str(cfg.get("preset") or ""))
+    if preset_phrase:
+        return preset_phrase
+    texture_phrase = VOXCPM2_TEXTURE_PHRASES.get(str(cfg.get("texture") or ""))
+    if texture_phrase:
+        return f"{texture_phrase} tone"
+    return ""
 
 
 def _voxcpm2_language_config(languages_map: dict[str, Any], language: str) -> dict[str, Any]:
@@ -832,7 +898,9 @@ def _normalize_kokoro_voices(voices: dict[str, Any], errors: dict[str, str]) -> 
 
 _VOXCPM2_MODE_VALUES = {value for value, _ in VOXCPM2_MODE_OPTIONS}
 _VOXCPM2_GENDER_VALUES = {value for value, _ in VOXCPM2_GENDER_OPTIONS}
-_VOXCPM2_STYLE_VALUES = {value for value, _ in VOXCPM2_STYLE_OPTIONS}
+_VOXCPM2_IDENTITY_VALUES = {value for value, _ in VOXCPM2_IDENTITY_OPTIONS}
+_VOXCPM2_TEXTURE_VALUES = {value for value, _ in VOXCPM2_TEXTURE_OPTIONS}
+_VOXCPM2_PRESET_VALUES = {value for value, _ in VOXCPM2_PRESET_OPTIONS}
 _VOXCPM2_REFERENCE_SOURCE_VALUES = {
     value for value, _label, disabled in VOXCPM2_REFERENCE_SOURCE_OPTIONS if not disabled
 }
@@ -874,20 +942,28 @@ def _normalize_voxcpm2_language_entry(
         if errors is not None:
             errors[f"{errors_prefix}.mode"] = "unsupported mode"
         mode = "reference_audio"
-    result: dict[str, Any] = {"mode": mode}
+    # Texture is common to both modes; identity is description-only
+    # (in reference mode the WAV dictates identity/gender).
+    texture = str(entry.get("texture") or "").strip().lower()
+    if texture and texture not in _VOXCPM2_TEXTURE_VALUES:
+        if errors is not None:
+            errors[f"{errors_prefix}.texture"] = "unsupported texture"
+        texture = ""
+    # Preset is common to both modes; when set it overrides identity/
+    # texture and ships a full instruction string verbatim.
+    preset = str(entry.get("preset") or "").strip().lower()
+    if preset and preset not in _VOXCPM2_PRESET_VALUES:
+        if errors is not None:
+            errors[f"{errors_prefix}.preset"] = "unsupported preset"
+        preset = ""
+    result: dict[str, Any] = {"mode": mode, "texture": texture, "preset": preset}
     if mode == "description":
-        gender = str(entry.get("gender") or "female").strip().lower()
-        if gender not in _VOXCPM2_GENDER_VALUES:
+        identity = str(entry.get("identity") or "adult_woman").strip().lower()
+        if identity not in _VOXCPM2_IDENTITY_VALUES:
             if errors is not None:
-                errors[f"{errors_prefix}.gender"] = "unsupported gender"
-            gender = "female"
-        style = str(entry.get("style") or "neutral").strip().lower()
-        if style not in _VOXCPM2_STYLE_VALUES:
-            if errors is not None:
-                errors[f"{errors_prefix}.style"] = "unsupported style"
-            style = "neutral"
-        result["gender"] = gender
-        result["style"] = style
+                errors[f"{errors_prefix}.identity"] = "unsupported identity"
+            identity = "adult_woman"
+        result["identity"] = identity
     else:
         reference_source = str(entry.get("reference_source") or "stable_generated").strip().lower()
         if reference_source not in _VOXCPM2_REFERENCE_SOURCE_VALUES:
@@ -908,6 +984,9 @@ def _normalize_voxcpm2_language_entry(
             trim = VOXCPM2_DEFAULT_TRIM_SECONDS
         result["reference_source"] = reference_source
         result["trim_seconds"] = trim
+        # Default ON: client-side default. Backend honours an explicit
+        # False from the client when the user toggled it off.
+        result["trim_to_source"] = bool(entry.get("trim_to_source", True))
         if reference_source == "stable_generated":
             stable_gender = str(entry.get("stable_gender") or "female").strip().lower()
             if stable_gender not in _VOXCPM2_GENDER_VALUES:

@@ -3,9 +3,6 @@
 // dedicated modules under session/, settings/, ui/, domain/, shared/.
 
 import { api } from './api-client.js';
-import { guessSetupLanguages, normalizeLanguageName } from './domain/languages.js';
-import { loadSetupLanguages } from './domain/storage.js';
-import { buildLocalLanes } from './domain/lanes.js';
 import { mergeSettings } from './shared/utils.js';
 import { DEFAULT_TUNING_SETTINGS } from './shared/constants.js';
 import { els } from './els.js';
@@ -19,6 +16,7 @@ import {
   handleTtsSettingChange,
   handleTtsSettingsClick,
   renderTtsSettings,
+  setTtsAudioQueue,
 } from './settings/tts.js';
 import {
   setAudioQueue,
@@ -89,17 +87,19 @@ import {
 import { handleSetupFixtureClick } from './session/fixture-player.js';
 
 setAudioQueue(audioQueue);
+setTtsAudioQueue(audioQueue);
 
 init().catch(() => {
   setStatus('error');
 });
 
 async function init() {
+  // Paint the language pills before the network request so they show
+  // the right values from the start (state.js already initialised them
+  // from localStorage / educated guess). Without this, the pills sit
+  // empty until /api/config returns.
+  renderLanguageControls();
   const config = await api.getConfig();
-  const setupLanguages = loadSetupLanguages() || guessSetupLanguages();
-  state.sideALanguage = normalizeLanguageName(setupLanguages.source);
-  state.sideBLanguage = normalizeLanguageName(setupLanguages.target);
-  state.lanes = buildLocalLanes(state.sideALanguage, state.sideBLanguage);
   state.audioInputSampleRate = config.audio_input?.sample_rate_hz || 16000;
   state.tuningSettings = mergeSettings(DEFAULT_TUNING_SETTINGS, config.live_settings || {});
   applyTtsConfig(config.tts || {});

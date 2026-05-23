@@ -29,19 +29,57 @@ export const VOXCPM2_DEFAULT_LANGUAGE_CONFIG = {
 };
 export const VOXCPM2_DEFAULT_TRIM_SECONDS = 4;
 const VOXCPM2_VOICE_CONFIG_STORAGE_KEY = 'voxcpm2_voice_config';
-const VOXCPM2_GENDER_CLAUSES = {
-  female: 'Use a natural adult female voice.',
-  male: 'Use a natural adult male voice.',
+// Prompt-phrase per identity — kept in sync with backend tts_bridge.py.
+// UI dropdown labels stay short ("Adult woman"); this is what ends up in
+// the model instruction.
+const VOXCPM2_IDENTITY_PHRASES = {
+  young_woman: 'young female voice',
+  young_man: 'young male voice',
+  adult_woman: 'adult female voice',
+  adult_man: 'adult male voice',
+  middle_aged_woman: 'middle-aged female voice',
+  middle_aged_man: 'middle-aged male voice',
+  elderly_woman: 'elderly female voice',
+  elderly_man: 'elderly male voice',
 };
-const VOXCPM2_STYLE_CLAUSES = {
-  neutral: 'Use a neutral, natural speaking style.',
-  warm: 'Use a warm, natural speaking style.',
-  calm: 'Use a calm, measured speaking style.',
-  clear: 'Use a clear, articulate speaking style.',
+const VOXCPM2_TEXTURE_PHRASES = {
+  calm_and_balanced: 'calm and balanced',
+  gentle_and_warm: 'gentle and warm',
+  soft_and_measured: 'soft and measured',
+  clear_and_articulate: 'clear and articulate',
+  low_and_resonant: 'low and resonant',
+  bright_and_energetic: 'bright and energetic',
+  warm_and_intimate: 'warm and intimate',
+  breathy_and_quiet: 'breathy and quiet',
+  enthusiastic_and_dynamic: 'enthusiastic and dynamic',
+  slow_and_reflective: 'slow and reflective',
 };
+// Full-instruction presets — override identity/texture when set.
+const VOXCPM2_PRESET_PHRASES = {
+  song_piano_sad: 'Song: Music, Piano, Sad',
+  song_pop_happy: 'Song: Pop Music, Beat, Happy, Passion',
+  song_acoustic_calm: 'Song: Acoustic Guitar, Calm',
+};
+
+// Same setter pattern as voice-library: app.js wires in the shared
+// audioQueue so we can preview a stable sample from the TTS settings.
+let _audioQueue = null;
+export function setTtsAudioQueue(queue) {
+  _audioQueue = queue;
+}
 
 function tuningScrollElement() {
   return els.settingsSheet?.querySelector('.settings-views') || null;
+}
+
+function playStableSampleFromTts(tag, gender) {
+  if (!tag || !gender || !_audioQueue) return;
+  const info = stableSampleInfo(tag, gender);
+  if (!info?.exists) return;
+  const cacheBust = encodeURIComponent(info.generated_at || String(Date.now()));
+  const url = `/api/voice-library/stable/${encodeURIComponent(tag)}/${encodeURIComponent(gender)}/audio.wav?t=${cacheBust}`;
+  _audioQueue.clear();
+  _audioQueue.enqueue({ url, duration_ms: 0, replay: true });
 }
 
 export function applyTtsConfig(tts) {
@@ -119,10 +157,13 @@ function persistVoxcpm2VoiceConfig() {
       const out = {};
       // Persist only the fields we keep across reloads. mode and reference_source
       // are intentionally omitted — they always reset to defaults on hard refresh.
-      if (entry.gender !== undefined) out.gender = entry.gender;
-      if (entry.style !== undefined) out.style = entry.style;
+      if (entry.identity !== undefined) out.identity = entry.identity;
+      if (entry.texture !== undefined) out.texture = entry.texture;
+      if (entry.preset !== undefined) out.preset = entry.preset;
       if (entry.stable_gender !== undefined) out.stable_gender = entry.stable_gender;
       if (entry.trim_seconds !== undefined) out.trim_seconds = entry.trim_seconds;
+      // trim_to_source is intentionally NOT persisted: always restored to
+      // its default (true) on hard refresh.
       if (Object.keys(out).length) stripped[tag] = out;
     }
     localStorage.setItem(VOXCPM2_VOICE_CONFIG_STORAGE_KEY, JSON.stringify(stripped));
@@ -136,14 +177,15 @@ function normalizeVoxcpm2LanguageEntry(entry) {
   // Mode and reference_source are not persisted: always restored from defaults.
   const out = { ...VOXCPM2_DEFAULT_LANGUAGE_CONFIG };
   const allowedGenders = new Set(['female', 'male']);
-  const allowedStyles = new Set(['neutral', 'warm', 'calm', 'clear']);
-  if (allowedGenders.has(entry.gender)) out.gender = entry.gender;
-  if (allowedStyles.has(entry.style)) out.style = entry.style;
+  if (entry.identity && VOXCPM2_IDENTITY_PHRASES[entry.identity]) out.identity = entry.identity;
+  if (entry.texture === '' || VOXCPM2_TEXTURE_PHRASES[entry.texture]) out.texture = entry.texture;
+  if (entry.preset === '' || VOXCPM2_PRESET_PHRASES[entry.preset]) out.preset = entry.preset;
   if (allowedGenders.has(entry.stable_gender)) out.stable_gender = entry.stable_gender;
   const trimRaw = Number(entry.trim_seconds);
   if (Number.isFinite(trimRaw)) {
     out.trim_seconds = Math.min(60, Math.max(1, trimRaw));
   }
+  // trim_to_source intentionally ignored — never restored from storage.
   return out;
 }
 
@@ -200,8 +242,9 @@ export function handleTtsSettingChange(event) {
       if (nextMode === 'description') {
         return {
           mode: 'description',
-          gender: current.gender || 'female',
-          style: current.style || 'neutral',
+          identity: current.identity || 'adult_woman',
+          texture: current.texture || '',
+          preset: current.preset || '',
         };
       }
       return {
@@ -211,59 +254,59 @@ export function handleTtsSettingChange(event) {
         trim_seconds: Number.isFinite(Number(current.trim_seconds))
           ? Number(current.trim_seconds)
           : VOXCPM2_DEFAULT_TRIM_SECONDS,
+        preset: current.preset || '',
       };
     }, previous);
     return;
   }
-  if (kind === 'voxcpm2-gender') {
-    const allowed = new Set(['female', 'male']);
-    const value = allowed.has(input.value) ? input.value : 'female';
-    updateVoxcpm2LanguageConfig(tag, (current) => ({
-      mode: 'description',
-      gender: value,
-      style: current.style || 'neutral',
-    }), previous);
-    return;
-  }
-  if (kind === 'voxcpm2-style') {
-    const allowed = new Set(['neutral', 'warm', 'calm', 'clear']);
-    const value = allowed.has(input.value) ? input.value : 'neutral';
-    updateVoxcpm2LanguageConfig(tag, (current) => ({
-      mode: 'description',
-      gender: current.gender || 'female',
-      style: value,
-    }), previous);
-    return;
-  }
   if (kind === 'voxcpm2-reference-source') {
-    const allowed = new Set(['last_speech', 'stable_generated']);
-    const value = allowed.has(input.value) ? input.value : 'last_speech';
+    // Composite value: "last_speech" | "stable_generated:<gender>".
+    // Collapses the old Reference-audio + Voice-gender dropdowns.
+    const parts = String(input.value || 'last_speech').split(':');
+    const refSource = parts[0] === 'stable_generated' ? 'stable_generated' : 'last_speech';
     updateVoxcpm2LanguageConfig(tag, (current) => {
       const next = {
         mode: 'reference_audio',
-        reference_source: value,
+        reference_source: refSource,
         trim_seconds: Number.isFinite(Number(current.trim_seconds))
           ? Number(current.trim_seconds)
           : VOXCPM2_DEFAULT_TRIM_SECONDS,
+        preset: current.preset || '',
       };
-      if (value === 'stable_generated') {
-        next.stable_gender = current.stable_gender || 'female';
+      if (refSource === 'stable_generated') {
+        next.stable_gender = parts[1] === 'male' ? 'male' : 'female';
       }
       return next;
     }, previous);
     return;
   }
-  if (kind === 'voxcpm2-stable-gender') {
-    const allowed = new Set(['female', 'male']);
-    const value = allowed.has(input.value) ? input.value : 'female';
+  if (kind === 'voxcpm2-identity') {
+    const allowed = new Set(voxcpm2IdentityOptions().map((o) => o.value));
+    const value = allowed.has(input.value) ? input.value : 'adult_woman';
     updateVoxcpm2LanguageConfig(tag, (current) => ({
-      mode: 'reference_audio',
-      reference_source: 'stable_generated',
-      trim_seconds: Number.isFinite(Number(current.trim_seconds))
-        ? Number(current.trim_seconds)
-        : VOXCPM2_DEFAULT_TRIM_SECONDS,
-      stable_gender: value,
+      mode: 'description',
+      identity: value,
+      texture: current.texture || '',
+      preset: current.preset || '',
     }), previous);
+    return;
+  }
+  if (kind === 'voxcpm2-texture') {
+    const allowed = new Set(voxcpm2TextureOptions().map((o) => o.value));
+    const value = allowed.has(input.value) ? input.value : '';
+    updateVoxcpm2LanguageConfig(tag, (current) => ({ ...current, texture: value }), previous);
+    return;
+  }
+  if (kind === 'voxcpm2-style') {
+    // Field is still called `preset` internally; UI exposes it as "Style".
+    const allowed = new Set(voxcpm2PresetOptions().map((o) => o.value));
+    const value = allowed.has(input.value) ? input.value : '';
+    updateVoxcpm2LanguageConfig(tag, (current) => ({ ...current, preset: value }), previous);
+    return;
+  }
+  if (kind === 'voxcpm2-trim-to-source') {
+    const value = Boolean(input.checked);
+    updateVoxcpm2LanguageConfig(tag, (current) => ({ ...current, trim_to_source: value }), previous);
     return;
   }
   if (kind === 'voxcpm2-trim-seconds') {
@@ -314,14 +357,30 @@ export function syncVoxcpm2VoiceConfigToBackend() {
 
 export function handleTtsSettingsClick(event) {
   const button = event.target?.closest?.('[data-tts-action]');
-  if (!button) return;
+  if (!button || button.disabled) return;
   if (button.dataset.ttsAction === 'toggle-prompt-preview') {
     state.ttsPromptInspectOpen = !state.ttsPromptInspectOpen;
     renderTtsSettings({ preserveScroll: true });
   } else if (button.dataset.ttsAction === 'toggle-ultimate-cloning') {
     state.ttsUltimateCloningOpen = !state.ttsUltimateCloningOpen;
     renderTtsSettings({ preserveScroll: true });
+  } else if (button.dataset.ttsAction === 'voxcpm2-reset-language') {
+    const tag = String(button.dataset.ttsLanguage || '').toLowerCase();
+    if (!tag) return;
+    // Brief flash so the tap is clearly registered before the re-render
+    // wipes the button's DOM. The re-render itself removes the class.
+    button.classList.add('is-flashing');
+    setTimeout(() => resetVoxcpm2LanguageConfig(tag), 140);
+  } else if (button.dataset.ttsAction === 'play-stable-sample') {
+    const tag = String(button.dataset.ttsTag || '').toLowerCase();
+    const gender = String(button.dataset.ttsGender || '').toLowerCase();
+    playStableSampleFromTts(tag, gender);
   }
+}
+
+function resetVoxcpm2LanguageConfig(tag) {
+  const previous = cloneSettings(state.ttsSettings);
+  updateVoxcpm2LanguageConfig(tag, () => ({ ...VOXCPM2_DEFAULT_LANGUAGE_CONFIG }), previous);
 }
 
 function updateUltimateCloningSource(source, patch, previous) {
@@ -469,55 +528,42 @@ function voxcpm2TtsRows(backend) {
   }));
   if (config.mode === 'description') {
     rows.push(createTtsSelectRow({
-      label: 'Voice gender',
-      value: config.gender || 'female',
-      options: voxcpm2GenderOptions(),
+      label: 'Identity',
+      value: config.identity || 'adult_woman',
+      options: voxcpm2IdentityOptions(),
       disabled,
-      kind: 'voxcpm2-gender',
+      kind: 'voxcpm2-identity',
       language: tag,
-      emptyLabel: 'Female',
+      emptyLabel: 'Adult woman',
     }));
     rows.push(createTtsSelectRow({
-      label: 'Speaking style',
-      value: config.style || 'neutral',
-      options: voxcpm2StyleOptions(),
+      label: 'Texture',
+      value: config.texture || '',
+      options: voxcpm2TextureOptions(),
+      disabled,
+      kind: 'voxcpm2-texture',
+      language: tag,
+      emptyLabel: '(none)',
+    }));
+    rows.push(createTtsSelectRow({
+      label: 'Style',
+      value: config.preset || '',
+      options: voxcpm2PresetOptions(),
       disabled,
       kind: 'voxcpm2-style',
       language: tag,
-      emptyLabel: 'Neutral',
+      emptyLabel: '(none)',
     }));
     rows.push(createDescriptionModeWarningRow());
   } else {
     rows.push(createTtsSelectRow({
       label: 'Reference audio',
-      value: config.reference_source || 'last_speech',
-      options: voxcpm2ReferenceSourceOptions(),
+      value: currentReferenceAudioValue(config),
+      options: voxcpm2ReferenceAudioOptions(),
       disabled,
       kind: 'voxcpm2-reference-source',
       language: tag,
       emptyLabel: 'Last speech fragment',
-    }));
-    if ((config.reference_source || 'last_speech') === 'stable_generated') {
-      rows.push(createTtsSelectRow({
-        label: 'Voice gender',
-        value: config.stable_gender || 'female',
-        options: voxcpm2GenderOptions(),
-        disabled,
-        kind: 'voxcpm2-stable-gender',
-        language: tag,
-        emptyLabel: 'Female',
-      }));
-    }
-    rows.push(createTtsNumberRow({
-      label: 'Trim audio',
-      value: Number.isFinite(Number(config.trim_seconds)) ? Number(config.trim_seconds) : VOXCPM2_DEFAULT_TRIM_SECONDS,
-      min: 1,
-      max: 60,
-      step: 1,
-      unit: 's',
-      disabled,
-      kind: 'voxcpm2-trim-seconds',
-      language: tag,
     }));
     if ((config.reference_source || 'last_speech') === 'stable_generated') {
       rows.push(createStableSampleStatusRow({
@@ -525,8 +571,49 @@ function voxcpm2TtsRows(backend) {
         gender: config.stable_gender || 'female',
       }));
     }
+    rows.push(createTtsNumberRow({
+      label: 'Trim audio (s)',
+      value: Number.isFinite(Number(config.trim_seconds)) ? Number(config.trim_seconds) : VOXCPM2_DEFAULT_TRIM_SECONDS,
+      min: 1,
+      max: 60,
+      step: 1,
+      disabled,
+      kind: 'voxcpm2-trim-seconds',
+      language: tag,
+    }));
+    rows.push(createTtsSwitchRow({
+      label: 'Trim to source bubble',
+      checked: Boolean(config.trim_to_source),
+      disabled,
+      kind: 'voxcpm2-trim-to-source',
+      language: tag,
+    }));
+    // With ultimate cloning on, the pool drops (control), so Texture
+    // and Style have no effect. Hide them to avoid the confusion of
+    // toggles that do nothing.
+    if (!referenceModeUltimateCloningActive(config)) {
+      rows.push(createTtsSelectRow({
+        label: 'Texture',
+        value: config.texture || '',
+        options: voxcpm2TextureOptions(),
+        disabled,
+        kind: 'voxcpm2-texture',
+        language: tag,
+        emptyLabel: '(none)',
+      }));
+      rows.push(createTtsSelectRow({
+        label: 'Style',
+        value: config.preset || '',
+        options: voxcpm2PresetOptions(),
+        disabled,
+        kind: 'voxcpm2-style',
+        language: tag,
+        emptyLabel: '(none)',
+      }));
+    }
   }
   rows.push(createTtsPromptInspectRows(active, tag, config));
+  rows.push(createResetVoxcpm2LanguageRow({ disabled, tag }));
   rows.push(createUltimateInlineToggleRow());
   if (state.ttsUltimateCloningOpen) {
     for (const row of ultimateCloningRows()) rows.push(row);
@@ -566,7 +653,7 @@ function createUltimateInlineToggleRow() {
   button.setAttribute('aria-expanded', open ? 'true' : 'false');
   const title = document.createElement('span');
   title.className = 'tts-subgroup-title';
-  title.textContent = 'Ultimate cloning';
+  title.textContent = 'Ultimate cloning (global)';
   const icon = document.createElement('span');
   icon.className = 'tts-subgroup-icon';
   icon.setAttribute('aria-hidden', 'true');
@@ -626,6 +713,12 @@ function createUltimateModeRow({ label, value, source }) {
 }
 
 function createDescriptionModeWarningRow() {
+  return _createTtsWarningRow(
+    'Voice description is experimental. Output can differ noticeably from the prompt. Fine for tinkering, not reliable for serious use.',
+  );
+}
+
+function _createTtsWarningRow(message) {
   const row = document.createElement('div');
   row.className = 'tts-warning-row';
   row.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true">'
@@ -634,9 +727,27 @@ function createDescriptionModeWarningRow() {
     + '<path d="M12 17h.01"/>'
     + '</svg>';
   const text = document.createElement('span');
-  text.textContent = 'Voice description is experimental. Output can differ noticeably from the prompt. Fine for tinkering, not reliable for serious use.';
+  text.textContent = message;
   row.append(text);
   return row;
+}
+
+function referenceModeUltimateCloningActive(config) {
+  if (config.mode !== 'reference_audio') return false;
+  const source = config.reference_source || 'last_speech';
+  const entry = state.ttsSettings.voxcpm2?.ultimate_cloning?.[source];
+  return Boolean(entry?.enabled);
+}
+
+function createResetVoxcpm2LanguageRow({ disabled, tag }) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'link-row audio-reset-button';
+  button.dataset.ttsAction = 'voxcpm2-reset-language';
+  button.dataset.ttsLanguage = tag;
+  button.textContent = 'Reset to defaults';
+  button.disabled = disabled;
+  return button;
 }
 
 function createStableSampleStatusRow({ tag, gender }) {
@@ -646,6 +757,8 @@ function createStableSampleStatusRow({ tag, gender }) {
   labelEl.className = 'tuning-label';
   labelEl.textContent = 'Stable sample';
   const info = stableSampleInfo(tag, gender);
+  const valueWrap = document.createElement('span');
+  valueWrap.className = 'tuning-value-wrap';
   const valueEl = document.createElement('span');
   valueEl.className = 'tts-stable-status';
   if (info.exists) {
@@ -655,8 +768,29 @@ function createStableSampleStatusRow({ tag, gender }) {
   } else {
     valueEl.textContent = 'Using English sample';
   }
-  row.append(labelEl, valueEl);
+  valueWrap.append(valueEl);
+  if (info.exists) {
+    valueWrap.append(_createStableSamplePlayButton(tag, gender));
+  }
+  row.append(labelEl, valueWrap);
   return row;
+}
+
+function _createStableSamplePlayButton(tag, gender) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'tts-play-button';
+  button.dataset.ttsAction = 'play-stable-sample';
+  button.dataset.ttsTag = tag;
+  button.dataset.ttsGender = gender;
+  button.setAttribute('aria-label', 'Play stable sample');
+  button.title = 'Play stable sample';
+  button.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true">'
+    + '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>'
+    + '<path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>'
+    + '<path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>'
+    + '</svg>';
+  return button;
 }
 
 function formatStableSampleStatus(info) {
@@ -737,13 +871,13 @@ function createTtsPromptInspectRows(active, tag, config) {
   row.className = 'tuning-row tts-action-row';
   const label = document.createElement('span');
   label.className = 'tuning-label';
-  label.textContent = 'Prompt';
+  label.textContent = 'Control instruction';
   const button = document.createElement('button');
   button.className = 'tts-inspect-button';
   button.type = 'button';
   button.dataset.ttsAction = 'toggle-prompt-preview';
   button.disabled = !active;
-  button.textContent = state.ttsPromptInspectOpen ? 'Hide prompt' : 'Inspect prompt';
+  button.textContent = state.ttsPromptInspectOpen ? 'Hide' : 'Inspect';
   const valueWrap = document.createElement('span');
   valueWrap.className = 'tuning-value-wrap';
   valueWrap.append(button);
@@ -759,45 +893,29 @@ function createVoxcpm2PromptPreview(tag, config) {
   const languageName = languageNameForBcp47(tag) || tag;
   const preview = document.createElement('div');
   preview.className = 'tts-prompt-preview';
-  const textLabel = document.createElement('span');
-  textLabel.className = 'tts-prompt-preview-label';
-  textLabel.textContent = `Text instruction for ${languageName}`;
   const textValue = document.createElement('code');
   textValue.textContent = voxcpm2InstructionsPreview(languageName, config);
-  const sampleLabel = document.createElement('span');
-  sampleLabel.className = 'tts-prompt-preview-label';
-  sampleLabel.textContent = 'Reference audio';
-  const sampleValue = document.createElement('code');
-  if (config.mode === 'reference_audio') {
-    const trim = Number.isFinite(Number(config.trim_seconds)) ? Number(config.trim_seconds) : VOXCPM2_DEFAULT_TRIM_SECONDS;
-    sampleValue.textContent = `Last speech fragment from this session, trimmed to ${trim}s.`;
-  } else {
-    sampleValue.textContent = 'None';
-  }
-  preview.append(textLabel, textValue, sampleLabel, sampleValue);
+  preview.append(textValue);
   return preview;
 }
 
 export function voxcpm2InstructionsPreview(languageName, config) {
+  const presetPhrase = VOXCPM2_PRESET_PHRASES[config.preset];
+  const texturePhrase = VOXCPM2_TEXTURE_PHRASES[config.texture];
   if (config.mode === 'reference_audio') {
-    return [
-      `Speak in ${languageName}.`,
-      `Pronounce numbers, abbreviations, and short fragments in ${languageName}.`,
-      'Use the reference audio as the voice reference.',
-      `Do not infer the output language from the reference audio; the output language is ${languageName}.`,
-      'Do not copy or continue the content of the reference audio.',
-      'Speak clearly and generate only the requested text.',
-    ].join(' ');
+    if (presetPhrase) return presetPhrase;
+    if (texturePhrase) return `${texturePhrase} tone`;
+    return '(none)';
   }
-  const gender = VOXCPM2_GENDER_CLAUSES[config.gender] || VOXCPM2_GENDER_CLAUSES.female;
-  const style = VOXCPM2_STYLE_CLAUSES[config.style] || VOXCPM2_STYLE_CLAUSES.neutral;
-  return [
-    `Speak in ${languageName}.`,
-    `Pronounce numbers, abbreviations, and short fragments in ${languageName}.`,
-    gender,
-    style,
-    'Speak clearly and generate only the requested text.',
-  ].join(' ');
+  const identity = VOXCPM2_IDENTITY_PHRASES[config.identity] || VOXCPM2_IDENTITY_PHRASES.adult_woman;
+  if (presetPhrase) {
+    // Song-mode: switch "voice" to "vocals" to match VoxCPM's song
+    // vocabulary; texture is intentionally dropped (see backend).
+    return `${presetPhrase}, ${identity.replace('voice', 'vocals')}`;
+  }
+  const parts = [identity];
+  if (texturePhrase) parts.push(`${texturePhrase} tone`);
+  return parts.join(', ');
 }
 
 function createTtsSelectRow({ label, value, options, disabled, kind, language, emptyLabel }) {
@@ -822,6 +940,35 @@ function createTtsSelectRow({ label, value, options, disabled, kind, language, e
   const valueWrap = document.createElement('span');
   valueWrap.className = 'tuning-value-wrap';
   valueWrap.append(select);
+  row.append(labelEl, valueWrap);
+  return row;
+}
+
+function createTtsSwitchRow({ label, checked, disabled, kind, language }) {
+  const row = document.createElement('label');
+  row.className = 'tuning-row';
+  const labelEl = document.createElement('span');
+  labelEl.className = 'tuning-label';
+  labelEl.textContent = label;
+  const switchEl = document.createElement('span');
+  switchEl.className = 'switch';
+  const input = document.createElement('input');
+  input.type = 'checkbox';
+  input.setAttribute('role', 'switch');
+  input.dataset.ttsKind = kind;
+  if (language) input.dataset.ttsLanguage = language;
+  input.checked = Boolean(checked);
+  input.disabled = Boolean(disabled);
+  const track = document.createElement('span');
+  track.className = 'switch-track';
+  track.setAttribute('aria-hidden', 'true');
+  const thumb = document.createElement('span');
+  thumb.className = 'switch-thumb';
+  thumb.setAttribute('aria-hidden', 'true');
+  switchEl.append(input, track, thumb);
+  const valueWrap = document.createElement('span');
+  valueWrap.className = 'tuning-value-wrap';
+  valueWrap.append(switchEl);
   row.append(labelEl, valueWrap);
   return row;
 }
@@ -866,6 +1013,9 @@ function voxcpm2LanguageConfig(tag) {
       trim_seconds: Number.isFinite(Number(stored.trim_seconds))
         ? Number(stored.trim_seconds)
         : VOXCPM2_DEFAULT_TRIM_SECONDS,
+      trim_to_source: stored.trim_to_source !== false,
+      texture: stored.texture || '',
+      preset: stored.preset || '',
     };
     if (cfg.reference_source === 'stable_generated') {
       cfg.stable_gender = stored.stable_gender || 'female';
@@ -874,8 +1024,9 @@ function voxcpm2LanguageConfig(tag) {
   }
   return {
     mode: 'description',
-    gender: stored.gender || 'female',
-    style: stored.style || 'neutral',
+    identity: stored.identity || 'adult_woman',
+    texture: stored.texture || '',
+    preset: stored.preset || '',
   };
 }
 
@@ -887,12 +1038,33 @@ export function voxcpm2GenderOptions() {
   return state.ttsOptions.voxcpm2_genders || DEFAULT_TTS_OPTIONS.voxcpm2_genders;
 }
 
-function voxcpm2StyleOptions() {
-  return state.ttsOptions.voxcpm2_styles || DEFAULT_TTS_OPTIONS.voxcpm2_styles;
+function voxcpm2IdentityOptions() {
+  return state.ttsOptions.voxcpm2_identities || DEFAULT_TTS_OPTIONS.voxcpm2_identities;
 }
 
-function voxcpm2ReferenceSourceOptions() {
-  return state.ttsOptions.voxcpm2_reference_sources || DEFAULT_TTS_OPTIONS.voxcpm2_reference_sources;
+function voxcpm2TextureOptions() {
+  return state.ttsOptions.voxcpm2_textures || DEFAULT_TTS_OPTIONS.voxcpm2_textures;
+}
+
+function voxcpm2PresetOptions() {
+  return state.ttsOptions.voxcpm2_presets || DEFAULT_TTS_OPTIONS.voxcpm2_presets;
+}
+
+function voxcpm2ReferenceAudioOptions() {
+  return [
+    { value: 'last_speech', label: 'Last speech fragment' },
+    { value: 'stable_generated:female', label: 'Stable generated · female' },
+    { value: 'stable_generated:male', label: 'Stable generated · male' },
+  ];
+}
+
+function currentReferenceAudioValue(config) {
+  const source = config.reference_source || 'last_speech';
+  if (source === 'stable_generated') {
+    const gender = config.stable_gender === 'male' ? 'male' : 'female';
+    return `stable_generated:${gender}`;
+  }
+  return 'last_speech';
 }
 
 function currentVoxcpm2PickerTag() {

@@ -20,7 +20,12 @@ export function setSettingsPage(page) {
   renderSettingsPage();
   if (state.settingsPage === 'dev-tools') renderDevToolsSettings();
   if (state.settingsPage === 'tuning') renderTuningSettings();
-  if (state.settingsPage === 'audio') renderTtsSettings();
+  if (state.settingsPage === 'audio') {
+    // Reset picker so the dropdown auto-selects the current target
+    // language each time you enter — see currentVoxcpm2PickerTag.
+    state.ttsVoxcpm2SelectedTag = '';
+    renderTtsSettings();
+  }
   if (state.settingsPage === 'voice-library') renderVoiceLibraryPage();
 }
 
@@ -41,7 +46,7 @@ export function renderSettingsPage() {
   if (page === 'microphone') {
     els.settingsSheetTitle.textContent = 'Microphone';
   } else if (page === 'audio') {
-    els.settingsSheetTitle.textContent = 'TTS options';
+    els.settingsSheetTitle.textContent = 'Text-to-Speech options';
   } else if (page === 'history') {
     els.settingsSheetTitle.textContent = 'History';
   } else if (page === 'dev-tools') {
