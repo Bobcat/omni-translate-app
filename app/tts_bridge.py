@@ -500,11 +500,14 @@ def _voxcpm2_description_instructions(target_lang: str, config: dict[str, Any]) 
 def _voxcpm2_reference_instructions(target_lang: str, config: dict[str, Any] | None = None) -> str:
     # Reference-audio mode: identity comes from the reference WAV, so we
     # only optionally add texture. Empty -> no instructions. Preset, when
-    # set, overrides everything.
+    # set, overrides everything. For Song-style presets we hint that the
+    # vocals come from the reference audio (the actual voice carrier).
     del target_lang
     cfg = config or {}
     preset_phrase = VOXCPM2_PRESET_PHRASES.get(str(cfg.get("preset") or ""))
     if preset_phrase:
+        if preset_phrase.startswith("Song:"):
+            return f"{preset_phrase}, vocals from reference audio"
         return preset_phrase
     texture_phrase = VOXCPM2_TEXTURE_PHRASES.get(str(cfg.get("texture") or ""))
     if texture_phrase:
@@ -781,7 +784,7 @@ def _current_tts_settings() -> dict[str, Any]:
             "languages": {},
             "ultimate_cloning": {
                 "stable_generated": {
-                    "enabled": get_bool("tts.voxcpm2.ultimate_cloning.stable_generated.enabled", True),
+                    "enabled": get_bool("tts.voxcpm2.ultimate_cloning.stable_generated.enabled", False),
                     "also_use_as_reference": get_bool(
                         "tts.voxcpm2.ultimate_cloning.stable_generated.also_use_as_reference", True
                     ),
@@ -984,9 +987,7 @@ def _normalize_voxcpm2_language_entry(
             trim = VOXCPM2_DEFAULT_TRIM_SECONDS
         result["reference_source"] = reference_source
         result["trim_seconds"] = trim
-        # Default ON: client-side default. Backend honours an explicit
-        # False from the client when the user toggled it off.
-        result["trim_to_source"] = bool(entry.get("trim_to_source", True))
+        result["trim_to_source"] = bool(entry.get("trim_to_source"))
         if reference_source == "stable_generated":
             stable_gender = str(entry.get("stable_gender") or "female").strip().lower()
             if stable_gender not in _VOXCPM2_GENDER_VALUES:

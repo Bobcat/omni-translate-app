@@ -26,7 +26,7 @@ export const DEFAULT_AUDIO_SETTINGS = {
   // Auto-off the mic after N seconds without backend-detected speech.
   // 0 disables the silence-trigger. Choices in the UI:
   // 3 / 5 / 10 / 15 / 30 / 60 / 0(off).
-  autoOffSilenceSeconds: 10,
+  autoOffSilenceSeconds: 5,
   // Auto-off the mic right after a bubble closes on a heuristic
   // (sentence boundary or VAD silence). Not on the hard duration cap.
   autoOffAfterBubble: false,
@@ -92,7 +92,7 @@ export const DEFAULT_TTS_SETTINGS = {
   voxcpm2: {
     languages: {},
     ultimate_cloning: {
-      stable_generated: { enabled: true, also_use_as_reference: true },
+      stable_generated: { enabled: false, also_use_as_reference: true },
       last_speech: { enabled: false, also_use_as_reference: true },
     },
   },

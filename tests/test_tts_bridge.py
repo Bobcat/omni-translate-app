@@ -261,7 +261,7 @@ class TTSBridgeTests(unittest.TestCase):
                 "preset": "",
                 "reference_source": "last_speech",
                 "trim_seconds": 3.0,
-                "trim_to_source": True,
+                "trim_to_source": False,
             },
         )
         self.assertTrue(tts_uses_asr_reference_wav("Dutch"))
@@ -519,7 +519,7 @@ class TTSBridgeTests(unittest.TestCase):
                 "preset": "",
                 "reference_source": "last_speech",
                 "trim_seconds": 5.0,
-                "trim_to_source": True,
+                "trim_to_source": False,
             },
         )
 

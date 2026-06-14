@@ -612,7 +612,11 @@ function voxcpm2TtsRows(backend) {
       }));
     }
   }
-  rows.push(createTtsPromptInspectRows(active, tag, config));
+  // Control instruction is moot when UC is on in reference mode (pool
+  // drops the wrapper) — hide the whole row to match Texture/Style.
+  if (!referenceModeUltimateCloningActive(config)) {
+    rows.push(createTtsPromptInspectRows(active, tag, config));
+  }
   rows.push(createResetVoxcpm2LanguageRow({ disabled, tag }));
   rows.push(createUltimateInlineToggleRow());
   if (state.ttsUltimateCloningOpen) {
@@ -903,7 +907,10 @@ export function voxcpm2InstructionsPreview(languageName, config) {
   const presetPhrase = VOXCPM2_PRESET_PHRASES[config.preset];
   const texturePhrase = VOXCPM2_TEXTURE_PHRASES[config.texture];
   if (config.mode === 'reference_audio') {
-    if (presetPhrase) return presetPhrase;
+    if (presetPhrase) {
+      if (presetPhrase.startsWith('Song:')) return `${presetPhrase}, vocals from reference audio`;
+      return presetPhrase;
+    }
     if (texturePhrase) return `${texturePhrase} tone`;
     return '(none)';
   }
@@ -1013,7 +1020,7 @@ function voxcpm2LanguageConfig(tag) {
       trim_seconds: Number.isFinite(Number(stored.trim_seconds))
         ? Number(stored.trim_seconds)
         : VOXCPM2_DEFAULT_TRIM_SECONDS,
-      trim_to_source: stored.trim_to_source !== false,
+      trim_to_source: Boolean(stored.trim_to_source),
       texture: stored.texture || '',
       preset: stored.preset || '',
     };
