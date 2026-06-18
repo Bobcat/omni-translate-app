@@ -5,7 +5,7 @@
 // the brief gap between Start and FX-inject).
 
 import { state } from '../state.js';
-import { SESSION_STATES, MIC_STATES } from '../shared/constants.js';
+import { APP_MODES, MIC_STATES } from '../shared/constants.js';
 import { startListening } from './lifecycle.js';
 import { renderLifecycle } from '../ui/render-status.js';
 
@@ -16,14 +16,14 @@ const CHUNK_MS = 50;
 let activeTimer = null;
 
 export async function handleSetupFixtureClick() {
-  if (state.sessionState !== SESSION_STATES.SETUP) return;
+  if (state.appMode !== APP_MODES.SETUP) return;
   if (state.fixtureBusy) return;
   state.fixtureBusy = true;
   renderLifecycle();
   try {
     const pcm16 = await loadFixturePcm16();
     await startListening({ withMic: false });
-    if (state.sessionState !== SESSION_STATES.RUNNING) return;
+    if (state.appMode !== APP_MODES.LIVE_RECORDING) return;
     if (!state.socket?.isOpen()) return;
     await streamPcm16(pcm16);
   } catch (error) {

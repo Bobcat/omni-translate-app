@@ -24,15 +24,24 @@ export const api = {
     return fetchJson('/api/config');
   },
 
-  updateTtsSettings(settings) {
-    return fetchJson('/api/tts-settings', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ settings: settings || {} }),
-    });
+  async translateImage(file, { source, target }) {
+    const form = new FormData();
+    form.append('image', file);
+    form.append('source_language', String(source || ''));
+    form.append('target_language', String(target || ''));
+    const response = await fetch('/api/image-translation', { method: 'POST', body: form });
+    return imageTranslationPayload(response);
   },
 
-  createSession({ sideALanguage, sideBLanguage, liveSettings }) {
+  async retranslateImage(requestId, { target }) {
+    const form = new FormData();
+    form.append('target_language', String(target || ''));
+    const safeRequestId = encodeURIComponent(String(requestId || ''));
+    const response = await fetch(`/api/image-translation/${safeRequestId}/retranslate`, { method: 'POST', body: form });
+    return imageTranslationPayload(response);
+  },
+
+  createSession({ sideALanguage, sideBLanguage, liveSettings, ttsSettings }) {
     return fetchJson('/api/sessions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -40,6 +49,7 @@ export const api = {
         side_a_language: sideALanguage,
         side_b_language: sideBLanguage,
         live_settings: liveSettings || undefined,
+        tts_settings: ttsSettings || undefined,
       }),
     });
   },
@@ -85,6 +95,25 @@ export const api = {
     };
   },
 };
+
+async function imageTranslationPayload(response) {
+  if (!response.ok) {
+    let detail = '';
+    try {
+      const payload = await response.json();
+      detail = typeof payload.detail === 'string' ? payload.detail : JSON.stringify(payload.detail || payload);
+    } catch {
+      detail = await response.text();
+    }
+    throw new Error(detail || `HTTP ${response.status}`);
+  }
+  const requestId = response.headers.get('X-Image-Translation-Request-Id') || '';
+  if (!requestId) throw new Error('image translation request id missing');
+  return {
+    blob: await response.blob(),
+    requestId,
+  };
+}
 
 function filenameFromContentDisposition(value) {
   const match = String(value || '').match(/filename="?([^"]+)"?/i);
@@ -157,6 +186,12 @@ export class SessionSocket {
   updateLiveSettings(settings) {
     if (!this.isOpen()) return false;
     this.ws.send(JSON.stringify({ type: 'update_live_settings', settings: settings || {} }));
+    return true;
+  }
+
+  updateTtsSettings(settings) {
+    if (!this.isOpen()) return false;
+    this.ws.send(JSON.stringify({ type: 'update_tts_settings', settings: settings || {} }));
     return true;
   }
 

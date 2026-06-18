@@ -10,6 +10,11 @@
     "base_url": "http://127.0.0.1:8020",
     "timeout_s": 300
   },
+  "image_translation": {
+    "base_url": "http://127.0.0.1:8030",
+    "request_timeout_s": 120,
+    "poll_interval_s": 0.5
+  },
   "live": {
     "session_ttl_s": 900,
     "audio": {
@@ -93,6 +98,18 @@
   },
   "tts": {
     "enabled": false,
-    "backend": "kokoro"
+    "backend": "kokoro",
+    "voxcpm2": {
+      "ultimate_cloning": {
+        "stable_generated": {
+          "enabled": false,
+          "also_use_as_reference": true
+        },
+        "last_speech": {
+          "enabled": false,
+          "also_use_as_reference": true
+        }
+      }
+    }
   }
 }

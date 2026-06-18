@@ -10,9 +10,10 @@ export const TURN_STATES = {
   OPEN_SPOKEN_IDLE: 'open_spoken_idle',
 };
 
-export const SESSION_STATES = {
+export const APP_MODES = {
   SETUP: 'setup',
-  RUNNING: 'running',
+  LIVE_RECORDING: 'live_recording',
+  IMAGE_TRANSLATION: 'image_translation',
 };
 
 export const MIC_STATES = {

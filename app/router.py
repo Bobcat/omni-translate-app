@@ -3,13 +3,17 @@ from __future__ import annotations
 from typing import Any
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
 from app.asr_pc_export import live_pc_events_to_text
 from app.asr_pc_export import pc_export_filename
 from app.config import get_int, get_str, rooted_path
+from app.image_translation_bridge import ImageTranslationError
+from app.image_translation_bridge import REQUEST_ID_HEADER
+from app.image_translation_bridge import retranslate_image
+from app.image_translation_bridge import translate_image
 from app.live_settings import default_live_settings
 from app.live_settings import merge_live_settings
 from app.live_settings import normalize_live_settings_delta
@@ -17,7 +21,7 @@ from app.protocol import PROTOCOL_VERSION
 from app.sessions import SESSIONS
 from app.tts_bridge import artifact_path
 from app.tts_bridge import tts_settings_payload
-from app.tts_bridge import update_tts_settings
+from app.tts_bridge import tts_settings_snapshot
 from app.voice_library import discard_pending_stable_sample
 from app.voice_library import generate_stable_sample
 from app.voice_library import keep_pending_stable_sample
@@ -31,10 +35,7 @@ class CreateSessionRequest(BaseModel):
     side_a_language: str | None = None
     side_b_language: str | None = None
     live_settings: dict[str, Any] | None = None
-
-
-class UpdateTTSSettingsRequest(BaseModel):
-    settings: dict[str, Any]
+    tts_settings: dict[str, Any] | None = None
 
 
 class GenerateStableVoiceSampleRequest(BaseModel):
@@ -69,12 +70,43 @@ async def config() -> dict[str, Any]:
     }
 
 
-@api_router.post("/tts-settings")
-async def set_tts_settings(payload: UpdateTTSSettingsRequest) -> dict[str, Any]:
-    settings, errors = update_tts_settings(payload.settings)
-    if errors:
-        raise HTTPException(status_code=422, detail={"tts": errors})
-    return {"tts": settings}
+# Sync `def` on purpose: a translation takes seconds, so FastAPI runs this in a
+# threadpool and the bridge's blocking poll never stalls the event loop.
+@api_router.post("/image-translation")
+def post_image_translation(
+    image: UploadFile = File(...),
+    source_language: str = Form(...),
+    target_language: str = Form(...),
+) -> Response:
+    content = image.file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="empty image upload")
+    try:
+        data, media_type, request_id = translate_image(
+            image_bytes=content,
+            filename=image.filename or "image",
+            content_type=image.content_type or "",
+            source_language=source_language,
+            target_language=target_language,
+        )
+    except ImageTranslationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc))
+    return Response(content=data, media_type=media_type, headers={REQUEST_ID_HEADER: request_id})
+
+
+@api_router.post("/image-translation/{source_request_id}/retranslate")
+def post_image_retranslation(
+    source_request_id: str,
+    target_language: str = Form(...),
+) -> Response:
+    try:
+        data, media_type, request_id = retranslate_image(
+            source_request_id=source_request_id,
+            target_language=target_language,
+        )
+    except ImageTranslationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc))
+    return Response(content=data, media_type=media_type, headers={REQUEST_ID_HEADER: request_id})
 
 
 @api_router.post("/voice-library/stable")
@@ -135,10 +167,14 @@ async def create_session(request: Request, payload: CreateSessionRequest) -> dic
         if errors:
             raise HTTPException(status_code=422, detail={"live_settings": errors})
         live_settings = merge_live_settings(live_settings, delta)
+    tts_settings, tts_errors = tts_settings_snapshot(payload.tts_settings)
+    if tts_errors:
+        raise HTTPException(status_code=422, detail={"tts_settings": tts_errors})
     session = SESSIONS.create_session(
         side_a_language=side_a_language,
         side_b_language=side_b_language,
         live_settings=live_settings,
+        tts_settings=tts_settings,
     )
     session_id = str(session["session_id"])
     ws_path = rooted_path(f"/ws/sessions/{session_id}")

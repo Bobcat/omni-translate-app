@@ -30,6 +30,7 @@ class ConversationSession:
     closed: bool = False
     close_reason: str = ""
     live_settings: dict[str, Any] = field(default_factory=default_live_settings)
+    tts_settings: dict[str, Any] = field(default_factory=dict)
     pc_events: list[dict[str, Any]] = field(default_factory=list)
     pc_export_path: str = ""
 
@@ -45,6 +46,7 @@ class ConversationSessionManager:
         side_a_language: str,
         side_b_language: str,
         live_settings: dict[str, Any] | None = None,
+        tts_settings: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         now = time.time()
         ttl_s = get_int("live.session_ttl_s", 900, min_value=60)
@@ -56,6 +58,7 @@ class ConversationSessionManager:
             side_a_language=str(side_a_language or "Dutch"),
             side_b_language=str(side_b_language or "English"),
             live_settings=dict(live_settings or default_live_settings()),
+            tts_settings=dict(tts_settings or {}),
         )
         with self._lock:
             self._cleanup_locked(now)
@@ -143,6 +146,7 @@ class ConversationSessionManager:
             "side_a_language": sess.side_a_language,
             "side_b_language": sess.side_b_language,
             "live_settings": dict(sess.live_settings or {}),
+            "tts_settings": dict(sess.tts_settings or {}),
             "pc_events_count": len(sess.pc_events),
             "pc_export_path": sess.pc_export_path,
         }

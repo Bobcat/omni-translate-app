@@ -9,7 +9,7 @@ import { els } from '../els.js';
 import { codeForLanguage } from '../domain/languages.js';
 import {
   TURN_STATES,
-  SESSION_STATES,
+  APP_MODES,
 } from '../shared/constants.js';
 import { currentLane } from '../domain/lanes.js';
 import { visibleText } from '../domain/turns.js';
@@ -61,7 +61,7 @@ function triggerReplayFromButton(button) {
   const text = String(button.dataset.replayText || '').trim();
   const laneId = String(button.dataset.replayLane || '').trim();
   if (!text || !laneId) return;
-  if (state.sessionState !== SESSION_STATES.RUNNING) return;
+  if (state.appMode !== APP_MODES.LIVE_RECORDING) return;
   if (!state.ttsSettings.enabled) return;
   state.socket?.replayTts({ laneId, text });
 }
@@ -69,7 +69,7 @@ function triggerReplayFromButton(button) {
 function triggerSpeakPartFromButton(button) {
   const partId = String(button.dataset.partId || '').trim();
   if (!partId) return;
-  if (state.sessionState !== SESSION_STATES.RUNNING) return;
+  if (state.appMode !== APP_MODES.LIVE_RECORDING) return;
   if (!state.ttsSettings.enabled) return;
   state.socket?.speakPart(partId);
 }

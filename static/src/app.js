@@ -11,7 +11,6 @@ import { audioQueue } from './session/audio-queue.js';
 import {
   applyTtsConfig,
   mergeStoredTtsConfigIntoState,
-  syncVoxcpm2VoiceConfigToBackend,
   handleTtsBackendChange,
   handleTtsSettingChange,
   handleTtsSettingsClick,
@@ -78,6 +77,12 @@ import {
   handlePopstateBack,
 } from './session/lifecycle.js';
 import {
+  handleImageFileChange,
+  setImageDisplayMode,
+  finishImageTranslation,
+  renderImageTranslation,
+} from './image/lifecycle.js';
+import {
   speakNow,
   translateNow,
   swapDirection,
@@ -105,9 +110,12 @@ async function init() {
   applyTtsConfig(config.tts || {});
   mergeStoredTtsConfigIntoState();
   applyVoiceLibraryStatus(config.voice_library?.stable || {});
-  syncVoxcpm2VoiceConfigToBackend();
 
   els.startButton.addEventListener('click', handleStartButton);
+  els.imageFileInput.addEventListener('change', handleImageFileChange);
+  els.cameraFileInput.addEventListener('change', handleImageFileChange);
+  els.imageOriginalButton.addEventListener('click', () => setImageDisplayMode('original'));
+  els.imageTranslatedButton.addEventListener('click', () => setImageDisplayMode('translated'));
   els.micToggleButton.addEventListener('click', handleMicToggle);
   els.pcExportButton.addEventListener('click', exportPcTranscript);
   els.turnModeButton?.addEventListener('click', () => setViewMode('turn'));
@@ -118,12 +126,15 @@ async function init() {
   initLanguageSheetSearch();
   window.visualViewport?.addEventListener('resize', onLanguageSheetViewportResize);
   setLanguagePickHandler(setVisibleLanguage);
-  els.setupSwapButton.addEventListener('click', swapSetupLanguages);
+  els.languageDirectionButton.addEventListener('click', swapSetupLanguages);
   els.translateNowButton.addEventListener('click', translateNow);
   els.speakNowButton.addEventListener('click', speakNow);
   els.swapButton.addEventListener('click', swapDirection);
   els.settingsButton.addEventListener('click', openSettingsSheet);
-  els.titlebarBackButton.addEventListener('click', finishSession);
+  els.titlebarBackButton.addEventListener('click', () => {
+    if (finishImageTranslation()) return;
+    finishSession();
+  });
   els.settingsBackButton.addEventListener('click', handleSettingsBack);
   els.settingsMicrophoneNav.addEventListener('click', () => navigateSettingsPage('microphone'));
   els.settingsAudioNav.addEventListener('click', () => navigateSettingsPage('audio'));
@@ -167,7 +178,7 @@ async function init() {
     onClose: closeSettingsSheet,
     isAllowed: () => state.settingsPage === 'home',
   });
-  if (history.state?.view === 'running') {
+  if (history.state?.view === 'live_recording' || history.state?.view === 'image_translation') {
     history.replaceState({}, '');
   }
 
@@ -179,6 +190,7 @@ async function init() {
   renderTuningSettings();
   renderTtsSettings();
   renderHistorySettings();
+  renderImageTranslation();
   updateActionButtons();
   renderLifecycle();
   setStatus('idle');

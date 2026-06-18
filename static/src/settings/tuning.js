@@ -4,7 +4,7 @@
 
 import { state } from '../state.js';
 import { els } from '../els.js';
-import { SESSION_STATES, MIC_STATES } from '../shared/constants.js';
+import { APP_MODES, MIC_STATES } from '../shared/constants.js';
 
 const TUNING_CONTROLS = [
   { group: 'Backend selection', key: 'asr.backend', label: 'Backend', type: 'select', options: [['whisperx', 'WhisperX'], ['faster_whisper_direct', 'Faster Whisper']] },
@@ -60,7 +60,7 @@ export function handleTuningSettingChange(event) {
   const value = tuningInputValue(control, input);
   setTuningValue(key, value);
   renderTuningSettings({ preserveScroll: true });
-  if (state.sessionState === SESSION_STATES.RUNNING && state.socket?.isOpen()) {
+  if (state.appMode === APP_MODES.LIVE_RECORDING && state.socket?.isOpen()) {
     state.socket.updateLiveSettings(deltaForTuningPath(key, value));
   }
 }
@@ -215,7 +215,7 @@ function tuningInputValue(control, input) {
 
 function tuningControlDisabled(control) {
   if (control.lock === 'disabled') return true;
-  if (control.lock === 'micOff' && state.sessionState === SESSION_STATES.RUNNING && state.micState === MIC_STATES.LISTENING) return true;
+  if (control.lock === 'micOff' && state.appMode === APP_MODES.LIVE_RECORDING && state.micState === MIC_STATES.LISTENING) return true;
   if (control.backend && getTuningValue('asr.backend') !== control.backend) return true;
   return false;
 }
@@ -223,7 +223,7 @@ function tuningControlDisabled(control) {
 function tuningControlMeta(control) {
   if (control.lock === 'disabled') return 'later';
   if (control.backend && getTuningValue('asr.backend') !== control.backend) return 'inactive';
-  if (control.lock === 'micOff' && state.sessionState === SESSION_STATES.RUNNING && state.micState === MIC_STATES.LISTENING) return 'mic off';
+  if (control.lock === 'micOff' && state.appMode === APP_MODES.LIVE_RECORDING && state.micState === MIC_STATES.LISTENING) return 'mic off';
   return 'live';
 }
 

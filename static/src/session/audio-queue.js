@@ -6,7 +6,7 @@
 import { AudioQueue } from '../shared/audio-playback.js';
 import { state } from '../state.js';
 import { els } from '../els.js';
-import { SESSION_STATES, MIC_STATES } from '../shared/constants.js';
+import { APP_MODES, MIC_STATES } from '../shared/constants.js';
 import { updateActionButtons } from '../ui/action-buttons.js';
 import { renderTranscript } from '../ui/render-turn.js';
 import { stopMicrophoneCapture } from './lifecycle.js';
@@ -29,7 +29,7 @@ export const audioQueue = new AudioQueue({
     renderTranscript();
   },
   onPlaybackComplete: () => {
-    if (state.sessionState !== SESSION_STATES.RUNNING || state.micState !== MIC_STATES.LISTENING) return;
+    if (state.appMode !== APP_MODES.LIVE_RECORDING || state.micState !== MIC_STATES.LISTENING) return;
     stopMicrophoneCapture();
   },
   onItemEnded: (item) => {

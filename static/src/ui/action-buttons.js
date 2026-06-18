@@ -4,7 +4,7 @@
 
 import { state } from '../state.js';
 import { els } from '../els.js';
-import { SESSION_STATES, MIC_STATES, TURN_STATES } from '../shared/constants.js';
+import { APP_MODES, MIC_STATES, TURN_STATES } from '../shared/constants.js';
 import { audioQueue } from '../session/audio-queue.js';
 import { renderLanguageControls } from './render-status.js';
 
@@ -19,18 +19,18 @@ export function updateActionButtons() {
 
 function updateTranslateNowButton() {
   const turnIsSpeaking = state.currentTurn.state === TURN_STATES.OPEN_SPEAKING;
-  const live = state.sessionState === SESSION_STATES.RUNNING && state.socket?.isOpen();
+  const live = state.appMode === APP_MODES.LIVE_RECORDING && state.socket?.isOpen();
   els.translateNowButton.disabled = !(live && state.currentTurn.canTranslateNow && !turnIsSpeaking);
 }
 
 function updateSwapButton() {
-  const live = state.sessionState === SESSION_STATES.RUNNING && state.socket?.isOpen();
+  const live = state.appMode === APP_MODES.LIVE_RECORDING && state.socket?.isOpen();
   els.swapButton.disabled = !live;
 }
 
 function updateSpeakNowButton() {
   const turnIsSpeaking = state.currentTurn.state === TURN_STATES.OPEN_SPEAKING;
-  const live = state.sessionState === SESSION_STATES.RUNNING && state.socket?.isOpen();
+  const live = state.appMode === APP_MODES.LIVE_RECORDING && state.socket?.isOpen();
   const canSpeakTarget = Boolean(live && state.currentTurn.speakableTargetText && !turnIsSpeaking);
   const canPlayAudio = Boolean(live && audioQueue?.hasNonReplayAudio());
   els.speakNowButton.disabled = state.speakNowPending || !(canSpeakTarget || canPlayAudio);
@@ -46,7 +46,7 @@ function updateSpeakNowButton() {
 }
 
 function updateMicToggleButton() {
-  const live = state.sessionState === SESSION_STATES.RUNNING && state.socket?.isOpen();
+  const live = state.appMode === APP_MODES.LIVE_RECORDING && state.socket?.isOpen();
   const micListening = state.micState === MIC_STATES.LISTENING;
   const micOff = state.micState === MIC_STATES.OFF;
   const enabled = live && (micListening || micOff) && state.status !== 'connecting';
@@ -59,7 +59,7 @@ function updateMicToggleButton() {
 }
 
 function updatePcExportButton() {
-  const canExport = state.sessionState === SESSION_STATES.RUNNING
+  const canExport = state.appMode === APP_MODES.LIVE_RECORDING
     && state.micState === MIC_STATES.OFF
     && Boolean(state.sessionId)
     && !state.pcExportBusy;

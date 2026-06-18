@@ -1,8 +1,7 @@
-// TTS settings: config load/persist/sync, change handlers, render of the
+// TTS settings: config load/persist, session-scoped change handlers, render of the
 // TTS Options settings subpage. Voice library page stays in app.js for
 // the moment but imports a handful of helpers from here.
 
-import { api } from '../api-client.js';
 import { state } from '../state.js';
 import { els } from '../els.js';
 import {
@@ -129,6 +128,18 @@ export function mergeStoredTtsConfigIntoState() {
   renderTtsSettings();
 }
 
+export function sessionTtsSettingsPayload() {
+  return {
+    enabled: Boolean(state.ttsSettings.enabled),
+    backend: String(state.ttsSettings.backend || ''),
+    kokoro: { voices: { ...(state.ttsSettings.kokoro?.voices || {}) } },
+    voxcpm2: {
+      languages: state.ttsSettings.voxcpm2?.languages || {},
+      ultimate_cloning: state.ttsSettings.voxcpm2?.ultimate_cloning || {},
+    },
+  };
+}
+
 function loadVoxcpm2VoiceConfig() {
   try {
     const raw = localStorage.getItem(VOXCPM2_VOICE_CONFIG_STORAGE_KEY);
@@ -190,7 +201,6 @@ function normalizeVoxcpm2LanguageEntry(entry) {
 }
 
 export function handleTtsBackendChange() {
-  const previous = cloneSettings(state.ttsSettings);
   const previousBackend = state.ttsSettings.backend;
   const backend = String(els.ttsBackendSelect.value || '');
   if (!backend) return;
@@ -198,13 +208,12 @@ export function handleTtsBackendChange() {
   expandSelectedBackendGroup(previousBackend);
   persistTtsGlobalConfig(state.ttsSettings);
   renderTtsSettings({ preserveScroll: true });
-  submitTtsSettings({ backend }, previous);
+  submitTtsSettings();
 }
 
 export function handleTtsSettingChange(event) {
   const input = event.target;
   if (!input || input.disabled) return;
-  const previous = cloneSettings(state.ttsSettings);
   const kind = input.dataset.ttsKind || '';
   const language = input.dataset.ttsLanguage || '';
   if (kind === 'kokoro-voice' && language) {
@@ -212,7 +221,7 @@ export function handleTtsSettingChange(event) {
     state.ttsSettings.kokoro.voices[language] = value;
     persistTtsGlobalConfig(state.ttsSettings);
     renderTtsSettings({ preserveScroll: true });
-    submitTtsSettings({ kokoro: { voices: { [language]: value } } }, previous);
+    submitTtsSettings();
     return;
   }
   if (kind === 'voxcpm2-picker-language') {
@@ -224,14 +233,14 @@ export function handleTtsSettingChange(event) {
     const source = String(input.dataset.ttsSource || '');
     if (source !== 'stable_generated' && source !== 'last_speech') return;
     const enabled = Boolean(input.checked);
-    updateUltimateCloningSource(source, { enabled }, previous);
+    updateUltimateCloningSource(source, { enabled });
     return;
   }
   if (kind === 'voxcpm2-ultimate-mode') {
     const source = String(input.dataset.ttsSource || '');
     if (source !== 'stable_generated' && source !== 'last_speech') return;
     const value = input.value === 'uc2' ? true : false;
-    updateUltimateCloningSource(source, { also_use_as_reference: value }, previous);
+    updateUltimateCloningSource(source, { also_use_as_reference: value });
     return;
   }
   const tag = String(language || '').toLowerCase();
@@ -256,7 +265,7 @@ export function handleTtsSettingChange(event) {
           : VOXCPM2_DEFAULT_TRIM_SECONDS,
         preset: current.preset || '',
       };
-    }, previous);
+    });
     return;
   }
   if (kind === 'voxcpm2-reference-source') {
@@ -277,7 +286,7 @@ export function handleTtsSettingChange(event) {
         next.stable_gender = parts[1] === 'male' ? 'male' : 'female';
       }
       return next;
-    }, previous);
+    });
     return;
   }
   if (kind === 'voxcpm2-identity') {
@@ -288,25 +297,25 @@ export function handleTtsSettingChange(event) {
       identity: value,
       texture: current.texture || '',
       preset: current.preset || '',
-    }), previous);
+    }));
     return;
   }
   if (kind === 'voxcpm2-texture') {
     const allowed = new Set(voxcpm2TextureOptions().map((o) => o.value));
     const value = allowed.has(input.value) ? input.value : '';
-    updateVoxcpm2LanguageConfig(tag, (current) => ({ ...current, texture: value }), previous);
+    updateVoxcpm2LanguageConfig(tag, (current) => ({ ...current, texture: value }));
     return;
   }
   if (kind === 'voxcpm2-style') {
     // Field is still called `preset` internally; UI exposes it as "Style".
     const allowed = new Set(voxcpm2PresetOptions().map((o) => o.value));
     const value = allowed.has(input.value) ? input.value : '';
-    updateVoxcpm2LanguageConfig(tag, (current) => ({ ...current, preset: value }), previous);
+    updateVoxcpm2LanguageConfig(tag, (current) => ({ ...current, preset: value }));
     return;
   }
   if (kind === 'voxcpm2-trim-to-source') {
     const value = Boolean(input.checked);
-    updateVoxcpm2LanguageConfig(tag, (current) => ({ ...current, trim_to_source: value }), previous);
+    updateVoxcpm2LanguageConfig(tag, (current) => ({ ...current, trim_to_source: value }));
     return;
   }
   if (kind === 'voxcpm2-trim-seconds') {
@@ -319,12 +328,12 @@ export function handleTtsSettingChange(event) {
         next.stable_gender = current.stable_gender || 'female';
       }
       return next;
-    }, previous);
+    });
     return;
   }
 }
 
-function updateVoxcpm2LanguageConfig(tag, updater, previous) {
+function updateVoxcpm2LanguageConfig(tag, updater) {
   const stored = state.ttsSettings.voxcpm2.languages?.[tag];
   const current = { ...VOXCPM2_DEFAULT_LANGUAGE_CONFIG, ...(stored || {}) };
   const next = updater(current);
@@ -334,25 +343,7 @@ function updateVoxcpm2LanguageConfig(tag, updater, previous) {
   };
   persistVoxcpm2VoiceConfig();
   renderTtsSettings({ preserveScroll: true });
-  submitTtsSettings(
-    { voxcpm2: { languages: state.ttsSettings.voxcpm2.languages } },
-    previous,
-  );
-}
-
-export function syncVoxcpm2VoiceConfigToBackend() {
-  // Push localStorage-restored TTS settings to the backend after page load,
-  // so the backend's runtime overrides match what the UI shows.
-  const delta = {
-    enabled: Boolean(state.ttsSettings.enabled),
-    backend: String(state.ttsSettings.backend || ''),
-    kokoro: { voices: { ...(state.ttsSettings.kokoro?.voices || {}) } },
-    voxcpm2: {
-      languages: state.ttsSettings.voxcpm2.languages || {},
-      ultimate_cloning: state.ttsSettings.voxcpm2.ultimate_cloning || {},
-    },
-  };
-  submitTtsSettings(delta, cloneSettings(state.ttsSettings));
+  submitTtsSettings();
 }
 
 export function handleTtsSettingsClick(event) {
@@ -379,36 +370,25 @@ export function handleTtsSettingsClick(event) {
 }
 
 function resetVoxcpm2LanguageConfig(tag) {
-  const previous = cloneSettings(state.ttsSettings);
-  updateVoxcpm2LanguageConfig(tag, () => ({ ...VOXCPM2_DEFAULT_LANGUAGE_CONFIG }), previous);
+  updateVoxcpm2LanguageConfig(tag, () => ({ ...VOXCPM2_DEFAULT_LANGUAGE_CONFIG }));
 }
 
-function updateUltimateCloningSource(source, patch, previous) {
+function updateUltimateCloningSource(source, patch) {
   const voxcpm2 = state.ttsSettings.voxcpm2 = state.ttsSettings.voxcpm2 || {};
   const current = voxcpm2.ultimate_cloning || {};
   const entry = { ...(current[source] || {}), ...patch };
   voxcpm2.ultimate_cloning = { ...current, [source]: entry };
   persistTtsGlobalConfig(state.ttsSettings);
   renderTtsSettings({ preserveScroll: true });
-  submitTtsSettings(
-    { voxcpm2: { ultimate_cloning: { [source]: patch } } },
-    previous,
-  );
+  submitTtsSettings();
 }
 
 export function stableSampleInfo(tag, gender) {
   return state.voiceLibraryStable[tag]?.samples?.[gender] || { exists: false, generated_at: null };
 }
 
-async function submitTtsSettings(delta, previousSettings) {
-  try {
-    const payload = await api.updateTtsSettings(delta);
-    applyTtsConfig(payload.tts || {});
-  } catch (error) {
-    state.ttsSettings = previousSettings;
-    state.status = 'error';
-    renderTtsSettings({ preserveScroll: true });
-  }
+function submitTtsSettings() {
+  state.socket?.updateTtsSettings(sessionTtsSettingsPayload());
 }
 
 function toggleTtsGroup(groupName) {

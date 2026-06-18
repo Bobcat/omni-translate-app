@@ -14,6 +14,7 @@ from app.runtime import ConversationRuntime
 from app.runtime import TurnPart
 from app.sessions import ConversationSession
 from app.sessions import SESSIONS
+from app.tts_bridge import tts_settings_snapshot
 
 
 class FakeWebSocket:
@@ -33,9 +34,11 @@ class FastTTS:
 
     def __init__(self) -> None:
         self.count = 0
+        self.settings: list[dict | None] = []
 
-    def synthesize(self, *, session_id: str, text: str, language: str, reference_wav_path: str | None = None, reference_prompt_text: str | None = None, source_audio_duration_ms: int | None = None) -> dict:
+    def synthesize(self, *, session_id: str, text: str, language: str, settings: dict | None = None, reference_wav_path: str | None = None, reference_prompt_text: str | None = None, source_audio_duration_ms: int | None = None) -> dict:
         self.count += 1
+        self.settings.append(settings)
         return {
             "artifact_id": f"artifact_{self.count}",
             "url": f"/fake/{self.count}.wav",
@@ -48,7 +51,7 @@ class FastTTS:
 class SlowTTS:
     enabled = True
 
-    def synthesize(self, *, session_id: str, text: str, language: str, reference_wav_path: str | None = None, reference_prompt_text: str | None = None, source_audio_duration_ms: int | None = None) -> dict:
+    def synthesize(self, *, session_id: str, text: str, language: str, settings: dict | None = None, reference_wav_path: str | None = None, reference_prompt_text: str | None = None, source_audio_duration_ms: int | None = None) -> dict:
         time.sleep(0.2)
         return {
             "artifact_id": "late_artifact",
@@ -82,6 +85,7 @@ class TurnStateMachineTests(unittest.IsolatedAsyncioTestCase):
             expires_unix=time.time() + 60,
             side_a_language="Dutch",
             side_b_language="English",
+            tts_settings=tts_settings_snapshot({"enabled": True})[0],
         )
         websocket = FakeWebSocket()
         runtime = ConversationRuntime(websocket=websocket, session=session)
@@ -191,6 +195,23 @@ class TurnStateMachineTests(unittest.IsolatedAsyncioTestCase):
             if event["type"] == "turn_update" and event["reason"] == "translation_update"
         )
         self.assertTrue(translation_update["current_turn"]["can_speak_now"])
+
+    async def test_tts_settings_update_applies_to_current_session_only(self) -> None:
+        tts = FastTTS()
+        runtime, websocket = self.make_runtime(tts)
+
+        with patch("app.runtime.SESSIONS.update", return_value={}) as update_session:
+            await runtime._update_tts_settings({"settings": {"enabled": True, "backend": "kokoro"}})
+
+        update_session.assert_called_once()
+        self.assertEqual(runtime.tts_settings["backend"], "kokoro")
+        self.assertTrue(any(event["type"] == "tts_settings" for event in websocket.sent))
+
+        await runtime._speak_now()
+        await runtime._current_lane().tts_task
+
+        self.assertEqual(tts.settings[-1]["backend"], "kokoro")
+        self.assertTrue(tts.settings[-1]["enabled"])
 
     async def test_source_commits_insert_missing_word_boundary_space(self) -> None:
         runtime, _websocket = self.make_runtime(FastTTS())

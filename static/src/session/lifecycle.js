@@ -1,6 +1,6 @@
 // Session lifecycle: connecting + starting the WS session, finishing it,
-// mic capture start/stop/restart, history-stack syncing for the running
-// view, popstate dispatch, VAD-hint badge, view-mode toggle, PC export.
+// mic capture start/stop/restart, history-stack syncing for the live-recording
+// app mode, popstate dispatch, VAD-hint badge, view-mode toggle, PC export.
 //
 // State writes happen here; UI render happens via ui/render-status.js
 // and ui/action-buttons.js.
@@ -10,7 +10,7 @@ import { AudioCapture } from '../shared/audio-capture.js';
 import { state } from '../state.js';
 import { els } from '../els.js';
 import {
-  SESSION_STATES,
+  APP_MODES,
   MIC_STATES,
   TURN_STATES,
 } from '../shared/constants.js';
@@ -28,6 +28,7 @@ import {
 import { updateActionButtons } from '../ui/action-buttons.js';
 import { renderAudioSettings } from '../settings/audio.js';
 import { renderTuningSettings } from '../settings/tuning.js';
+import { sessionTtsSettingsPayload } from '../settings/tts.js';
 import { renderTranscript } from '../ui/render-turn.js';
 import { enableTranscriptAutoFollow } from '../ui/auto-follow.js';
 import {
@@ -43,6 +44,7 @@ import {
   consumeLanguagePopstateSkip,
 } from '../ui/language-sheet.js';
 import { handleSettingsSheetPopstate } from '../settings/sheet.js';
+import { finishImageTranslationFromHistory } from '../image/lifecycle.js';
 import { audioQueue } from './audio-queue.js';
 import { handleMessage } from './messages.js';
 
@@ -64,6 +66,7 @@ export async function startListening({ withMic = true } = {}) {
       sideALanguage: state.sideALanguage,
       sideBLanguage: state.sideBLanguage,
       liveSettings: state.tuningSettings,
+      ttsSettings: sessionTtsSettingsPayload(),
     });
     const sessionId = String(session.session?.session_id || session.session_id || '').trim();
     if (!sessionId) throw new Error('Missing session id');
@@ -74,7 +77,7 @@ export async function startListening({ withMic = true } = {}) {
       () => {
         if (state.socket !== socket) return;
         cleanupClientSession({ keepSocket: false });
-        resetSessionToSetup();
+        resetLiveRecordingToSetup();
         setStatus('idle');
       },
     );
@@ -99,7 +102,7 @@ export async function startListening({ withMic = true } = {}) {
       state.micState = MIC_STATES.OFF;
     }
     renderAudioSettings();
-    setSessionState(SESSION_STATES.RUNNING);
+    setLiveRecordingAppMode(APP_MODES.LIVE_RECORDING);
     setStatus('listening');
   } catch (error) {
     state.captureMutedForPlayback = false;
@@ -107,7 +110,7 @@ export async function startListening({ withMic = true } = {}) {
     socket?.close();
     cleanupClientSession();
     state.sessionId = null;
-    setSessionState(SESSION_STATES.SETUP);
+    setLiveRecordingAppMode(APP_MODES.SETUP);
     setStatus('error');
   } finally {
     setListenBusy(false);
@@ -116,13 +119,13 @@ export async function startListening({ withMic = true } = {}) {
 }
 
 export function handleStartButton() {
-  if (state.sessionState === SESSION_STATES.SETUP) {
+  if (state.appMode === APP_MODES.SETUP) {
     startListening();
   }
 }
 
 export function handleMicToggle() {
-  if (state.sessionState !== SESSION_STATES.RUNNING) return;
+  if (state.appMode !== APP_MODES.LIVE_RECORDING) return;
   if (state.micState === MIC_STATES.LISTENING) {
     stopMicrophoneCapture();
     return;
@@ -133,11 +136,11 @@ export function handleMicToggle() {
 }
 
 export function finishSession() {
-  if (state.sessionState !== SESSION_STATES.RUNNING) return;
+  if (state.appMode !== APP_MODES.LIVE_RECORDING) return;
   if (!state.socket?.isOpen()) {
     cleanupClientSession();
     state.sessionId = null;
-    setSessionState(SESSION_STATES.SETUP);
+    setLiveRecordingAppMode(APP_MODES.SETUP);
     return;
   }
   const finishingSocket = state.socket;
@@ -154,11 +157,11 @@ export function finishSession() {
   hideVadHint();
   renderMicLevel(0);
   renderAudioSettings();
-  resetSessionToSetup();
+  resetLiveRecordingToSetup();
 }
 
 export async function startMicrophoneCapture() {
-  if (state.sessionState !== SESSION_STATES.RUNNING || state.micState !== MIC_STATES.OFF) return;
+  if (state.appMode !== APP_MODES.LIVE_RECORDING || state.micState !== MIC_STATES.OFF) return;
   if (!state.socket?.isOpen()) return;
   setListenBusy(true);
   try {
@@ -190,7 +193,7 @@ export async function startMicrophoneCapture() {
 }
 
 export function stopMicrophoneCapture() {
-  if (state.sessionState !== SESSION_STATES.RUNNING) return;
+  if (state.appMode !== APP_MODES.LIVE_RECORDING) return;
   state.captureMutedForPlayback = false;
   clearAutoOffSilenceTimer();
   state.capture?.stop();
@@ -269,7 +272,7 @@ async function createStartedAudioCapture({ targetSampleRate = 16000 } = {}) {
 }
 
 function shouldSendMicrophoneAudio() {
-  return state.sessionState === SESSION_STATES.RUNNING
+  return state.appMode === APP_MODES.LIVE_RECORDING
     && state.micState === MIC_STATES.LISTENING
     && !state.captureMutedForPlayback
     && state.currentTurn.state !== TURN_STATES.OPEN_SPEAKING;
@@ -292,11 +295,11 @@ export function cleanupClientSession({ keepSocket = false } = {}) {
   }
 }
 
-export function resetSessionToSetup() {
+export function resetLiveRecordingToSetup() {
   clearAllLanes({ laneId: 'a_to_b' });
   state.requestedStartLaneId = 'a_to_b';
   state.captureMutedForPlayback = false;
-  setSessionState(SESSION_STATES.SETUP);
+  setLiveRecordingAppMode(APP_MODES.SETUP);
   setStatus('idle');
 }
 
@@ -310,28 +313,28 @@ export function clearAllLanes({ laneId = currentLaneId() } = {}) {
   updateActionButtons();
 }
 
-export function setSessionState(sessionState) {
-  const previous = state.sessionState;
-  state.sessionState = Object.values(SESSION_STATES).includes(sessionState) ? sessionState : SESSION_STATES.SETUP;
-  if (state.sessionState !== SESSION_STATES.RUNNING) {
+function setLiveRecordingAppMode(appMode) {
+  const previous = state.appMode;
+  state.appMode = Object.values(APP_MODES).includes(appMode) ? appMode : APP_MODES.SETUP;
+  if (state.appMode !== APP_MODES.LIVE_RECORDING) {
     state.micState = MIC_STATES.OFF;
   }
-  syncSessionHistory(previous, state.sessionState);
+  syncLiveRecordingHistory(previous, state.appMode);
   renderLifecycle();
   renderTuningSettings({ preserveScroll: true });
   updateActionButtons();
 }
 
-let _skipHistorySync = false;
+let _skipLiveRecordingHistorySync = false;
 
-function syncSessionHistory(previous, next) {
-  if (_skipHistorySync) return;
-  if (previous !== SESSION_STATES.RUNNING && next === SESSION_STATES.RUNNING) {
-    if (history.state?.view !== 'running') {
-      history.pushState({ view: 'running' }, '');
+function syncLiveRecordingHistory(previous, next) {
+  if (_skipLiveRecordingHistorySync) return;
+  if (previous !== APP_MODES.LIVE_RECORDING && next === APP_MODES.LIVE_RECORDING) {
+    if (history.state?.view !== 'live_recording') {
+      history.pushState({ view: 'live_recording' }, '');
     }
-  } else if (previous === SESSION_STATES.RUNNING && next !== SESSION_STATES.RUNNING) {
-    if (history.state?.view === 'running') {
+  } else if (previous === APP_MODES.LIVE_RECORDING && next !== APP_MODES.LIVE_RECORDING) {
+    if (history.state?.view === 'live_recording') {
       history.back();
     }
   }
@@ -344,12 +347,13 @@ export function handlePopstateBack(event) {
     return;
   }
   if (handleSettingsSheetPopstate(event)) return;
-  if (state.sessionState !== SESSION_STATES.RUNNING) return;
-  _skipHistorySync = true;
+  if (finishImageTranslationFromHistory()) return;
+  if (state.appMode !== APP_MODES.LIVE_RECORDING) return;
+  _skipLiveRecordingHistorySync = true;
   try {
     finishSession();
   } finally {
-    _skipHistorySync = false;
+    _skipLiveRecordingHistorySync = false;
   }
 }
 
@@ -359,7 +363,7 @@ export function setViewMode(viewMode) {
 }
 
 export async function exportPcTranscript() {
-  if (state.sessionState !== SESSION_STATES.RUNNING || state.micState !== MIC_STATES.OFF || !state.sessionId) return;
+  if (state.appMode !== APP_MODES.LIVE_RECORDING || state.micState !== MIC_STATES.OFF || !state.sessionId) return;
   state.pcExportBusy = true;
   updateActionButtons();
   try {
@@ -386,15 +390,15 @@ function downloadBlob(blob, filename) {
 
 export function startFromSettings() {
   if (state.status === 'connecting') return;
-  if (state.sessionState === SESSION_STATES.RUNNING && state.micState === MIC_STATES.LISTENING) {
+  if (state.appMode === APP_MODES.LIVE_RECORDING && state.micState === MIC_STATES.LISTENING) {
     stopMicrophoneCapture();
     return;
   }
-  if (state.sessionState === SESSION_STATES.SETUP) {
+  if (state.appMode === APP_MODES.SETUP) {
     startListening();
     return;
   }
-  if (state.sessionState === SESSION_STATES.RUNNING && state.micState === MIC_STATES.OFF) {
+  if (state.appMode === APP_MODES.LIVE_RECORDING && state.micState === MIC_STATES.OFF) {
     startMicrophoneCapture();
   }
 }
@@ -403,7 +407,7 @@ export function handleVadState(msg) {
   // shouldApplyCurrentTurnMessage lives in session/messages.js, but VAD
   // events are also dispatched there — by the time we get here the gate
   // has already been checked in handleMessage's switch.
-  if (state.sessionState !== SESSION_STATES.RUNNING) {
+  if (state.appMode !== APP_MODES.LIVE_RECORDING) {
     hideVadHint();
     return;
   }

@@ -30,7 +30,7 @@ import { audioQueue } from './audio-queue.js';
 import {
   hideVadHint,
   handleVadState,
-  resetSessionToSetup,
+  resetLiveRecordingToSetup,
   cleanupClientSession,
 } from './lifecycle.js';
 import { clearSpeakNowPending } from './actions.js';
@@ -110,7 +110,7 @@ export function handleMessage(msg) {
     hideVadHint();
     cleanupClientSession({ keepSocket: false });
     state.sessionId = null;
-    resetSessionToSetup();
+    resetLiveRecordingToSetup();
   }
 }
 

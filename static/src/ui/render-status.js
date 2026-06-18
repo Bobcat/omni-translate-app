@@ -1,10 +1,10 @@
-// Status-line UI: the app-shell render (running/setup/mic class toggles,
-// per-element visibility), connection status, language-pill render, mic
+// Status-line UI: the app-shell render (setup/live-recording/image class
+// toggles, per-element visibility), connection status, language-pill render, mic
 // level meter + halo, and the start-button busy flag.
 
 import { state } from '../state.js';
 import { els } from '../els.js';
-import { SESSION_STATES, MIC_STATES } from '../shared/constants.js';
+import { APP_MODES, MIC_STATES } from '../shared/constants.js';
 import { currentLane } from '../domain/lanes.js';
 import { updateActionButtons } from './action-buttons.js';
 
@@ -15,27 +15,36 @@ export function setStatus(status) {
 }
 
 export function renderLifecycle() {
-  const setup = state.sessionState === SESSION_STATES.SETUP;
-  const running = state.sessionState === SESSION_STATES.RUNNING;
-  const micOff = running && state.micState === MIC_STATES.OFF;
-  const micListening = running && state.micState === MIC_STATES.LISTENING;
+  const setup = state.appMode === APP_MODES.SETUP;
+  const liveRecording = state.appMode === APP_MODES.LIVE_RECORDING;
+  const imageTranslation = state.appMode === APP_MODES.IMAGE_TRANSLATION;
+  const micOff = liveRecording && state.micState === MIC_STATES.OFF;
+  const micListening = liveRecording && state.micState === MIC_STATES.LISTENING;
   els.app.classList.toggle('is-setup', setup);
-  els.app.classList.toggle('is-running', running);
+  els.app.classList.toggle('is-live-recording', liveRecording);
+  els.app.classList.toggle('is-image-translation', imageTranslation);
   els.app.classList.toggle('is-mic-off', micOff);
   els.app.classList.toggle('is-mic-listening', micListening);
   els.setupStartPanel.hidden = !setup;
-  els.sourceText.hidden = setup;
-  els.setupSwapButton.hidden = !setup;
-  els.translateNowButton.hidden = !running;
-  els.speakNowButton.hidden = !running;
-  els.micToggleButton.hidden = !running;
-  els.pcExportButton.hidden = !(running && micOff && state.devToolsSettings.showControls);
+  els.imageTranslationView.hidden = !imageTranslation;
+  els.sourceText.hidden = setup || imageTranslation;
+  els.languageDirectionButton.hidden = !(setup || imageTranslation);
+  els.translateNowButton.hidden = !liveRecording;
+  els.speakNowButton.hidden = !liveRecording;
+  els.micToggleButton.hidden = !liveRecording;
+  els.pcExportButton.hidden = !(liveRecording && micOff && state.devToolsSettings.showControls);
   els.setupFixtureButton.hidden = !(setup && state.devToolsSettings.showControls);
   els.setupFixtureButton.disabled = state.status === 'connecting' || Boolean(state.fixtureBusy);
   els.startButton.disabled = state.status === 'connecting';
-  els.settingsStartButton.disabled = state.status === 'connecting';
-  els.settingsStartButton.textContent = (running && micListening) ? 'Stop recording' : 'Start recording';
-  els.setupSwapButton.disabled = !setup || state.status === 'connecting';
+  setImagePickerDisabled(state.status === 'connecting');
+  els.settingsStartButton.disabled = state.status === 'connecting' || imageTranslation;
+  els.settingsStartButton.textContent = (liveRecording && micListening) ? 'Stop recording' : 'Start recording';
+  els.languageDirectionButton.disabled = imageTranslation || !setup || state.status === 'connecting';
+  els.languageDirectionButton.setAttribute(
+    'aria-label',
+    imageTranslation ? 'Detected source language to target language' : 'Switch selected languages',
+  );
+  els.languageDirectionButton.title = imageTranslation ? 'Auto detect to target language' : 'Switch selected languages';
   els.turnModeButton?.classList.toggle('is-active', state.viewMode === 'turn');
   els.turnModeButton?.setAttribute('aria-pressed', state.viewMode === 'turn' ? 'true' : 'false');
   els.conversationModeButton?.classList.toggle('is-active', state.viewMode === 'conversation');
@@ -45,20 +54,36 @@ export function renderLifecycle() {
 
 export function setListenBusy(busy) {
   els.startButton.disabled = Boolean(busy);
+  setImagePickerDisabled(Boolean(busy));
   els.settingsStartButton.disabled = Boolean(busy);
+}
+
+function setImagePickerDisabled(disabled) {
+  setPickerControlDisabled(els.setupImageButton, els.imageFileInput, disabled);
+  setPickerControlDisabled(els.setupCameraButton, els.cameraFileInput, disabled);
+}
+
+function setPickerControlDisabled(control, input, disabled) {
+  control.classList.toggle('is-disabled', disabled);
+  control.setAttribute('aria-disabled', disabled ? 'true' : 'false');
+  if ('disabled' in control) control.disabled = disabled;
+  if (input) input.disabled = disabled;
 }
 
 export function renderLanguageControls() {
   const lane = currentLane();
-  const setup = state.sessionState === SESSION_STATES.SETUP;
+  const setup = state.appMode === APP_MODES.SETUP;
+  const imageTranslation = state.appMode === APP_MODES.IMAGE_TRANSLATION;
   const isConnecting = state.status === 'connecting';
-  els.sourceLanguagePillText.textContent = lane.sourceLanguage;
+  const imageBusy = Boolean(state.imageTranslation.busy);
+  const canRetranslateImage = imageTranslation && Boolean(state.imageTranslation.requestId) && !imageBusy;
+  els.sourceLanguagePillText.textContent = imageTranslation ? 'Auto detect' : lane.sourceLanguage;
   els.targetLanguagePillText.textContent = lane.targetLanguage;
-  els.sourceLanguagePill.hidden = !setup;
-  els.targetLanguagePill.hidden = !setup;
-  els.sourceLanguagePill.disabled = isConnecting;
-  els.targetLanguagePill.disabled = isConnecting;
-  els.sourceLanguagePill.setAttribute('aria-label', `Source language: ${lane.sourceLanguage}`);
+  els.sourceLanguagePill.hidden = !(setup || imageTranslation);
+  els.targetLanguagePill.hidden = !(setup || imageTranslation);
+  els.sourceLanguagePill.disabled = imageTranslation || isConnecting;
+  els.targetLanguagePill.disabled = isConnecting || (imageTranslation && !canRetranslateImage);
+  els.sourceLanguagePill.setAttribute('aria-label', imageTranslation ? 'Source language: Auto detect' : `Source language: ${lane.sourceLanguage}`);
   els.targetLanguagePill.setAttribute('aria-label', `Target language: ${lane.targetLanguage}`);
 }
 

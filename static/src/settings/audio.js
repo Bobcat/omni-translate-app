@@ -5,7 +5,7 @@
 import { state } from '../state.js';
 import { els } from '../els.js';
 import {
-  SESSION_STATES,
+  APP_MODES,
   MIC_STATES,
   DEFAULT_AUDIO_SETTINGS,
   AUTO_OFF_SILENCE_CHOICES,
@@ -23,8 +23,8 @@ export function renderAudioSettings() {
   els.micPreGainValue.textContent = preGainLabel;
   els.micSettingsSummary.textContent = state.audioSettings.autoGainControl ? `${preGainLabel}, AGC` : preGainLabel;
   els.micAutoGainControl.checked = state.audioSettings.autoGainControl;
-  const agcAvailable = state.sessionState === SESSION_STATES.SETUP
-    || state.sessionState === SESSION_STATES.RUNNING;
+  const agcAvailable = state.appMode === APP_MODES.SETUP
+    || state.appMode === APP_MODES.LIVE_RECORDING;
   els.micAutoGainControl.disabled = state.audioSettings.autoGainControlBusy || !agcAvailable;
   els.audioSettingsReset.disabled = state.audioSettings.autoGainControlBusy;
   if (els.micAutoOffSilence) {
@@ -69,13 +69,13 @@ export function handlePreGainInput() {
 
 export async function handleAutoGainControlChange() {
   const requested = Boolean(els.micAutoGainControl.checked);
-  if (state.sessionState === SESSION_STATES.SETUP
-    || (state.sessionState === SESSION_STATES.RUNNING && state.micState === MIC_STATES.OFF)) {
+  if (state.appMode === APP_MODES.SETUP
+    || (state.appMode === APP_MODES.LIVE_RECORDING && state.micState === MIC_STATES.OFF)) {
     state.audioSettings.autoGainControl = requested;
     renderAudioSettings();
     return;
   }
-  if (state.sessionState !== SESSION_STATES.RUNNING || !state.capture) {
+  if (state.appMode !== APP_MODES.LIVE_RECORDING || !state.capture) {
     renderAudioSettings();
     return;
   }
@@ -98,12 +98,12 @@ export async function resetAudioSettings() {
   } else {
     clearAutoOffSilenceTimer();
   }
-  if (state.sessionState === SESSION_STATES.RUNNING && state.capture) {
+  if (state.appMode === APP_MODES.LIVE_RECORDING && state.capture) {
     state.audioSettings.autoGainControl = DEFAULT_AUDIO_SETTINGS.autoGainControl;
     await restartMicrophoneCapture();
     return;
   }
-  if (state.sessionState !== SESSION_STATES.RUNNING) {
+  if (state.appMode !== APP_MODES.LIVE_RECORDING) {
     state.audioSettings.autoGainControl = DEFAULT_AUDIO_SETTINGS.autoGainControl;
   } else if (state.micState === MIC_STATES.OFF) {
     state.audioSettings.autoGainControl = DEFAULT_AUDIO_SETTINGS.autoGainControl;

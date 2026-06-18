@@ -4,13 +4,14 @@
 
 import { state } from '../state.js';
 import {
-  SESSION_STATES,
+  APP_MODES,
   MIC_STATES,
   TURN_STATES,
 } from '../shared/constants.js';
 import {
   buildLocalLanes,
   createLocalTurn,
+  currentLane,
   currentLaneId,
 } from '../domain/lanes.js';
 import { normalizeLanguageName } from '../domain/languages.js';
@@ -21,9 +22,10 @@ import { renderTtsSettings } from '../settings/tts.js';
 import { renderTranscript } from '../ui/render-turn.js';
 import { audioQueue } from './audio-queue.js';
 import { stopMicrophoneCapture } from './lifecycle.js';
+import { retranslateImageToTarget } from '../image/lifecycle.js';
 
 export function speakNow() {
-  if (state.sessionState !== SESSION_STATES.RUNNING) return;
+  if (state.appMode !== APP_MODES.LIVE_RECORDING) return;
   if (audioQueue.hasNonReplayAudio()) {
     audioQueue.playOrResume();
     return;
@@ -62,13 +64,13 @@ export function clearSpeakNowPending() {
 }
 
 export function translateNow() {
-  if (state.sessionState !== SESSION_STATES.RUNNING) return;
+  if (state.appMode !== APP_MODES.LIVE_RECORDING) return;
   if (!state.currentTurn.canTranslateNow) return;
   state.socket?.translateNow();
 }
 
 export function swapDirection() {
-  if (state.sessionState !== SESSION_STATES.RUNNING) return;
+  if (state.appMode !== APP_MODES.LIVE_RECORDING) return;
   if (!state.socket?.isOpen()) return;
   const nextLaneId = currentLaneId() === 'a_to_b' ? 'b_to_a' : 'a_to_b';
   audioQueue.clear();
@@ -76,8 +78,33 @@ export function swapDirection() {
 }
 
 export function setVisibleLanguage(role, value) {
-  if (state.sessionState !== SESSION_STATES.SETUP) return;
+  if (state.appMode === APP_MODES.IMAGE_TRANSLATION) {
+    if (role !== 'target' || state.imageTranslation.busy || !state.imageTranslation.requestId) return;
+    const next = normalizeLanguageName(value);
+    const currentTarget = currentLane().targetLanguage;
+    const imageAlreadyInTarget = state.imageTranslation.translatedReady
+      && state.imageTranslation.translatedTargetLanguage === next;
+    if (next === currentTarget && imageAlreadyInTarget) return;
+    if (next !== currentTarget) {
+      applyVisibleLanguage(role, next);
+      renderLanguageControls();
+      renderTranscript();
+      renderTtsSettings();
+      updateActionButtons();
+    }
+    if (!imageAlreadyInTarget) retranslateImageToTarget(next);
+    return;
+  }
+  if (state.appMode !== APP_MODES.SETUP) return;
   const next = normalizeLanguageName(value);
+  applyVisibleLanguage(role, next);
+  renderLanguageControls();
+  renderTranscript();
+  renderTtsSettings();
+  updateActionButtons();
+}
+
+function applyVisibleLanguage(role, next) {
   if (currentLaneId() === 'a_to_b') {
     if (role === 'source') state.sideALanguage = next;
     else state.sideBLanguage = next;
@@ -89,14 +116,10 @@ export function setVisibleLanguage(role, value) {
   state.lanes = buildLocalLanes(state.sideALanguage, state.sideBLanguage);
   state.currentTurn = createLocalTurn(currentLaneId(), state.lanes);
   persistSetupLanguages(state.sideALanguage, state.sideBLanguage);
-  renderLanguageControls();
-  renderTranscript();
-  renderTtsSettings();
-  updateActionButtons();
 }
 
 export function swapSetupLanguages() {
-  if (state.sessionState !== SESSION_STATES.SETUP) return;
+  if (state.appMode !== APP_MODES.SETUP) return;
   const previousSideA = state.sideALanguage;
   state.sideALanguage = state.sideBLanguage;
   state.sideBLanguage = previousSideA;

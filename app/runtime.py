@@ -40,6 +40,8 @@ from app.tts_bridge import TTS_ROOT
 from app.tts_bridge import TtsReferenceUnavailableError
 from app.tts_bridge import _safe_token as _tts_safe_token
 from app.tts_bridge import get_tts_bridge
+from app.tts_bridge import tts_settings_enabled
+from app.tts_bridge import tts_settings_snapshot
 from app.tts_bridge import tts_uses_asr_reference_wav
 
 
@@ -187,6 +189,7 @@ class ConversationRuntime:
         self.side_a_language = session.side_a_language
         self.side_b_language = session.side_b_language
         self.live_settings = merge_live_settings(default_live_settings(), session.live_settings or {})
+        self.tts_settings = dict(session.tts_settings or tts_settings_snapshot()[0])
         self.asr_bridge = LiveASRPoolBridge(
             session_id=self.session_id,
             sample_rate_hz=self.sample_rate_hz,
@@ -335,6 +338,9 @@ class ConversationRuntime:
         if msg_type == "update_live_settings":
             await self._update_live_settings(payload)
             return True
+        if msg_type == "update_tts_settings":
+            await self._update_tts_settings(payload)
+            return True
         if msg_type == "tts_playback_complete":
             await self._tts_playback_complete(payload)
             return True
@@ -360,6 +366,22 @@ class ConversationRuntime:
         self.asr_bridge.live_settings = self.live_settings
         self._apply_live_runner_settings()
         await self._send(event("live_settings", self.session_id, live_settings=deepcopy(self.live_settings)))
+
+    async def _update_tts_settings(self, payload: dict[str, Any]) -> None:
+        settings, errors = tts_settings_snapshot(payload.get("settings"))
+        if errors:
+            await self._send(
+                event(
+                    "error",
+                    self.session_id,
+                    code="invalid_tts_settings",
+                    message="; ".join(f"{key}: {value}" for key, value in errors.items()),
+                )
+            )
+            return
+        self.tts_settings = settings
+        SESSIONS.update(self.session_id, tts_settings=deepcopy(settings))
+        await self._send(event("tts_settings", self.session_id))
 
     async def _handle_audio(self, raw_bytes: bytes) -> None:
         if not self.listening:
@@ -696,7 +718,7 @@ class ConversationRuntime:
                 )
             )
             return
-        if not self.tts_bridge.enabled:
+        if not tts_settings_enabled(self.tts_settings):
             await self._send(
                 event(
                     "tts_status",
@@ -802,7 +824,7 @@ class ConversationRuntime:
         lane = self.lanes.get(lane_id) if lane_id else self._current_lane()
         if lane is None:
             return
-        if not self.tts_bridge.enabled:
+        if not tts_settings_enabled(self.tts_settings):
             return
         reference_wav_path = self._replay_reference_wav_path(lane, text)
         try:
@@ -811,6 +833,7 @@ class ConversationRuntime:
                 session_id=self.session_id,
                 text=text,
                 language=lane.target_language,
+                settings=self.tts_settings,
                 reference_wav_path=reference_wav_path,
             )
         except asyncio.CancelledError:
@@ -839,8 +862,11 @@ class ConversationRuntime:
     async def _run_tts(self, lane_id: str, turn_id: str, text: str, speaking_part_ids: list[str]) -> None:
         lane = self.lanes[lane_id]
         current_task = asyncio.current_task()
-        reference_wav_path, low_quality = _last_speech_reference_choice(lane)
-        if reference_wav_path is None and not tts_uses_asr_reference_wav(lane.target_language):
+        reference_wav_path, low_quality = _last_speech_reference_choice(lane, self.tts_settings)
+        if reference_wav_path is None and not tts_uses_asr_reference_wav(
+            lane.target_language,
+            settings=self.tts_settings,
+        ):
             # Non-last_speech mode (stable_generated / description); the bridge
             # picks its own reference and we don't need to snapshot.
             pass
@@ -854,6 +880,7 @@ class ConversationRuntime:
                 session_id=self.session_id,
                 text=text,
                 language=lane.target_language,
+                settings=self.tts_settings,
                 reference_wav_path=reference_wav_path,
                 reference_prompt_text=reference_prompt_text,
                 source_audio_duration_ms=source_audio_duration_ms,
@@ -1210,7 +1237,7 @@ class ConversationRuntime:
                 if stored and Path(stored).is_file():
                     return stored
                 break
-        return _tts_reference_wav_path(lane)
+        return _tts_reference_wav_path(lane, self.tts_settings)
 
     def _discard_part_reference_wav(self, part: TurnPart) -> None:
         path = part.reference_wav_path
@@ -1560,8 +1587,8 @@ def _live_settings_asr_backend(live_settings: dict[str, Any] | None) -> str:
     return str(asr.get("backend") or "")
 
 
-def _tts_reference_wav_path(lane: ConversationLane) -> str | None:
-    if not tts_uses_asr_reference_wav(lane.target_language):
+def _tts_reference_wav_path(lane: ConversationLane, tts_settings: dict[str, Any]) -> str | None:
+    if not tts_uses_asr_reference_wav(lane.target_language, settings=tts_settings):
         return None
     path = str(lane.last_asr_wav_path or "").strip()
     if not path:
@@ -1655,7 +1682,7 @@ def _source_bubble_duration_ms(lane: ConversationLane) -> int | None:
         return None
 
 
-def _last_speech_reference_choice(lane: ConversationLane) -> tuple[str | None, bool]:
+def _last_speech_reference_choice(lane: ConversationLane, tts_settings: dict[str, Any]) -> tuple[str | None, bool]:
     """Pick the last_speech reference WAV. Returns (path, low_quality).
 
     - If the most recent fragment scores >= threshold → use it (low_quality=False).
@@ -1663,7 +1690,7 @@ def _last_speech_reference_choice(lane: ConversationLane) -> tuple[str | None, b
     - Else use the latest fragment regardless and flag it as low quality, so
       the UI can indicate that voice quality was uncertain.
     """
-    if not tts_uses_asr_reference_wav(lane.target_language):
+    if not tts_uses_asr_reference_wav(lane.target_language, settings=tts_settings):
         return None, False
     current = (lane.last_asr_wav_path or "").strip()
     qualifying = (lane.last_qualifying_asr_wav_path or "").strip()

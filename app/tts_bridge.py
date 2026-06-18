@@ -33,8 +33,6 @@ _TTS_BRIDGE: TTSBridge | None = None
 class TtsReferenceUnavailableError(Exception):
     """Raised when voxcpm2 reference_audio mode has no usable reference."""
 _TTS_BRIDGE_LOCK = threading.Lock()
-_TTS_SETTINGS_LOCK = threading.Lock()
-_TTS_RUNTIME_OVERRIDES: dict[str, Any] = {}
 TTS_BACKEND_OPTIONS = (
     ("kokoro", "Kokoro"),
     ("voxcpm2", "VoxCPM2"),
@@ -233,7 +231,7 @@ LANGUAGE_BCP47_BY_NAME = {
 class TTSBridge:
     @property
     def enabled(self) -> bool:
-        return _tts_enabled()
+        return tts_settings_enabled()
 
     def clear_session(self, session_id: str) -> None:
         path = (TTS_ROOT / _safe_token(session_id)).resolve()
@@ -246,6 +244,7 @@ class TTSBridge:
         session_id: str,
         text: str,
         language: str,
+        settings: dict[str, Any] | None = None,
         reference_wav_path: str | None = None,
         reference_prompt_text: str | None = None,
         source_audio_duration_ms: int | None = None,
@@ -261,6 +260,7 @@ class TTSBridge:
         request_payload, request_metrics, request_metadata = _tts_pool_request_payload(
             text=safe_text,
             language=language,
+            settings=settings,
             reference_wav_path=reference_wav_path,
             reference_prompt_text=reference_prompt_text,
             source_audio_duration_ms=source_audio_duration_ms,
@@ -325,7 +325,7 @@ def get_tts_bridge() -> TTSBridge:
 
 
 def tts_settings_payload() -> dict[str, Any]:
-    payload = _current_tts_settings()
+    payload = _base_tts_settings()
     backend_options = _loaded_tts_backend_options()
     if backend_options and payload["backend"] not in {option[0] for option in backend_options}:
         payload["backend"] = backend_options[0][0]
@@ -348,33 +348,18 @@ def tts_settings_payload() -> dict[str, Any]:
     return payload
 
 
-def update_tts_settings(delta: dict[str, Any]) -> tuple[dict[str, Any], dict[str, str]]:
-    normalized, errors = _normalize_tts_settings_delta(delta)
-    if errors:
-        return tts_settings_payload(), errors
-    languages_replacement: dict[str, Any] | None = None
-    if isinstance(normalized.get("voxcpm2"), dict) and "languages" in normalized["voxcpm2"]:
-        languages_replacement = normalized["voxcpm2"].pop("languages")
-    with _TTS_SETTINGS_LOCK:
-        _merge_settings_into(_TTS_RUNTIME_OVERRIDES, normalized)
-        if languages_replacement is not None:
-            _TTS_RUNTIME_OVERRIDES.setdefault("voxcpm2", {})["languages"] = languages_replacement
-    return tts_settings_payload(), {}
-
-
-def clear_tts_runtime_overrides() -> None:
-    with _TTS_SETTINGS_LOCK:
-        _TTS_RUNTIME_OVERRIDES.clear()
-
-
-def tts_uses_asr_reference_wav(language: str) -> bool:
-    settings = _current_tts_settings()
+def tts_uses_asr_reference_wav(language: str, *, settings: dict[str, Any] | None = None) -> bool:
+    settings = settings or _base_tts_settings()
     if not _is_voxcpm_family_backend(settings["backend"]):
         return False
     config = _voxcpm2_language_config(settings["voxcpm2"]["languages"], language)
     if config["mode"] != "reference_audio":
         return False
     return config.get("reference_source", "stable_generated") == "last_speech"
+
+
+def tts_settings_enabled(settings: dict[str, Any] | None = None) -> bool:
+    return bool((settings or _base_tts_settings()).get("enabled"))
 
 
 def artifact_path(session_id: str, artifact_id: str) -> Path:
@@ -385,17 +370,18 @@ def _tts_pool_request_payload(
     *,
     text: str,
     language: str,
+    settings: dict[str, Any] | None = None,
     reference_wav_path: str | None,
     reference_prompt_text: str | None = None,
     source_audio_duration_ms: int | None = None,
 ) -> tuple[dict[str, Any], dict[str, float], dict[str, Any]]:
-    settings = _current_tts_settings()
+    settings = settings or _base_tts_settings()
     backend = settings["backend"]
     voice: dict[str, Any] = {}
     request_metrics: dict[str, float] = {}
     request_metadata: dict[str, Any] = {}
     if backend == "kokoro":
-        preset = _kokoro_voice_for_language(language)
+        preset = _kokoro_voice_for_language(language, settings=settings)
         if preset:
             voice["preset"] = preset
     elif _is_voxcpm_family_backend(backend):
@@ -769,12 +755,20 @@ def _loaded_tts_backend_options() -> tuple[tuple[str, str], ...]:
     return tuple(TTS_BACKEND_OPTION_BY_VALUE[value] for value, _ in TTS_BACKEND_OPTIONS if value in loaded)
 
 
-def _tts_enabled() -> bool:
-    return bool(_current_tts_settings()["enabled"])
+def tts_settings_snapshot(settings: dict[str, Any] | None = None) -> tuple[dict[str, Any], dict[str, str]]:
+    """Return a validated full TTS settings snapshot for one client/session."""
+    resolved = _base_tts_settings()
+    if settings is None:
+        return resolved, {}
+    normalized, errors = _normalize_tts_settings_delta(settings)
+    if errors:
+        return resolved, errors
+    _merge_settings_into(resolved, normalized)
+    return resolved, {}
 
 
-def _current_tts_settings() -> dict[str, Any]:
-    settings = {
+def _base_tts_settings() -> dict[str, Any]:
+    return {
         "enabled": get_bool("tts.enabled", True),
         "backend": _validated_backend(get_str("tts.backend", "kokoro")),
         "kokoro": {
@@ -798,11 +792,6 @@ def _current_tts_settings() -> dict[str, Any]:
             },
         },
     }
-    with _TTS_SETTINGS_LOCK:
-        overrides = copy.deepcopy(_TTS_RUNTIME_OVERRIDES)
-    _merge_settings_into(settings, overrides)
-    settings["backend"] = _validated_backend(settings["backend"])
-    return settings
 
 
 def _configured_kokoro_voices() -> dict[str, str]:
@@ -998,11 +987,12 @@ def _normalize_voxcpm2_language_entry(
     return result
 
 
-def _kokoro_voice_for_language(language: str) -> str | None:
+def _kokoro_voice_for_language(language: str, *, settings: dict[str, Any] | None = None) -> str | None:
     language_key = _known_language_key(KOKORO_VOICE_OPTIONS, language)
     if not language_key:
         return None
-    voice = _current_tts_settings()["kokoro"]["voices"].get(language_key)
+    resolved = settings or _base_tts_settings()
+    voice = resolved["kokoro"]["voices"].get(language_key)
     return str(voice or "").strip() or None
 
 

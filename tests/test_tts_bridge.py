@@ -12,10 +12,9 @@ from unittest import mock
 
 from app.tts_bridge import TTSBridge
 from app.tts_bridge import TTS_ROOT
-from app.tts_bridge import clear_tts_runtime_overrides
 from app.tts_bridge import tts_settings_payload
+from app.tts_bridge import tts_settings_snapshot
 from app.tts_bridge import tts_uses_asr_reference_wav
-from app.tts_bridge import update_tts_settings
 
 
 class FakeTtsPool:
@@ -63,9 +62,6 @@ class TTSBridgeTests(unittest.TestCase):
         self.loaded_models = self.loaded_models_patcher.start()
         self.addCleanup(self.loaded_models_patcher.stop)
 
-    def tearDown(self) -> None:
-        clear_tts_runtime_overrides()
-
     def _isolated_voice_library_root(self) -> Path:
         # Redirect STABLE_VOICE_LIBRARY_ROOT to a tmp dir so tests never
         # touch real data/voice_library/stable/ — previous version wrote
@@ -79,19 +75,27 @@ class TTSBridgeTests(unittest.TestCase):
         self.addCleanup(lambda: shutil.rmtree(tmp_root, ignore_errors=True))
         return tmp_root
 
+    def _settings(self, delta: dict | None = None) -> dict:
+        settings, errors = tts_settings_snapshot(delta or {})
+        self.assertEqual(errors, {})
+        return settings
+
     def test_synthesize_sends_kokoro_request_to_tts_pool_and_writes_artifact(self) -> None:
-        update_tts_settings(
-            {
-                "backend": "kokoro",
-                "kokoro": {"voices": {"English": "af_sarah"}},
-            }
-        )
+        settings = self._settings({
+            "backend": "kokoro",
+            "kokoro": {"voices": {"English": "af_sarah"}},
+        })
         fake_pool = FakeTtsPool()
         session_id = "conv_test_tts_pool_kokoro"
         self.addCleanup(lambda: shutil.rmtree(TTS_ROOT / session_id, ignore_errors=True))
 
         with mock.patch("app.tts_bridge._post_json", side_effect=fake_pool.post_json):
-            payload = TTSBridge().synthesize(session_id=session_id, text="Hello", language="English")
+            payload = TTSBridge().synthesize(
+                session_id=session_id,
+                text="Hello",
+                language="English",
+                settings=settings,
+            )
 
         request = fake_pool.calls[0]["payload"]
         self.assertEqual(request["model"], "kokoro")
@@ -112,20 +116,18 @@ class TTSBridgeTests(unittest.TestCase):
         self.assertIn("tts_total_wall_ms", payload["metrics"])
 
     def test_synthesize_sends_voxcpm2_reference_audio_to_tts_pool(self) -> None:
-        update_tts_settings(
-            {
-                "backend": "voxcpm2",
-                "voxcpm2": {
-                    "languages": {
-                        "nl": {
-                            "mode": "reference_audio",
-                            "reference_source": "last_speech",
-                            "trim_seconds": 2,
-                        },
+        settings = self._settings({
+            "backend": "voxcpm2",
+            "voxcpm2": {
+                "languages": {
+                    "nl": {
+                        "mode": "reference_audio",
+                        "reference_source": "last_speech",
+                        "trim_seconds": 2,
                     },
                 },
-            }
-        )
+            },
+        })
         fake_pool = FakeTtsPool()
         session_id = "conv_test_tts_pool_voxcpm2"
         session_root = TTS_ROOT / session_id
@@ -139,6 +141,7 @@ class TTSBridgeTests(unittest.TestCase):
                 session_id=session_id,
                 text="Hallo",
                 language="Dutch",
+                settings=settings,
                 reference_wav_path=str(source_path),
             )
 
@@ -162,20 +165,18 @@ class TTSBridgeTests(unittest.TestCase):
         self.assertIn("tts_reference_payload_bytes", payload["metrics"])
 
     def test_voxcpm2_description_mode_combines_identity_and_texture(self) -> None:
-        update_tts_settings(
-            {
-                "backend": "voxcpm2",
-                "voxcpm2": {
-                    "languages": {
-                        "nl": {
-                            "mode": "description",
-                            "identity": "adult_woman",
-                            "texture": "gentle_and_warm",
-                        },
+        settings = self._settings({
+            "backend": "voxcpm2",
+            "voxcpm2": {
+                "languages": {
+                    "nl": {
+                        "mode": "description",
+                        "identity": "adult_woman",
+                        "texture": "gentle_and_warm",
                     },
                 },
-            }
-        )
+            },
+        })
         fake_pool = FakeTtsPool()
         session_id = "conv_test_tts_pool_no_reference"
         self.addCleanup(lambda: shutil.rmtree(TTS_ROOT / session_id, ignore_errors=True))
@@ -185,6 +186,7 @@ class TTSBridgeTests(unittest.TestCase):
                 session_id=session_id,
                 text="Hallo",
                 language="Dutch",
+                settings=settings,
                 reference_wav_path="/tmp/source.wav",
             )
 
@@ -195,23 +197,21 @@ class TTSBridgeTests(unittest.TestCase):
             "adult female voice, gentle and warm tone",
         )
         self.assertNotIn("reference_audio", request["voice"])
-        self.assertFalse(tts_uses_asr_reference_wav("Dutch"))
+        self.assertFalse(tts_uses_asr_reference_wav("Dutch", settings=settings))
 
     def test_synthesize_sends_nanovllm_voxcpm_request_to_tts_pool(self) -> None:
-        update_tts_settings(
-            {
-                "backend": "nanovllm_voxcpm",
-                "voxcpm2": {
-                    "languages": {
-                        "nl": {
-                            "mode": "reference_audio",
-                            "reference_source": "last_speech",
-                            "trim_seconds": 2,
-                        },
+        settings = self._settings({
+            "backend": "nanovllm_voxcpm",
+            "voxcpm2": {
+                "languages": {
+                    "nl": {
+                        "mode": "reference_audio",
+                        "reference_source": "last_speech",
+                        "trim_seconds": 2,
                     },
                 },
-            }
-        )
+            },
+        })
         fake_pool = FakeTtsPool()
         session_id = "conv_test_tts_pool_nanovllm_voxcpm"
         session_root = TTS_ROOT / session_id
@@ -225,6 +225,7 @@ class TTSBridgeTests(unittest.TestCase):
                 session_id=session_id,
                 text="Hallo",
                 language="Dutch",
+                settings=settings,
                 reference_wav_path=str(source_path),
             )
 
@@ -233,23 +234,21 @@ class TTSBridgeTests(unittest.TestCase):
         self.assertNotIn("preset", request["voice"])
         self.assertNotIn("instructions", request["voice"])
         self.assertIn("reference_audio", request["voice"])
-        self.assertTrue(tts_uses_asr_reference_wav("Dutch"))
+        self.assertTrue(tts_uses_asr_reference_wav("Dutch", settings=settings))
 
-    def test_update_tts_settings_applies_user_facing_delta(self) -> None:
-        settings, errors = update_tts_settings(
-            {
-                "backend": "voxcpm2",
-                "voxcpm2": {
-                    "languages": {
-                        "nl": {
-                            "mode": "reference_audio",
-                            "reference_source": "last_speech",
-                            "trim_seconds": 3,
-                        },
+    def test_tts_settings_snapshot_applies_user_facing_delta(self) -> None:
+        settings, errors = tts_settings_snapshot({
+            "backend": "voxcpm2",
+            "voxcpm2": {
+                "languages": {
+                    "nl": {
+                        "mode": "reference_audio",
+                        "reference_source": "last_speech",
+                        "trim_seconds": 3,
                     },
                 },
-            }
-        )
+            },
+        })
 
         self.assertEqual(errors, {})
         self.assertEqual(settings["backend"], "voxcpm2")
@@ -264,25 +263,23 @@ class TTSBridgeTests(unittest.TestCase):
                 "trim_to_source": False,
             },
         )
-        self.assertTrue(tts_uses_asr_reference_wav("Dutch"))
+        self.assertTrue(tts_uses_asr_reference_wav("Dutch", settings=settings))
 
     def test_synthesize_uses_stable_voice_sample_when_selected(self) -> None:
         tmp_root = self._isolated_voice_library_root()
 
-        update_tts_settings(
-            {
-                "backend": "voxcpm2",
-                "voxcpm2": {
-                    "languages": {
-                        "nl": {
-                            "mode": "reference_audio",
-                            "reference_source": "stable_generated",
-                            "trim_seconds": 4,
-                        },
+        settings = self._settings({
+            "backend": "voxcpm2",
+            "voxcpm2": {
+                "languages": {
+                    "nl": {
+                        "mode": "reference_audio",
+                        "reference_source": "stable_generated",
+                        "trim_seconds": 4,
                     },
                 },
-            }
-        )
+            },
+        })
         stable_dir = tmp_root / "nl" / "female"
         stable_dir.mkdir(parents=True, exist_ok=True)
         stable_path = stable_dir / "audio.wav"
@@ -293,13 +290,14 @@ class TTSBridgeTests(unittest.TestCase):
         self.addCleanup(lambda: shutil.rmtree(TTS_ROOT / session_id, ignore_errors=True))
 
         # ASR wav is intentionally not provided — runtime would skip it for stable_generated.
-        self.assertFalse(tts_uses_asr_reference_wav("Dutch"))
+        self.assertFalse(tts_uses_asr_reference_wav("Dutch", settings=settings))
 
         with mock.patch("app.tts_bridge._post_json", side_effect=fake_pool.post_json):
             payload = TTSBridge().synthesize(
                 session_id=session_id,
                 text="Hallo",
                 language="Dutch",
+                settings=settings,
                 reference_wav_path=None,
             )
 
@@ -313,23 +311,21 @@ class TTSBridgeTests(unittest.TestCase):
     def test_stable_generated_ultimate_cloning_sends_prompt_text_from_meta(self) -> None:
         tmp_root = self._isolated_voice_library_root()
 
-        update_tts_settings(
-            {
-                "backend": "voxcpm2",
-                "voxcpm2": {
-                    "languages": {
-                        "nl": {
-                            "mode": "reference_audio",
-                            "reference_source": "stable_generated",
-                            "trim_seconds": 4,
-                        },
-                    },
-                    "ultimate_cloning": {
-                        "stable_generated": {"enabled": True, "also_use_as_reference": True},
+        settings = self._settings({
+            "backend": "voxcpm2",
+            "voxcpm2": {
+                "languages": {
+                    "nl": {
+                        "mode": "reference_audio",
+                        "reference_source": "stable_generated",
+                        "trim_seconds": 4,
                     },
                 },
-            }
-        )
+                "ultimate_cloning": {
+                    "stable_generated": {"enabled": True, "also_use_as_reference": True},
+                },
+            },
+        })
         stable_dir = tmp_root / "nl" / "female"
         stable_dir.mkdir(parents=True, exist_ok=True)
         (stable_dir / "audio.wav").write_bytes(_silent_wav(seconds=2.5))
@@ -347,6 +343,7 @@ class TTSBridgeTests(unittest.TestCase):
                 session_id=session_id,
                 text="Hallo",
                 language="Dutch",
+                settings=settings,
                 reference_wav_path=None,
             )
 
@@ -360,23 +357,21 @@ class TTSBridgeTests(unittest.TestCase):
     def test_stable_generated_toggle_off_stays_reference_only(self) -> None:
         tmp_root = self._isolated_voice_library_root()
 
-        update_tts_settings(
-            {
-                "backend": "voxcpm2",
-                "voxcpm2": {
-                    "languages": {
-                        "nl": {
-                            "mode": "reference_audio",
-                            "reference_source": "stable_generated",
-                            "trim_seconds": 4,
-                        },
-                    },
-                    "ultimate_cloning": {
-                        "stable_generated": {"enabled": False},
+        settings = self._settings({
+            "backend": "voxcpm2",
+            "voxcpm2": {
+                "languages": {
+                    "nl": {
+                        "mode": "reference_audio",
+                        "reference_source": "stable_generated",
+                        "trim_seconds": 4,
                     },
                 },
-            }
-        )
+                "ultimate_cloning": {
+                    "stable_generated": {"enabled": False},
+                },
+            },
+        })
         stable_dir = tmp_root / "nl" / "female"
         stable_dir.mkdir(parents=True, exist_ok=True)
         (stable_dir / "audio.wav").write_bytes(_silent_wav(seconds=2.5))
@@ -393,6 +388,7 @@ class TTSBridgeTests(unittest.TestCase):
                 session_id=session_id,
                 text="Hallo",
                 language="Dutch",
+                settings=settings,
                 reference_wav_path=None,
             )
 
@@ -401,23 +397,21 @@ class TTSBridgeTests(unittest.TestCase):
         self.assertNotIn("also_use_as_reference", reference_audio)
 
     def test_last_speech_ultimate_cloning_forwards_prompt_text(self) -> None:
-        update_tts_settings(
-            {
-                "backend": "voxcpm2",
-                "voxcpm2": {
-                    "languages": {
-                        "nl": {
-                            "mode": "reference_audio",
-                            "reference_source": "last_speech",
-                            "trim_seconds": 4,
-                        },
-                    },
-                    "ultimate_cloning": {
-                        "last_speech": {"enabled": True, "also_use_as_reference": False},
+        settings = self._settings({
+            "backend": "voxcpm2",
+            "voxcpm2": {
+                "languages": {
+                    "nl": {
+                        "mode": "reference_audio",
+                        "reference_source": "last_speech",
+                        "trim_seconds": 4,
                     },
                 },
-            }
-        )
+                "ultimate_cloning": {
+                    "last_speech": {"enabled": True, "also_use_as_reference": False},
+                },
+            },
+        })
 
         ref_dir = (TTS_ROOT / "ref_for_test").resolve()
         ref_dir.mkdir(parents=True, exist_ok=True)
@@ -434,6 +428,7 @@ class TTSBridgeTests(unittest.TestCase):
                 session_id=session_id,
                 text="Hallo",
                 language="Dutch",
+                settings=settings,
                 reference_wav_path=str(ref_wav),
                 reference_prompt_text="Dit is wat ik net zei.",
             )
@@ -442,75 +437,72 @@ class TTSBridgeTests(unittest.TestCase):
         self.assertEqual(reference_audio["prompt_text"], "Dit is wat ik net zei.")
         self.assertFalse(reference_audio["also_use_as_reference"])
 
-    def test_update_tts_settings_normalizes_stable_gender(self) -> None:
-        settings, errors = update_tts_settings(
-            {
-                "backend": "voxcpm2",
-                "voxcpm2": {
-                    "languages": {
-                        "nl": {
-                            "mode": "reference_audio",
-                            "reference_source": "stable_generated",
-                            "trim_seconds": 6,
-                            "stable_gender": "female",
-                        },
-                        "it": {
-                            "mode": "reference_audio",
-                            "reference_source": "stable_generated",
-                            "trim_seconds": 6,
-                        },
+    def test_tts_settings_snapshot_normalizes_stable_gender(self) -> None:
+        settings, errors = tts_settings_snapshot({
+            "backend": "voxcpm2",
+            "voxcpm2": {
+                "languages": {
+                    "nl": {
+                        "mode": "reference_audio",
+                        "reference_source": "stable_generated",
+                        "trim_seconds": 6,
+                        "stable_gender": "female",
+                    },
+                    "it": {
+                        "mode": "reference_audio",
+                        "reference_source": "stable_generated",
+                        "trim_seconds": 6,
                     },
                 },
-            }
-        )
+            },
+        })
 
         self.assertEqual(errors, {})
         self.assertEqual(settings["voxcpm2"]["languages"]["nl"]["stable_gender"], "female")
         # Missing stable_gender defaults to female.
         self.assertEqual(settings["voxcpm2"]["languages"]["it"]["stable_gender"], "female")
         # last_speech entries do not carry a stable_gender field.
-        settings, errors = update_tts_settings(
-            {
-                "voxcpm2": {
-                    "languages": {
-                        "nl": {
-                            "mode": "reference_audio",
-                            "reference_source": "last_speech",
-                            "trim_seconds": 6,
-                        },
+        settings, errors = tts_settings_snapshot({
+            "voxcpm2": {
+                "languages": {
+                    "nl": {
+                        "mode": "reference_audio",
+                        "reference_source": "last_speech",
+                        "trim_seconds": 6,
                     },
                 },
-            }
-        )
+            },
+        })
         self.assertEqual(errors, {})
         self.assertNotIn("stable_gender", settings["voxcpm2"]["languages"]["nl"])
 
-    def test_update_tts_settings_replaces_languages_map_atomically(self) -> None:
-        update_tts_settings(
-            {
-                "backend": "voxcpm2",
-                "voxcpm2": {
-                    "languages": {
-                        "nl": {"mode": "description", "identity": "adult_man", "texture": "gentle_and_warm"},
+    def test_tts_settings_snapshot_replaces_languages_map_atomically(self) -> None:
+        first_settings, errors = tts_settings_snapshot({
+            "backend": "voxcpm2",
+            "voxcpm2": {
+                "languages": {
+                    "de": {"mode": "description", "identity": "adult_man", "texture": "gentle_and_warm"},
+                },
+            },
+        })
+        self.assertEqual(errors, {})
+        self.assertEqual(set(first_settings["voxcpm2"]["languages"]), {"de"})
+
+        settings, errors = tts_settings_snapshot({
+            "backend": "voxcpm2",
+            "voxcpm2": {
+                "languages": {
+                    "nl": {
+                        "mode": "reference_audio",
+                        "reference_source": "last_speech",
+                        "trim_seconds": 5,
                     },
                 },
-            }
-        )
-        settings, errors = update_tts_settings(
-            {
-                "voxcpm2": {
-                    "languages": {
-                        "nl": {
-                            "mode": "reference_audio",
-                            "reference_source": "last_speech",
-                            "trim_seconds": 5,
-                        },
-                    },
-                },
-            }
-        )
+            },
+        })
 
         self.assertEqual(errors, {})
+        self.assertEqual(set(settings["voxcpm2"]["languages"]), {"nl"})
         self.assertEqual(
             settings["voxcpm2"]["languages"]["nl"],
             {
@@ -523,8 +515,8 @@ class TTSBridgeTests(unittest.TestCase):
             },
         )
 
-    def test_update_tts_settings_rejects_unknown_backend(self) -> None:
-        _, errors = update_tts_settings({"backend": "stub-tts"})
+    def test_tts_settings_snapshot_rejects_unknown_backend(self) -> None:
+        _, errors = tts_settings_snapshot({"backend": "stub-tts"})
 
         self.assertIn("backend", errors)
 
@@ -557,6 +549,11 @@ class TTSBridgeTests(unittest.TestCase):
         )
         self.assertFalse(reference_sources[0]["disabled"])
         self.assertFalse(reference_sources[1]["disabled"])
+        ultimate = payload["voxcpm2"]["ultimate_cloning"]
+        self.assertFalse(ultimate["stable_generated"]["enabled"])
+        self.assertTrue(ultimate["stable_generated"]["also_use_as_reference"])
+        self.assertFalse(ultimate["last_speech"]["enabled"])
+        self.assertTrue(ultimate["last_speech"]["also_use_as_reference"])
 
     def test_settings_payload_exposes_only_loaded_tts_pool_models(self) -> None:
         self.loaded_models.return_value = {"kokoro", "nanovllm_voxcpm"}

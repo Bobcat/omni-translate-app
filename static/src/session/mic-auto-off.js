@@ -7,7 +7,7 @@
 // registerMicAutoOffStopHandler to avoid a circular import.
 
 import { state } from '../state.js';
-import { MIC_STATES, SESSION_STATES, TURN_STATES } from '../shared/constants.js';
+import { MIC_STATES, APP_MODES, TURN_STATES } from '../shared/constants.js';
 
 let _stopMicCallback = null;
 
@@ -17,7 +17,7 @@ export function registerMicAutoOffStopHandler(fn) {
 
 export function armAutoOffSilenceTimer() {
   clearAutoOffSilenceTimer();
-  if (state.sessionState !== SESSION_STATES.RUNNING) return;
+  if (state.appMode !== APP_MODES.LIVE_RECORDING) return;
   if (state.micState !== MIC_STATES.LISTENING) return;
   if (state.currentTurn?.state === TURN_STATES.OPEN_SPEAKING) return;
   const seconds = Number(state.audioSettings.autoOffSilenceSeconds || 0);
@@ -36,7 +36,7 @@ export function clearAutoOffSilenceTimer() {
 }
 
 export function performMicAutoOff(reason) {
-  if (state.sessionState !== SESSION_STATES.RUNNING) return;
+  if (state.appMode !== APP_MODES.LIVE_RECORDING) return;
   if (state.micState !== MIC_STATES.LISTENING) return;
   clearAutoOffSilenceTimer();
   // The stop handler (lifecycle.stopMicrophoneCapture) plays the

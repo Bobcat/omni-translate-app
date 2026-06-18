@@ -3,7 +3,7 @@
 // functions are invoked explicitly after writes.
 
 import {
-  SESSION_STATES,
+  APP_MODES,
   MIC_STATES,
   DEFAULT_AUDIO_SETTINGS,
   DEFAULT_TUNING_SETTINGS,
@@ -31,7 +31,20 @@ export const state = {
   currentTurn: createLocalTurn('a_to_b', initialLanes),
   audioStatus: '',
   status: 'idle',
-  sessionState: SESSION_STATES.SETUP,
+  appMode: APP_MODES.SETUP,
+  imageTranslation: {
+    fileName: '',
+    previewUrl: '',
+    translatedUrl: '',
+    translatedReady: false,
+    displayMode: 'original',
+    translatedTargetLanguage: '',
+    shouldResetScroll: false,
+    error: '',
+    busy: false,
+    requestId: '',
+    requestToken: null,
+  },
   micState: MIC_STATES.OFF,
   pcExportBusy: false,
   audioInputSampleRate: 16000,
