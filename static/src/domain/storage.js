@@ -2,11 +2,28 @@
 // Functions that need state read it via an explicit argument; nothing here
 // reaches into the app's mutable singletons.
 
-export const TTS_GLOBAL_STORAGE_KEY = 'tts_global';
-export const RECENT_LANGUAGES_KEY = 'recent_languages';
-export const DEV_TOOLS_SETTINGS_KEY = 'dev_tools_settings';
-export const SETUP_LANGUAGES_KEY = 'setup_languages';
+export const APP_STORAGE_KEYS = Object.freeze({
+  TTS_GLOBAL: 'tts_global',
+  RECENT_LANGUAGES: 'recent_languages',
+  DEV_TOOLS_SETTINGS: 'dev_tools_settings',
+  SETUP_LANGUAGES: 'setup_languages',
+  VOXCPM2_VOICE_CONFIG: 'voxcpm2_voice_config',
+});
+export const TTS_GLOBAL_STORAGE_KEY = APP_STORAGE_KEYS.TTS_GLOBAL;
+export const RECENT_LANGUAGES_KEY = APP_STORAGE_KEYS.RECENT_LANGUAGES;
+export const DEV_TOOLS_SETTINGS_KEY = APP_STORAGE_KEYS.DEV_TOOLS_SETTINGS;
+export const SETUP_LANGUAGES_KEY = APP_STORAGE_KEYS.SETUP_LANGUAGES;
+export const VOXCPM2_VOICE_CONFIG_STORAGE_KEY = APP_STORAGE_KEYS.VOXCPM2_VOICE_CONFIG;
 export const RECENT_MAX = 4;
+
+export function clearAppLocalStorage() {
+  let removed = 0;
+  for (const key of Object.values(APP_STORAGE_KEYS)) {
+    if (localStorage.getItem(key) !== null) removed += 1;
+    localStorage.removeItem(key);
+  }
+  return removed;
+}
 
 export function loadTtsGlobalConfig() {
   try {

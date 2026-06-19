@@ -20,6 +20,7 @@ export function renderLifecycle() {
   const imageTranslation = state.appMode === APP_MODES.IMAGE_TRANSLATION;
   const micOff = liveRecording && state.micState === MIC_STATES.OFF;
   const micListening = liveRecording && state.micState === MIC_STATES.LISTENING;
+  const debugControls = Boolean(state.devToolsSettings.showControls);
   els.app.classList.toggle('is-setup', setup);
   els.app.classList.toggle('is-live-recording', liveRecording);
   els.app.classList.toggle('is-image-translation', imageTranslation);
@@ -29,8 +30,8 @@ export function renderLifecycle() {
   els.imageTranslationView.hidden = !imageTranslation;
   els.sourceText.hidden = setup || imageTranslation;
   els.languageDirectionButton.hidden = !(setup || imageTranslation);
-  els.translateNowButton.hidden = !liveRecording;
-  els.speakNowButton.hidden = !liveRecording;
+  els.translateNowButton.hidden = !(liveRecording && debugControls);
+  els.speakNowButton.hidden = !(liveRecording && debugControls);
   els.micToggleButton.hidden = !liveRecording;
   els.pcExportButton.hidden = !(liveRecording && micOff && state.devToolsSettings.showControls);
   els.setupFixtureButton.hidden = !(setup && state.devToolsSettings.showControls);

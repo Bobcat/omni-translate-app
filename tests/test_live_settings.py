@@ -11,6 +11,13 @@ from app.live_settings import normalize_live_settings_delta
 
 
 class LiveSettingsTests(unittest.TestCase):
+    def test_default_force_commit_silence_is_snappy_cap(self) -> None:
+        settings = default_live_settings()
+        speech_gate = settings["rolling"]["speech_gate"]
+
+        self.assertEqual(speech_gate["silence_enter_ms"], 900)
+        self.assertEqual(speech_gate["force_commit_silence_ms"], 1200)
+
     def test_live_delta_accepts_backend_and_rolling_fields(self) -> None:
         delta, errors = normalize_live_settings_delta(
             {

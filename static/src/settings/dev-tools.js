@@ -7,8 +7,9 @@
 
 import { state } from '../state.js';
 import { els } from '../els.js';
-import { saveDevToolsSettings } from '../domain/storage.js';
+import { clearAppLocalStorage, saveDevToolsSettings } from '../domain/storage.js';
 import { renderLifecycle } from '../ui/render-status.js';
+import { updateActionButtons } from '../ui/action-buttons.js';
 
 let _installPrompt = null;
 
@@ -64,6 +65,13 @@ export function handleDevToolsShowControlsChange() {
   state.devToolsSettings.showControls = els.devToolsShowControls.checked;
   saveDevToolsSettings(state.devToolsSettings);
   renderLifecycle();
+  updateActionButtons();
+}
+
+export function handleClearAppStorage() {
+  if (!window.confirm('Clear saved settings for this app and reload?')) return;
+  clearAppLocalStorage();
+  window.location.reload();
 }
 
 export function renderHistorySettings() {

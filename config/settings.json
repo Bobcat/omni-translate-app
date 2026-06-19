@@ -77,7 +77,7 @@
         "silence_enter_ms": 900,
         "rearm_hits": 2,
         "rearm_window_ms": 500,
-        "force_commit_silence_ms": 2500
+        "force_commit_silence_ms": 1200
       }
     }
   },
@@ -102,7 +102,7 @@
     "voxcpm2": {
       "ultimate_cloning": {
         "stable_generated": {
-          "enabled": false,
+          "enabled": true,
           "also_use_as_reference": true
         },
         "last_speech": {

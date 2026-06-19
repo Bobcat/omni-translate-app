@@ -43,6 +43,7 @@ import {
   resetAudioSettings,
 } from './settings/audio.js';
 import {
+  handleClearAppStorage,
   handleDevToolsShowControlsChange,
   handleInstallApp,
   updateInstallRow,
@@ -145,6 +146,7 @@ async function init() {
   els.voiceLibraryControls.addEventListener('change', handleVoiceLibraryChange);
   els.voiceLibraryControls.addEventListener('click', handleVoiceLibraryClick);
   els.devToolsShowControls.addEventListener('change', handleDevToolsShowControlsChange);
+  els.devToolsStorageReset.addEventListener('click', handleClearAppStorage);
   els.setupFixtureButton.addEventListener('click', handleSetupFixtureClick);
   els.installAppRow.addEventListener('click', () => handleInstallApp({ closeSettings: closeSettingsSheet }));
   els.settingsStartButton.addEventListener('click', startFromSettings);

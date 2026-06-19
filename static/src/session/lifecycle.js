@@ -199,6 +199,9 @@ export function stopMicrophoneCapture() {
   state.capture?.stop();
   state.capture = null;
   state.micState = MIC_STATES.OFF;
+  if (state.currentTurn.canTranslateNow) {
+    state.socket?.translateNow();
+  }
   state.socket?.discardInflight();
   if (state.audioSettings.autoOffCueEnabled) {
     try { playMicOffCue(); } catch {}

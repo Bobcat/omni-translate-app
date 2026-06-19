@@ -1943,6 +1943,10 @@ button {
   background-color: var(--border);
 }
 
+.storage-reset-button {
+  color: var(--danger);
+}
+
 .setting-group {
   display: grid;
   gap: 8px;

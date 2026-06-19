@@ -12,7 +12,11 @@ import {
 } from '../domain/languages.js';
 import { DEFAULT_TTS_SETTINGS, DEFAULT_TTS_OPTIONS } from '../shared/constants.js';
 import { cloneSettings, mergeSettings } from '../shared/utils.js';
-import { loadTtsGlobalConfig, persistTtsGlobalConfig } from '../domain/storage.js';
+import {
+  VOXCPM2_VOICE_CONFIG_STORAGE_KEY,
+  loadTtsGlobalConfig,
+  persistTtsGlobalConfig,
+} from '../domain/storage.js';
 import { currentLane } from '../domain/lanes.js';
 
 const TTS_BACKEND_GROUP_NAMES = {
@@ -26,8 +30,6 @@ export const VOXCPM2_DEFAULT_LANGUAGE_CONFIG = {
   reference_source: 'stable_generated',
   stable_gender: 'female',
 };
-export const VOXCPM2_DEFAULT_TRIM_SECONDS = 4;
-const VOXCPM2_VOICE_CONFIG_STORAGE_KEY = 'voxcpm2_voice_config';
 // Prompt-phrase per identity — kept in sync with backend tts_bridge.py.
 // UI dropdown labels stay short ("Adult woman"); this is what ends up in
 // the model instruction.
@@ -172,9 +174,6 @@ function persistVoxcpm2VoiceConfig() {
       if (entry.texture !== undefined) out.texture = entry.texture;
       if (entry.preset !== undefined) out.preset = entry.preset;
       if (entry.stable_gender !== undefined) out.stable_gender = entry.stable_gender;
-      if (entry.trim_seconds !== undefined) out.trim_seconds = entry.trim_seconds;
-      // trim_to_source is intentionally NOT persisted: always restored to
-      // its default (true) on hard refresh.
       if (Object.keys(out).length) stripped[tag] = out;
     }
     localStorage.setItem(VOXCPM2_VOICE_CONFIG_STORAGE_KEY, JSON.stringify(stripped));
@@ -192,11 +191,6 @@ function normalizeVoxcpm2LanguageEntry(entry) {
   if (entry.texture === '' || VOXCPM2_TEXTURE_PHRASES[entry.texture]) out.texture = entry.texture;
   if (entry.preset === '' || VOXCPM2_PRESET_PHRASES[entry.preset]) out.preset = entry.preset;
   if (allowedGenders.has(entry.stable_gender)) out.stable_gender = entry.stable_gender;
-  const trimRaw = Number(entry.trim_seconds);
-  if (Number.isFinite(trimRaw)) {
-    out.trim_seconds = Math.min(60, Math.max(1, trimRaw));
-  }
-  // trim_to_source intentionally ignored — never restored from storage.
   return out;
 }
 
@@ -260,9 +254,6 @@ export function handleTtsSettingChange(event) {
         mode: 'reference_audio',
         reference_source: 'stable_generated',
         stable_gender: current.stable_gender || 'female',
-        trim_seconds: Number.isFinite(Number(current.trim_seconds))
-          ? Number(current.trim_seconds)
-          : VOXCPM2_DEFAULT_TRIM_SECONDS,
         preset: current.preset || '',
       };
     });
@@ -277,9 +268,6 @@ export function handleTtsSettingChange(event) {
       const next = {
         mode: 'reference_audio',
         reference_source: refSource,
-        trim_seconds: Number.isFinite(Number(current.trim_seconds))
-          ? Number(current.trim_seconds)
-          : VOXCPM2_DEFAULT_TRIM_SECONDS,
         preset: current.preset || '',
       };
       if (refSource === 'stable_generated') {
@@ -311,24 +299,6 @@ export function handleTtsSettingChange(event) {
     const allowed = new Set(voxcpm2PresetOptions().map((o) => o.value));
     const value = allowed.has(input.value) ? input.value : '';
     updateVoxcpm2LanguageConfig(tag, (current) => ({ ...current, preset: value }));
-    return;
-  }
-  if (kind === 'voxcpm2-trim-to-source') {
-    const value = Boolean(input.checked);
-    updateVoxcpm2LanguageConfig(tag, (current) => ({ ...current, trim_to_source: value }));
-    return;
-  }
-  if (kind === 'voxcpm2-trim-seconds') {
-    const value = normalizeTtsNumber(input.value, VOXCPM2_DEFAULT_TRIM_SECONDS, 1, 60);
-    updateVoxcpm2LanguageConfig(tag, (current) => {
-      const allowed = new Set(['last_speech', 'stable_generated']);
-      const source = allowed.has(current.reference_source) ? current.reference_source : 'last_speech';
-      const next = { mode: 'reference_audio', reference_source: source, trim_seconds: value };
-      if (source === 'stable_generated') {
-        next.stable_gender = current.stable_gender || 'female';
-      }
-      return next;
-    });
     return;
   }
 }
@@ -551,23 +521,6 @@ function voxcpm2TtsRows(backend) {
         gender: config.stable_gender || 'female',
       }));
     }
-    rows.push(createTtsNumberRow({
-      label: 'Trim audio (s)',
-      value: Number.isFinite(Number(config.trim_seconds)) ? Number(config.trim_seconds) : VOXCPM2_DEFAULT_TRIM_SECONDS,
-      min: 1,
-      max: 60,
-      step: 1,
-      disabled,
-      kind: 'voxcpm2-trim-seconds',
-      language: tag,
-    }));
-    rows.push(createTtsSwitchRow({
-      label: 'Trim to source bubble',
-      checked: Boolean(config.trim_to_source),
-      disabled,
-      kind: 'voxcpm2-trim-to-source',
-      language: tag,
-    }));
     // With ultimate cloning on, the pool drops (control), so Texture
     // and Style have no effect. Hide them to avoid the confusion of
     // toggles that do nothing.
@@ -931,63 +884,6 @@ function createTtsSelectRow({ label, value, options, disabled, kind, language, e
   return row;
 }
 
-function createTtsSwitchRow({ label, checked, disabled, kind, language }) {
-  const row = document.createElement('label');
-  row.className = 'tuning-row';
-  const labelEl = document.createElement('span');
-  labelEl.className = 'tuning-label';
-  labelEl.textContent = label;
-  const switchEl = document.createElement('span');
-  switchEl.className = 'switch';
-  const input = document.createElement('input');
-  input.type = 'checkbox';
-  input.setAttribute('role', 'switch');
-  input.dataset.ttsKind = kind;
-  if (language) input.dataset.ttsLanguage = language;
-  input.checked = Boolean(checked);
-  input.disabled = Boolean(disabled);
-  const track = document.createElement('span');
-  track.className = 'switch-track';
-  track.setAttribute('aria-hidden', 'true');
-  const thumb = document.createElement('span');
-  thumb.className = 'switch-thumb';
-  thumb.setAttribute('aria-hidden', 'true');
-  switchEl.append(input, track, thumb);
-  const valueWrap = document.createElement('span');
-  valueWrap.className = 'tuning-value-wrap';
-  valueWrap.append(switchEl);
-  row.append(labelEl, valueWrap);
-  return row;
-}
-
-function createTtsNumberRow({ label, value, min, max, step, unit, disabled, kind, language }) {
-  const row = document.createElement('label');
-  row.className = 'tuning-row';
-  const labelEl = document.createElement('span');
-  labelEl.className = 'tuning-label';
-  labelEl.textContent = label;
-  const input = document.createElement('input');
-  input.type = 'number';
-  input.dataset.ttsKind = kind;
-  if (language) input.dataset.ttsLanguage = language;
-  input.min = String(min);
-  input.max = String(max);
-  input.step = String(step);
-  input.value = String(value);
-  input.disabled = disabled;
-  const valueWrap = document.createElement('span');
-  valueWrap.className = 'tuning-value-wrap';
-  valueWrap.append(input);
-  if (unit) {
-    const unitEl = document.createElement('span');
-    unitEl.className = 'tuning-unit';
-    unitEl.textContent = unit;
-    valueWrap.append(unitEl);
-  }
-  row.append(labelEl, valueWrap);
-  return row;
-}
-
 function voxcpm2LanguageConfig(tag) {
   const stored = state.ttsSettings.voxcpm2.languages?.[tag];
   if (!stored || typeof stored !== 'object') {
@@ -997,10 +893,6 @@ function voxcpm2LanguageConfig(tag) {
     const cfg = {
       mode: 'reference_audio',
       reference_source: stored.reference_source || 'stable_generated',
-      trim_seconds: Number.isFinite(Number(stored.trim_seconds))
-        ? Number(stored.trim_seconds)
-        : VOXCPM2_DEFAULT_TRIM_SECONDS,
-      trim_to_source: Boolean(stored.trim_to_source),
       texture: stored.texture || '',
       preset: stored.preset || '',
     };
@@ -1062,12 +954,6 @@ function currentVoxcpm2PickerTag() {
   const targetTag = bcp47ForLanguageName(currentTtsTargetLanguage());
   if (targetTag && known.has(targetTag)) return targetTag;
   return languages[0]?.bcp47 || 'en';
-}
-
-function normalizeTtsNumber(value, fallback, min, max) {
-  const raw = Number(value);
-  if (!Number.isFinite(raw)) return fallback;
-  return Math.min(max, Math.max(min, raw));
 }
 
 function ttsPresetLanguages() {

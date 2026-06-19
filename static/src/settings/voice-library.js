@@ -185,16 +185,24 @@ function _voiceLibraryStatusLine(info) {
 
 function _voiceLibraryStatusValueText(info) {
   if (!info?.exists) return 'never';
-  if (!info?.generated_at) return 'unknown time';
+  const durationText = _voiceLibraryDurationText(info.duration_ms);
+  if (!info?.generated_at) return durationText ? `unknown time · ${durationText}` : 'unknown time';
   try {
     const stamp = new Date(info.generated_at);
     if (!Number.isNaN(stamp.getTime())) {
-      return stamp.toLocaleString([], {
+      const timeText = stamp.toLocaleString([], {
         year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
       });
+      return durationText ? `${timeText} · ${durationText}` : timeText;
     }
   } catch (_) {}
-  return 'unknown time';
+  return durationText ? `unknown time · ${durationText}` : 'unknown time';
+}
+
+function _voiceLibraryDurationText(durationMs) {
+  const value = Number(durationMs);
+  if (!Number.isFinite(value) || value <= 0) return '';
+  return `${(value / 1000).toFixed(2)}s`;
 }
 
 function _voiceLibraryPlayButton({ action, title, ariaLabel }) {
@@ -228,7 +236,10 @@ function _voiceLibraryActions({ busy, info, hasReferenceText, hasEngine, decisio
   if (decisionReady) {
     button.dataset.voiceLibraryAction = 'play-just-generated';
     button.classList.add('voice-library-action-replay');
-    button.append(document.createTextNode('Replay just generated'));
+    const durationText = _voiceLibraryDurationText(info.pending_duration_ms);
+    button.append(document.createTextNode(
+      durationText ? `Replay just generated (${durationText})` : 'Replay just generated',
+    ));
     button.append(_voiceLibrarySpeakerIcon());
     button.disabled = busy;
   } else {
@@ -491,7 +502,12 @@ export function voiceLibraryOnExit() {
   const langState = state.voiceLibraryStable[tag];
   const sample = langState?.samples?.[gender];
   if (sample) {
-    const cleared = { ...sample, has_pending: false, pending_generated_at: null };
+    const cleared = {
+      ...sample,
+      has_pending: false,
+      pending_generated_at: null,
+      pending_duration_ms: null,
+    };
     state.voiceLibraryStable = {
       ...state.voiceLibraryStable,
       [tag]: {

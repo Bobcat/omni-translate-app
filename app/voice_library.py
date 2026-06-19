@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import wave
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -23,8 +24,16 @@ STABLE_VOICE_GENDERS = ("female", "male")
 _KNOWN_TAGS = frozenset(LANGUAGE_BCP47_BY_NAME.values())
 _KNOWN_GENDERS = frozenset(STABLE_VOICE_GENDERS)
 _STABLE_LIBRARY_PROMPTS = {
-    "female": "Adult female voice. Gentle and warm.",
-    "male": "Adult male voice. Gentle and calm.",
+    "female": (
+        "Adult female voice. Friendly, relaxed, warm, and calm. "
+        "Natural conversational tone, clear articulation, slightly slower than normal, "
+        "unhurried steady pace."
+    ),
+    "male": (
+        "Adult male voice. Friendly, relaxed, warm, and calm. "
+        "Natural conversational tone, clear articulation, slightly slower than normal, "
+        "unhurried steady pace."
+    ),
 }
 
 
@@ -49,8 +58,10 @@ def _sample_entry(tag: str, gender: str) -> dict[str, Any]:
     return {
         "exists": wav_path.exists(),
         "generated_at": _read_meta_generated_at(tag, gender, "meta.json"),
+        "duration_ms": _wav_duration_ms(wav_path),
         "has_pending": pending_wav_path.exists(),
         "pending_generated_at": _read_meta_generated_at(tag, gender, "meta.pending.json"),
+        "pending_duration_ms": _wav_duration_ms(pending_wav_path),
     }
 
 
@@ -68,13 +79,36 @@ def _read_meta_generated_at(tag: str, gender: str, meta_filename: str) -> str | 
     return str(value) if value else None
 
 
+def _wav_duration_ms(path: Path) -> int | None:
+    if not path.exists():
+        return None
+    try:
+        with wave.open(str(path), "rb") as reader:
+            frame_rate = reader.getframerate()
+            if frame_rate <= 0:
+                return None
+            return round((reader.getnframes() / frame_rate) * 1000)
+    except (OSError, EOFError, wave.Error):
+        return None
+
+
 def stable_voice_language_status(language_tag: str) -> dict[str, Any]:
     tag = str(language_tag or "").strip().lower()
     if tag not in _KNOWN_TAGS:
         return {
             "has_reference_text": False,
             "reference_text": "",
-            "samples": {gender: {"exists": False, "generated_at": None} for gender in STABLE_VOICE_GENDERS},
+            "samples": {
+                gender: {
+                    "exists": False,
+                    "generated_at": None,
+                    "duration_ms": None,
+                    "has_pending": False,
+                    "pending_generated_at": None,
+                    "pending_duration_ms": None,
+                }
+                for gender in STABLE_VOICE_GENDERS
+            },
         }
     ref_path = (REFERENCE_TEXTS_ROOT / f"{tag}.txt").resolve()
     reference_text = ""

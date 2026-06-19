@@ -20,7 +20,8 @@ export function updateActionButtons() {
 function updateTranslateNowButton() {
   const turnIsSpeaking = state.currentTurn.state === TURN_STATES.OPEN_SPEAKING;
   const live = state.appMode === APP_MODES.LIVE_RECORDING && state.socket?.isOpen();
-  els.translateNowButton.disabled = !(live && state.currentTurn.canTranslateNow && !turnIsSpeaking);
+  const debugControls = Boolean(state.devToolsSettings.showControls);
+  els.translateNowButton.disabled = !(debugControls && live && state.currentTurn.canTranslateNow && !turnIsSpeaking);
 }
 
 function updateSwapButton() {
@@ -31,8 +32,9 @@ function updateSwapButton() {
 function updateSpeakNowButton() {
   const turnIsSpeaking = state.currentTurn.state === TURN_STATES.OPEN_SPEAKING;
   const live = state.appMode === APP_MODES.LIVE_RECORDING && state.socket?.isOpen();
-  const canSpeakTarget = Boolean(live && state.currentTurn.speakableTargetText && !turnIsSpeaking);
-  const canPlayAudio = Boolean(live && audioQueue?.hasNonReplayAudio());
+  const debugControls = Boolean(state.devToolsSettings.showControls);
+  const canSpeakTarget = Boolean(debugControls && live && state.currentTurn.speakableTargetText && !turnIsSpeaking);
+  const canPlayAudio = Boolean(debugControls && live && audioQueue?.hasNonReplayAudio());
   els.speakNowButton.disabled = state.speakNowPending || !(canSpeakTarget || canPlayAudio);
   els.speakNowButton.classList.toggle('is-busy', turnIsSpeaking);
   let label = 'Speak now';

@@ -318,7 +318,7 @@ class TTSBridgeTests(unittest.TestCase):
                     "nl": {
                         "mode": "reference_audio",
                         "reference_source": "stable_generated",
-                        "trim_seconds": 4,
+                        "trim_seconds": 1,
                     },
                 },
                 "ultimate_cloning": {
@@ -328,7 +328,7 @@ class TTSBridgeTests(unittest.TestCase):
         })
         stable_dir = tmp_root / "nl" / "female"
         stable_dir.mkdir(parents=True, exist_ok=True)
-        (stable_dir / "audio.wav").write_bytes(_silent_wav(seconds=2.5))
+        (stable_dir / "audio.wav").write_bytes(_silent_wav(seconds=5.0))
         (stable_dir / "meta.json").write_text(
             json.dumps({"reference_text": "Ik lees dit korte bericht met een rustige stem."}),
             encoding="utf-8",
@@ -339,7 +339,7 @@ class TTSBridgeTests(unittest.TestCase):
         self.addCleanup(lambda: shutil.rmtree(TTS_ROOT / session_id, ignore_errors=True))
 
         with mock.patch("app.tts_bridge._post_json", side_effect=fake_pool.post_json):
-            TTSBridge().synthesize(
+            payload = TTSBridge().synthesize(
                 session_id=session_id,
                 text="Hallo",
                 language="Dutch",
@@ -348,11 +348,16 @@ class TTSBridgeTests(unittest.TestCase):
             )
 
         reference_audio = fake_pool.calls[0]["payload"]["voice"]["reference_audio"]
+        reference_bytes = base64.b64decode(reference_audio["data_base64"])
+        self.assertEqual(_wav_duration_ms(reference_bytes), 5000)
+        self.assertEqual(reference_audio["max_duration_s"], 5.0)
         self.assertEqual(
             reference_audio["prompt_text"],
             "Ik lees dit korte bericht met een rustige stem.",
         )
         self.assertTrue(reference_audio["also_use_as_reference"])
+        self.assertFalse(payload["metadata"]["reference_client_clipped"])
+        self.assertTrue(payload["metadata"]["reference_client_clip_skipped_for_prompt_text"])
 
     def test_stable_generated_toggle_off_stays_reference_only(self) -> None:
         tmp_root = self._isolated_voice_library_root()
@@ -550,7 +555,7 @@ class TTSBridgeTests(unittest.TestCase):
         self.assertFalse(reference_sources[0]["disabled"])
         self.assertFalse(reference_sources[1]["disabled"])
         ultimate = payload["voxcpm2"]["ultimate_cloning"]
-        self.assertFalse(ultimate["stable_generated"]["enabled"])
+        self.assertTrue(ultimate["stable_generated"]["enabled"])
         self.assertTrue(ultimate["stable_generated"]["also_use_as_reference"])
         self.assertFalse(ultimate["last_speech"]["enabled"])
         self.assertTrue(ultimate["last_speech"]["also_use_as_reference"])

@@ -122,7 +122,7 @@ def default_live_settings() -> dict[str, Any]:
                 "silence_enter_ms": get_int("live.rolling.speech_gate.silence_enter_ms", 900, min_value=100),
                 "rearm_hits": get_int("live.rolling.speech_gate.rearm_hits", 2, min_value=1),
                 "rearm_window_ms": get_int("live.rolling.speech_gate.rearm_window_ms", 500, min_value=100),
-                "force_commit_silence_ms": get_int("live.rolling.speech_gate.force_commit_silence_ms", 2500, min_value=100),
+                "force_commit_silence_ms": get_int("live.rolling.speech_gate.force_commit_silence_ms", 1200, min_value=100),
             },
         },
     }

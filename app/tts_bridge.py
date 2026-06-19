@@ -567,7 +567,17 @@ def _reference_audio_payload(
     path = Path(reference_wav_path).expanduser().resolve()
     source_duration_ms = _wav_duration_ms(path)
     max_duration_ms = int(max_duration_s * 1000)
-    if source_duration_ms > max_duration_ms:
+    safe_prompt_text = str(prompt_text or "").strip()
+    skipped_clip_for_prompt_text = False
+    effective_max_duration_s = float(max_duration_s)
+    if safe_prompt_text:
+        audio_bytes = path.read_bytes()
+        duration_ms = source_duration_ms
+        clipped = False
+        if source_duration_ms > max_duration_ms:
+            skipped_clip_for_prompt_text = True
+            effective_max_duration_s = max(effective_max_duration_s, source_duration_ms / 1000.0)
+    elif source_duration_ms > max_duration_ms:
         audio_bytes, duration_ms = _copy_wav_tail_to_bytes(path, max_duration_s=max_duration_s)
         clipped = True
     else:
@@ -578,9 +588,8 @@ def _reference_audio_payload(
     reference_audio: dict[str, Any] = {
         "mime_type": "audio/wav",
         "data_base64": base64.b64encode(audio_bytes).decode("ascii"),
-        "max_duration_s": float(max_duration_s),
+        "max_duration_s": float(effective_max_duration_s),
     }
-    safe_prompt_text = str(prompt_text or "").strip()
     if safe_prompt_text:
         reference_audio["prompt_text"] = safe_prompt_text
         reference_audio["also_use_as_reference"] = bool(also_use_as_reference)
@@ -591,6 +600,7 @@ def _reference_audio_payload(
         "reference_client_source_duration_ms": source_duration_ms,
         "reference_client_duration_ms": duration_ms,
         "reference_client_clipped": clipped,
+        "reference_client_clip_skipped_for_prompt_text": skipped_clip_for_prompt_text,
         "reference_client_prompt_text": bool(safe_prompt_text),
         "reference_client_also_use_as_reference": (
             bool(also_use_as_reference) if safe_prompt_text else False
@@ -778,7 +788,7 @@ def _base_tts_settings() -> dict[str, Any]:
             "languages": {},
             "ultimate_cloning": {
                 "stable_generated": {
-                    "enabled": get_bool("tts.voxcpm2.ultimate_cloning.stable_generated.enabled", False),
+                    "enabled": get_bool("tts.voxcpm2.ultimate_cloning.stable_generated.enabled", True),
                     "also_use_as_reference": get_bool(
                         "tts.voxcpm2.ultimate_cloning.stable_generated.also_use_as_reference", True
                     ),

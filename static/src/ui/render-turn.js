@@ -8,8 +8,8 @@ import { state } from '../state.js';
 import { els } from '../els.js';
 import { codeForLanguage } from '../domain/languages.js';
 import {
-  TURN_STATES,
   APP_MODES,
+  MIC_STATES,
 } from '../shared/constants.js';
 import { currentLane } from '../domain/lanes.js';
 import { visibleText } from '../domain/turns.js';
@@ -103,6 +103,8 @@ function renderTurnStream(el, parts, role, fallbackText) {
     renderTextStream(row, committedText, previewText);
     if (role === 'target' && state.ttsSettings.enabled) {
       const replayText = String(committedText || '').trim();
+      const speakText = visibleText(committedText, previewText);
+      const canSpeakVisibleText = Boolean(speakText && (part.isClosed || state.micState === MIC_STATES.OFF));
       const playing = state.audioPlayback;
       const isStopForThis = Boolean(
         playing && (
@@ -117,9 +119,9 @@ function renderTurnStream(el, parts, role, fallbackText) {
       } else if (part.speechState === 'spoken' && replayText) {
         row.classList.add('is-replayable');
         row.append(createBubbleSpeakButton({ text: replayText, laneId: state.currentTurn.laneId, partId: part.partId, mode: 'replay' }));
-      } else if (part.isClosed && part.speechState !== 'spoken' && replayText) {
+      } else if (part.speechState !== 'spoken' && canSpeakVisibleText) {
         row.classList.add('is-speakable');
-        row.append(createBubbleSpeakButton({ text: replayText, laneId: state.currentTurn.laneId, partId: part.partId, mode: 'speak' }));
+        row.append(createBubbleSpeakButton({ text: speakText, laneId: state.currentTurn.laneId, partId: part.partId, mode: 'speak' }));
       }
     }
     fragment.append(row);
