@@ -36,7 +36,7 @@ import {
   clearAutoOffSilenceTimer,
   registerMicAutoOffStopHandler,
 } from './mic-auto-off.js';
-import { playMicOffCue, playMicOnCue } from '../shared/audio-cue.js';
+import { playMicOffCue, playMicOnCue, usesIosMicCuePath } from '../shared/audio-cue.js';
 
 registerMicAutoOffStopHandler(() => stopMicrophoneCapture());
 import {
@@ -48,6 +48,8 @@ import { finishImageTranslationFromHistory } from '../image/lifecycle.js';
 import { audioQueue } from './audio-queue.js';
 import { handleMessage } from './messages.js';
 
+let _preplayedIosMicCue = null;
+
 export async function startListening({ withMic = true } = {}) {
   const startLaneId = currentLaneId();
   clearAllLanes({ laneId: startLaneId });
@@ -56,6 +58,7 @@ export async function startListening({ withMic = true } = {}) {
   state.pcExportBusy = false;
   setListenBusy(true);
   setStatus('connecting');
+  const useIosMicOnCue = withMic && state.audioSettings.autoOffCueEnabled && usesIosMicCuePath();
   let socket = null;
   let capture = null;
   try {
@@ -89,13 +92,19 @@ export async function startListening({ withMic = true } = {}) {
     ]);
     state.socket = socket;
     state.audioInputSampleRate = session.audio_input?.sample_rate_hz || 16000;
-    state.socket.startListening();
+    if (!useIosMicOnCue) {
+      state.socket.startListening();
+    }
     if (withMic) {
       state.capture = capture;
       state.audioSettings.autoGainControl = state.capture.autoGainControl;
+      if (useIosMicOnCue) {
+        await safePlayMicOnCue({ waitForEnd: true });
+        state.socket.startListening();
+      }
       state.micState = MIC_STATES.LISTENING;
-      if (state.audioSettings.autoOffCueEnabled) {
-        try { playMicOnCue(); } catch {}
+      if (state.audioSettings.autoOffCueEnabled && !useIosMicOnCue) {
+        safePlayMicOnCue();
       }
     } else {
       state.capture = null;
@@ -164,17 +173,21 @@ export async function startMicrophoneCapture() {
   if (state.appMode !== APP_MODES.LIVE_RECORDING || state.micState !== MIC_STATES.OFF) return;
   if (!state.socket?.isOpen()) return;
   setListenBusy(true);
+  const useIosMicOnCue = state.audioSettings.autoOffCueEnabled && usesIosMicCuePath();
   try {
     state.capture = createAudioCapture({ targetSampleRate: state.audioInputSampleRate });
     await state.capture.start();
     state.audioSettings.autoGainControl = state.capture.autoGainControl;
+    if (useIosMicOnCue) {
+      await safePlayMicOnCue({ waitForEnd: true });
+    }
     state.socket.startListening();
     state.micState = MIC_STATES.LISTENING;
     state.captureMutedForPlayback = false;
     enableTranscriptAutoFollow();
     armAutoOffSilenceTimer();
-    if (state.audioSettings.autoOffCueEnabled) {
-      try { playMicOnCue(); } catch {}
+    if (state.audioSettings.autoOffCueEnabled && !useIosMicOnCue) {
+      safePlayMicOnCue();
     }
     renderAudioSettings();
     renderTranscript();
@@ -194,6 +207,7 @@ export async function startMicrophoneCapture() {
 
 export function stopMicrophoneCapture() {
   if (state.appMode !== APP_MODES.LIVE_RECORDING) return;
+  const playedEarlyIosCue = state.audioSettings.autoOffCueEnabled && consumePreplayedIosMicCue('off');
   state.captureMutedForPlayback = false;
   clearAutoOffSilenceTimer();
   state.capture?.stop();
@@ -203,8 +217,8 @@ export function stopMicrophoneCapture() {
     state.socket?.translateNow();
   }
   state.socket?.discardInflight();
-  if (state.audioSettings.autoOffCueEnabled) {
-    try { playMicOffCue(); } catch {}
+  if (state.audioSettings.autoOffCueEnabled && !playedEarlyIosCue) {
+    safePlayMicOffCue();
   }
   hideVadHint();
   renderMicLevel(0);
@@ -261,6 +275,52 @@ function createAudioCapture({ targetSampleRate = 16000 } = {}) {
     },
     onLevel: (level) => renderMicLevel(level),
   });
+}
+
+function safePlayMicOnCue(options = {}) {
+  try {
+    return playMicOnCue(options);
+  } catch {
+    return false;
+  }
+}
+
+function safePlayMicOffCue() {
+  try {
+    return playMicOffCue();
+  } catch {
+    return false;
+  }
+}
+
+export function shouldInstallIosMicCuePreplay() {
+  return usesIosMicCuePath();
+}
+
+export function preplayIosMicCueForCurrentAction() {
+  if (!state.audioSettings.autoOffCueEnabled || !usesIosMicCuePath()) return;
+  const cue = currentIosMicCue();
+  if (cue !== 'off') return;
+  const played = cue === 'off' ? safePlayMicOffCue() : safePlayMicOnCue();
+  if (!played) return;
+  _preplayedIosMicCue = {
+    cue,
+    expiresAt: performance.now() + 1200,
+  };
+}
+
+function consumePreplayedIosMicCue(cue) {
+  if (!_preplayedIosMicCue) return false;
+  const preplayed = _preplayedIosMicCue;
+  _preplayedIosMicCue = null;
+  return preplayed.cue === cue && performance.now() <= preplayed.expiresAt;
+}
+
+function currentIosMicCue() {
+  if (state.status === 'connecting') return '';
+  if (state.appMode !== APP_MODES.LIVE_RECORDING) return '';
+  if (state.micState === MIC_STATES.LISTENING) return 'off';
+  return '';
 }
 
 async function createStartedAudioCapture({ targetSampleRate = 16000 } = {}) {

@@ -76,6 +76,8 @@ import {
   setViewMode,
   startFromSettings,
   handlePopstateBack,
+  preplayIosMicCueForCurrentAction,
+  shouldInstallIosMicCuePreplay,
 } from './session/lifecycle.js';
 import {
   handleImageFileChange,
@@ -150,6 +152,10 @@ async function init() {
   els.setupFixtureButton.addEventListener('click', handleSetupFixtureClick);
   els.installAppRow.addEventListener('click', () => handleInstallApp({ closeSettings: closeSettingsSheet }));
   els.settingsStartButton.addEventListener('click', startFromSettings);
+  if (shouldInstallIosMicCuePreplay()) {
+    els.micToggleButton.addEventListener('pointerdown', preplayIosMicCueForCurrentAction, { passive: true });
+    els.settingsStartButton.addEventListener('pointerdown', preplayIosMicCueForCurrentAction, { passive: true });
+  }
   els.micPreGain.addEventListener('input', handlePreGainInput);
   els.micAutoGainControl.addEventListener('change', handleAutoGainControlChange);
   els.micAutoOffSilence?.addEventListener('change', handleAutoOffSilenceChange);
