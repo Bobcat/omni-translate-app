@@ -18,9 +18,9 @@ function ctx() {
 }
 
 // Single 880 Hz blip: mic is on.
-export function playMicOnCue(options = {}) {
+export function playMicOnCue() {
   if (usesIosMicCuePath()) {
-    return _playIosCue('on', options);
+    return _playIosCue('on');
   }
   return _playCue([{ freq: 880, at: 0 }], 0.18);
 }
@@ -28,9 +28,9 @@ export function playMicOnCue(options = {}) {
 // Two-note tu-du: 880 Hz dropping to 660 Hz: mic is off.
 // Same cue for manual stop and auto-off; the name reflects the event,
 // not the trigger.
-export function playMicOffCue(options = {}) {
+export function playMicOffCue() {
   if (usesIosMicCuePath()) {
-    return _playIosCue('off', options);
+    return _playIosCue('off');
   }
   return _playCue([
     { freq: 880, at: 0 },
@@ -67,40 +67,18 @@ function _playCue(notes, durationS) {
   return true;
 }
 
-function _playIosCue(kind, { waitForEnd = false } = {}) {
+function _playIosCue(kind) {
   const cueAudio = iosCueAudio()[kind];
   if (!cueAudio) return false;
   try {
     cueAudio.pause();
     cueAudio.currentTime = 0;
     const playPromise = cueAudio.play();
-    if (waitForEnd) {
-      return waitForCueEnd(cueAudio, playPromise, kind === 'off' ? 380 : 260);
-    }
     if (playPromise?.catch) playPromise.catch(() => {});
     return true;
   } catch {
     return false;
   }
-}
-
-async function waitForCueEnd(audio, playPromise, timeoutMs) {
-  try {
-    await playPromise;
-  } catch {
-    return false;
-  }
-  return new Promise((resolve) => {
-    let done = false;
-    const finish = () => {
-      if (done) return;
-      done = true;
-      audio.removeEventListener('ended', finish);
-      resolve(true);
-    };
-    audio.addEventListener('ended', finish, { once: true });
-    setTimeout(finish, timeoutMs);
-  });
 }
 
 function iosCueAudio() {
@@ -110,20 +88,19 @@ function iosCueAudio() {
     off: createIosCueAudio([
       { freq: 880, at: 0, duration: 0.09 },
       { freq: 660, at: 0.14, duration: 0.11 },
-    ], 0.29),
+    ], 0.29, { sampleGain: 0.08 }),
   };
   return _iosCueAudio;
 }
 
-function createIosCueAudio(notes, durationS) {
-  const audio = new Audio(wavDataUrl(notes, durationS));
+function createIosCueAudio(notes, durationS, { sampleGain = 0.32 } = {}) {
+  const audio = new Audio(wavDataUrl(notes, durationS, { sampleGain }));
   audio.preload = 'auto';
-  audio.volume = 0.85;
   try { audio.load(); } catch {}
   return audio;
 }
 
-function wavDataUrl(notes, durationS) {
+function wavDataUrl(notes, durationS, { sampleGain = 0.32 } = {}) {
   const sampleRate = 44100;
   const sampleCount = Math.max(1, Math.ceil(durationS * sampleRate));
   const bytes = new Uint8Array(44 + sampleCount * 2);
@@ -149,7 +126,7 @@ function wavDataUrl(notes, durationS) {
       const localT = t - note.at;
       sample += Math.sin(2 * Math.PI * note.freq * localT) * noteEnvelope(localT, note.duration);
     }
-    view.setInt16(44 + i * 2, Math.round(clamp(sample * 0.32, -1, 1) * 0x7fff), true);
+    view.setInt16(44 + i * 2, Math.round(clamp(sample * sampleGain, -1, 1) * 0x7fff), true);
   }
   return `data:audio/wav;base64,${base64Bytes(bytes)}`;
 }

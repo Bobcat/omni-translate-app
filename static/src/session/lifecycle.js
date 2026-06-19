@@ -48,9 +48,10 @@ import { finishImageTranslationFromHistory } from '../image/lifecycle.js';
 import { audioQueue } from './audio-queue.js';
 import { handleMessage } from './messages.js';
 
-let _preplayedIosMicCue = null;
+let _iosMicOffCueTimer = null;
 
 export async function startListening({ withMic = true } = {}) {
+  clearPendingIosMicOffCue();
   const startLaneId = currentLaneId();
   clearAllLanes({ laneId: startLaneId });
   state.requestedStartLaneId = startLaneId;
@@ -99,7 +100,7 @@ export async function startListening({ withMic = true } = {}) {
       state.capture = capture;
       state.audioSettings.autoGainControl = state.capture.autoGainControl;
       if (useIosMicOnCue) {
-        await safePlayMicOnCue({ waitForEnd: true });
+        safePlayMicOnCue();
         state.socket.startListening();
       }
       state.micState = MIC_STATES.LISTENING;
@@ -172,6 +173,7 @@ export function finishSession() {
 export async function startMicrophoneCapture() {
   if (state.appMode !== APP_MODES.LIVE_RECORDING || state.micState !== MIC_STATES.OFF) return;
   if (!state.socket?.isOpen()) return;
+  clearPendingIosMicOffCue();
   setListenBusy(true);
   const useIosMicOnCue = state.audioSettings.autoOffCueEnabled && usesIosMicCuePath();
   try {
@@ -179,7 +181,7 @@ export async function startMicrophoneCapture() {
     await state.capture.start();
     state.audioSettings.autoGainControl = state.capture.autoGainControl;
     if (useIosMicOnCue) {
-      await safePlayMicOnCue({ waitForEnd: true });
+      safePlayMicOnCue();
     }
     state.socket.startListening();
     state.micState = MIC_STATES.LISTENING;
@@ -207,7 +209,7 @@ export async function startMicrophoneCapture() {
 
 export function stopMicrophoneCapture() {
   if (state.appMode !== APP_MODES.LIVE_RECORDING) return;
-  const playedEarlyIosCue = state.audioSettings.autoOffCueEnabled && consumePreplayedIosMicCue('off');
+  const useDelayedIosOffCue = state.audioSettings.autoOffCueEnabled && usesIosMicCuePath();
   state.captureMutedForPlayback = false;
   clearAutoOffSilenceTimer();
   state.capture?.stop();
@@ -217,7 +219,9 @@ export function stopMicrophoneCapture() {
     state.socket?.translateNow();
   }
   state.socket?.discardInflight();
-  if (state.audioSettings.autoOffCueEnabled && !playedEarlyIosCue) {
+  if (useDelayedIosOffCue) {
+    scheduleIosMicOffCue();
+  } else if (state.audioSettings.autoOffCueEnabled) {
     safePlayMicOffCue();
   }
   hideVadHint();
@@ -277,9 +281,9 @@ function createAudioCapture({ targetSampleRate = 16000 } = {}) {
   });
 }
 
-function safePlayMicOnCue(options = {}) {
+function safePlayMicOnCue() {
   try {
-    return playMicOnCue(options);
+    return playMicOnCue();
   } catch {
     return false;
   }
@@ -293,34 +297,18 @@ function safePlayMicOffCue() {
   }
 }
 
-export function shouldInstallIosMicCuePreplay() {
-  return usesIosMicCuePath();
+function scheduleIosMicOffCue() {
+  clearPendingIosMicOffCue();
+  _iosMicOffCueTimer = setTimeout(() => {
+    _iosMicOffCueTimer = null;
+    safePlayMicOffCue();
+  }, 90);
 }
 
-export function preplayIosMicCueForCurrentAction() {
-  if (!state.audioSettings.autoOffCueEnabled || !usesIosMicCuePath()) return;
-  const cue = currentIosMicCue();
-  if (cue !== 'off') return;
-  const played = cue === 'off' ? safePlayMicOffCue() : safePlayMicOnCue();
-  if (!played) return;
-  _preplayedIosMicCue = {
-    cue,
-    expiresAt: performance.now() + 1200,
-  };
-}
-
-function consumePreplayedIosMicCue(cue) {
-  if (!_preplayedIosMicCue) return false;
-  const preplayed = _preplayedIosMicCue;
-  _preplayedIosMicCue = null;
-  return preplayed.cue === cue && performance.now() <= preplayed.expiresAt;
-}
-
-function currentIosMicCue() {
-  if (state.status === 'connecting') return '';
-  if (state.appMode !== APP_MODES.LIVE_RECORDING) return '';
-  if (state.micState === MIC_STATES.LISTENING) return 'off';
-  return '';
+function clearPendingIosMicOffCue() {
+  if (!_iosMicOffCueTimer) return;
+  clearTimeout(_iosMicOffCueTimer);
+  _iosMicOffCueTimer = null;
 }
 
 async function createStartedAudioCapture({ targetSampleRate = 16000 } = {}) {
