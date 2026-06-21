@@ -1,23 +1,18 @@
 # Omni Translate
 
-A browser app for live, turn-based speech translation.
+Omni Translate is a mobile-first FastAPI and browser app for live translation
+workflows. It supports speech translation, translated speech playback, image
+translation, and app-managed voice-reference samples.
 
-You speak into one side, the app shows the recognized source text, translates it
-into the selected target language, and can speak the translated result back.
-While a session is running, you can also adjust voice options and tuning
-controls for ASR/TTS behavior.
-
-This repo contains the FastAPI backend and the static frontend. It coordinates
-the session: recording, two language directions, turn state, translation timing,
-speech playback, exported debug files, and the settings shown in the UI. The
-ASR, LLM, and TTS pools do the model work; the app decides when and how to use
-them.
+This repository is the app layer. It serves the web UI, owns visible workflow
+state, coordinates short-lived sessions, and proxies model work to separate ASR,
+translation, TTS, and image-translation services.
 
 ## Index
 
 - [What It Does](#what-it-does)
 - [Repository Role](#repository-role)
-- [Related Runtime Components](#related-runtime-components)
+- [Related Repositories And Services](#related-repositories-and-services)
 - [Code Map](#code-map)
 - [Runtime Model](#runtime-model)
 - [API Surface](#api-surface)
@@ -30,94 +25,110 @@ them.
 
 ## What It Does
 
-- Provides a mobile-first UI for a two-language conversation.
-- Captures browser microphone audio and streams PCM audio to the backend.
-- Runs live ASR through `realtime-asr-engine` and `asr-pool`.
-- Runs translation through `realtime-translation-engine` and `llm-pool`.
-- Sends translated text to `tts-pool`, stores the returned WAV, and plays it in
-  the browser.
-- Treats settings as two kinds: everyday options, such as TTS voice and speech
-  sample choices, and tuning controls for ASR/TTS timing and behavior.
+- Provides a mobile-first UI for a two-language live conversation.
+- Captures browser microphone audio and streams PCM chunks to the backend.
+- Runs live ASR through `realtime-asr-engine` and an ASR pool service.
+- Runs source-to-target translation through `realtime-translation-engine` and an
+  LLM pool service.
+- Sends translated text to a TTS pool, stores received WAV artifacts, and plays
+  speech in the browser.
+- Supports image translation from file upload or camera capture, with
+  original/translated image toggling and target-language retranslation.
+- Provides TTS settings for Kokoro, VoxCPM2, and NanoVLLM VoxCPM-style engines.
+- Manages a stable generated voice library: generate, preview, keep, discard,
+  and serve per-language voice-reference WAV samples.
+- Exposes ASR tuning, microphone, TTS, history, voice library, and developer
+  controls through settings sheets.
 - Exports `.pc` transcript/debug files for offline review.
-- Records TTS metrics from both the app and the pool.
 
 ## Repository Role
 
-This repo is the app layer. It ties the browser UI, session state, and component
-services together.
+This repo owns app-level behavior:
 
-- FastAPI app, HTTP routes, and WebSocket session lifecycle
-- browser UI, mobile state, and settings sheets
-- two-lane turn state, active direction, and playback state
-- bridges to ASR, translation, and TTS services/packages
-- generated TTS artifacts and `.pc` transcript/debug exports
-- app-level tests for turn behavior and integration boundaries
+- FastAPI app setup, HTTP routes, and WebSocket session lifecycle
+- browser UI, responsive workflow state, and settings screens
+- setup, speech-session, and image-translation modes
+- two-lane conversation state, active direction, visible transcript, and playback state
+- bridges to ASR, translation, TTS, and image-translation services/packages
+- local TTS artifacts, generated voice-library samples, and `.pc` exports
+- app-level tests for runtime behavior and integration boundaries
 
-The ASR pool, LLM pool, TTS pool, and realtime engine packages live in their own
-repos. This app calls them, but does not contain their model-serving or runner
-internals.
+This repo does not own model serving. ASR, LLM, TTS, and image translation are
+implemented by separate packages or services.
 
-## Related Runtime Components
+## Related Repositories And Services
 
-During normal use, the app talks to these local packages and services:
-
-- [`asr-pool-api`](https://github.com/Bobcat/asr-pool-api): client package
-  used to submit ASR jobs
-- [`realtime-asr-engine`](https://github.com/Bobcat/realtime-asr-engine): live
-  ASR runner, rolling audio state, VAD, and commit logic
+- [`asr-pool-api`](https://github.com/Bobcat/asr-pool-api): ASR pool client
+  package used by the app bridge.
+- [`realtime-asr-engine`](https://github.com/Bobcat/realtime-asr-engine):
+  rolling audio state, VAD, ASR pacing, and transcript commit logic.
 - [`realtime-translation-engine`](https://github.com/Bobcat/realtime-translation-engine):
-  live source/target transcript state and LLM dispatch logic
-- [`asr-pool`](https://github.com/Bobcat/asr-pool): service that runs configured
-  speech recognition backends
-- [`llm-pool`](https://github.com/Bobcat/llm-pool): service that runs configured
-  language models
-- [`tts-pool`](https://github.com/Bobcat/tts-pool): service that runs configured
-  speech synthesis backends
+  live source/target transcript state and LLM dispatch logic.
+- [`asr-pool`](https://github.com/Bobcat/asr-pool): speech-recognition service.
+- [`llm-pool`](https://github.com/Bobcat/llm-pool): translation model service.
+- [`tts-pool`](https://github.com/Bobcat/tts-pool): speech-synthesis service.
+- `translation-services`: image OCR, translation, and rendered-image service.
 
 ## Code Map
 
 ```text
-app/main.py              FastAPI app, static file serving, startup warmup
-app/router.py            HTTP API routes
-app/routes.py            WebSocket session entrypoint
-app/runtime.py           live conversation runtime and turn state machine
-app/asr_bridge.py        ASR pool integration
-app/translation_bridge.py translation engine / LLM pool integration
-app/tts_bridge.py        TTS pool integration, artifacts, metrics, TTS settings
-app/live_settings.py     runtime ASR tuning schema and validation
-app/asr_pc_export.py     `.pc` transcript/debug export formatting
-app/sessions.py          short-lived in-memory session registry
-app/protocol.py          protocol version and event helper
-static/                  browser frontend
-config/settings.json     public defaults
-config/local.json        ignored machine-local overrides
-docs/                    design notes and baseline measurements
-tests/                   backend unit tests
+app/main.py                    FastAPI app, static serving, startup warmup
+app/router.py                  HTTP API routes
+app/routes.py                  WebSocket session entrypoint
+app/runtime.py                 live conversation runtime and transcript state machine
+app/asr_bridge.py              ASR pool integration
+app/translation_bridge.py      translation engine / LLM pool integration
+app/tts_bridge.py              TTS pool integration, artifacts, TTS settings
+app/image_translation_bridge.py image-translation service proxy
+app/voice_library.py           generated stable voice-reference sample library
+app/live_settings.py           runtime ASR tuning schema and validation
+app/asr_pc_export.py           `.pc` transcript/debug export formatting
+app/sessions.py                short-lived in-memory session registry
+app/protocol.py                protocol version and event helper
+
+static/index.html              browser shell and settings sheet markup
+static/src/app.js              frontend composition root
+static/src/image/              image-translation workflow
+static/src/session/            speech-session lifecycle, actions, messages
+static/src/settings/           audio, ASR tuning, TTS, voice library, dev tools
+static/src/ui/                 rendering and sheet helpers
+static/src/domain/             lanes, languages, storage, transcript helpers
+static/src/shared/             capture, playback, cue, constants, utilities
+
+config/settings.json           public defaults
+config/local.json              ignored machine-local overrides
+config/voice_reference_texts/  seed text for generated voice samples
+data/                          local artifacts and generated samples
+docs/                          current and archived design notes
+tests/                         backend unit tests
 ```
 
 ## Runtime Model
 
-The backend serves the frontend and opens one WebSocket per short-lived
-conversation session. The frontend drives the session actions: start recording,
-stop the mic, translate now, speak now, change direction, clear the current turn,
-and finish the session.
+The backend serves the static frontend and exposes a JSON/HTTP API plus one
+WebSocket per live speech session. Sessions are short-lived and stored in memory.
+The frontend creates a session, opens the WebSocket, sends PCM audio chunks, and
+drives explicit actions such as translate now, speak now, mic on/off, direction
+swap, continue, and finish.
 
-Each session has two fixed language lanes. Each lane has its own ASR runner,
-translation runner, translation bridge, and transcript state. Only the active
-lane receives commands such as `speak_now`.
+Each live session has two fixed language lanes. Each lane has its own ASR runner,
+translation runner, transcript state, and pending TTS state. The frontend chooses
+the active lane; the backend applies commands to that lane.
 
-TTS runs out-of-process through `tts-pool`. `app/tts_bridge.py` posts synthesis
-requests to the pool's `/v1/responses` endpoint, stores returned WAV audio under
-`data/tts`, and returns an artifact URL to the frontend. For VoxCPM-family
-backends, the app builds the voice instruction prompt, can include the latest
-eligible ASR WAV chunk as a speech sample, and clips that sample locally to the
-configured maximum duration before upload.
+TTS is out-of-process. The app posts synthesis requests to `tts-pool`, stores
+generated WAV files under `data/tts`, and provides artifact URLs to the browser.
+For VoxCPM-family backends, the app can use generated stable samples or recent
+speech as reference audio, depending on the active TTS settings.
 
-Settings can be changed from the frontend during a session. The app-level
-settings are split conceptually into options and tuning controls: options are
-the choices an end user should understand, while tuning controls are for
-developer/debug work such as ASR responsiveness, commit behavior, and TTS timing.
-Model-serving settings stay in the component services.
+Image translation is a separate mode, not a WebSocket session. The frontend sends
+the selected image to `/api/image-translation`; the backend submits the request
+to `translation-services`, waits for completion, and provides the rendered image.
+Changing the target language can retranslate the same source request.
+
+The frontend persists some user-facing preferences in `localStorage`, including
+recent languages, global TTS choices, per-language VoxCPM voice configuration,
+developer-tool visibility, and setup languages. The server owns generated voice
+library WAVs and metadata.
 
 ## API Surface
 
@@ -125,14 +136,20 @@ HTTP:
 
 - `GET /api/health`
 - `GET /api/config`
-- `POST /api/tts-settings`
+- `POST /api/image-translation`
+- `POST /api/image-translation/{source_request_id}/retranslate`
+- `POST /api/voice-library/stable`
+- `POST /api/voice-library/stable/{language}/{gender}/keep-pending`
+- `POST /api/voice-library/stable/{language}/{gender}/discard-pending`
+- `GET /api/voice-library/stable/{language}/{gender}/audio.wav`
+- `GET /api/voice-library/stable/{language}/{gender}/audio.pending.wav`
 - `POST /api/sessions`
 - `GET /api/sessions/{session_id}/tts/{artifact_id}`
 - `GET /api/sessions/{session_id}/transcript.pc`
 
 WebSocket:
 
-- `GET /ws/sessions/{session_id}`
+- `/ws/sessions/{session_id}`
 
 Static frontend:
 
@@ -143,59 +160,34 @@ The WebSocket event schema is versioned with
 
 ## Configuration
 
-Defaults live in `config/settings.json`.
+Defaults live in `config/settings.json`. Machine-local values belong in ignored
+`config/local.json`.
 
-Machine-local values belong in ignored `config/local.json`. Use that file for
-local service URLs, VAD environment paths, and local model names.
-
-Common settings:
+Important settings:
 
 - `service.root_path`: optional mount prefix for reverse-proxy deployments
-- `asr_pool.base_url`: ASR pool service base URL
-- `tts_pool.base_url`: TTS pool service base URL
-- `tts_pool.timeout_s`: TTS pool HTTP request timeout
+- `asr_pool.base_url` / `asr_pool.token`: ASR pool connection
+- `tts_pool.base_url` / `tts_pool.timeout_s`: TTS pool connection
+- `image_translation.base_url`: translation-services base URL
+- `image_translation.request_timeout_s`: image request timeout
+- `image_translation.poll_interval_s`: image request polling interval
+- `live.session_ttl_s`: in-memory session lifetime
 - `live.audio.*`: browser audio format expected by the backend
-- `live.asr.*`: ASR backend and decode parameters exposed through live tuning
-- `live.rolling.vad.*`: backend VAD settings
-- `live.rolling.pacing.*`: ASR dispatch pacing settings
-- `live.rolling.speech_gate.*`: speech gate settings for dispatch behavior
+- `live.asr.*`: ASR backend and decode parameters
+- `live.rolling.*`: ASR dispatch, commit, VAD, and speech-gate tuning
 - `translation.model`: LLM pool model id
 - `translation.request_format`: translation payload format
-- `translation.source_language` / `translation.target_language`: default
-  session languages
+- `translation.source_language` / `translation.target_language`: default setup
+  languages
+- `translation.preview.*`: optional translation preview thresholds
 - `tts.enabled`: enables or disables TTS
-- `tts.backend`: selected TTS engine exposed through `tts-pool`
-- `tts.voxcpm2_use_asr_reference_wav`: whether VoxCPM2 receives the last ASR
-  speech sample
-- `tts.voxcpm2_reference_max_duration_s`: max speech-sample duration sent to
-  VoxCPM2
-- `tts.voxcpm2_reference_match`: whether the app adds a voice-only or
-  voice-plus-pace instruction when sending a speech sample
-- `tts.voxcpm2_voice_presets`: language-specific app-side voice description
-  presets for VoxCPM-family backends
+- `tts.backend`: selected TTS engine exposed by `tts-pool`
+- `tts.voxcpm2.ultimate_cloning.*`: reference-audio source behavior for
+  VoxCPM-family backends
+- `config/voice_reference_texts/*.txt`: source text used when generating stable
+  voice-library samples
 
-The four `tts.voxcpm2_*` keys above describe the **current** behavior. They
-are scheduled to be replaced by a per-language voice configuration in Phase 1
-of the [VoxCPM Options Redesign](docs/voxcpm-options-redesign.md).
-
-## Development
-
-Create the app environment:
-
-```bash
-python3 -m venv .venv
-./.venv/bin/python -m pip install -e .
-```
-
-Install the local component packages:
-
-```bash
-./.venv/bin/python -m pip install -e ../asr-pool-api
-./.venv/bin/python -m pip install -e ../realtime-asr-engine
-./.venv/bin/python -m pip install -e ../realtime-translation-engine
-```
-
-Create `config/local.json` for machine-local settings. Example:
+Example `config/local.json`:
 
 ```json
 {
@@ -211,14 +203,31 @@ Create `config/local.json` for machine-local settings. Example:
     "base_url": "http://127.0.0.1:8020",
     "timeout_s": 300
   },
+  "image_translation": {
+    "base_url": "http://127.0.0.1:8030"
+  },
   "tts": {
     "enabled": true,
-    "backend": "voxcpm2",
-    "voxcpm2_use_asr_reference_wav": true,
-    "voxcpm2_reference_max_duration_s": 8,
-    "voxcpm2_reference_match": "voice"
+    "backend": "nanovllm_voxcpm"
   }
 }
+```
+
+## Development
+
+Create the app environment:
+
+```bash
+python3 -m venv .venv
+./.venv/bin/python -m pip install -e .
+```
+
+Install the local component packages used by the app:
+
+```bash
+./.venv/bin/python -m pip install -e ../asr-pool-api
+./.venv/bin/python -m pip install -e ../realtime-asr-engine
+./.venv/bin/python -m pip install -e ../realtime-translation-engine
 ```
 
 Start the app:
@@ -233,8 +242,8 @@ Open:
 http://127.0.0.1:8003/
 ```
 
-ASR, translation, and TTS calls require running ASR pool, LLM pool, and TTS pool
-services.
+ASR, translation, TTS, and image-translation workflows require their component
+services to be running and reachable from the configured URLs.
 
 ## Tests
 
@@ -244,40 +253,35 @@ Run the app tests:
 ./.venv/bin/python -m unittest discover -s tests
 ```
 
-Syntax checks used during development:
+Syntax and patch checks commonly used during development:
 
 ```bash
 node --input-type=module --check < static/src/app.js
-./.venv/bin/python -m py_compile app/main.py app/asr_bridge.py app/router.py app/runtime.py app/sessions.py app/tts_bridge.py app/live_settings.py app/asr_pc_export.py
+./.venv/bin/python -m py_compile app/main.py
 git diff --check
 ```
 
 ## Design Notes
 
-The repo also includes design notes and trackers in various stages of completion:
+Current integration notes:
 
-- [notes-timeline.md](docs/notes-timeline.md)
-  Tracks the order, implementation status, and current code relation of the design notes.
-- [MVP Turn-Taking Design](docs/mvp-turn-taking-design.md)
-  Captures the baseline two-lane ASR -> Translate -> TTS turn-taking architecture.
-- [Turn State Machine Next](docs/turn-state-machine-next.md)
-  Captures the current app-level turn and `turn_part` state model.
-- [View Modes And Session Lifecycle](docs/view-modes-session-lifecycle.md)
-  Captures setup, running, mic-off, finished, and view-mode behavior.
-- [Translate Now Design](docs/translate-now-design.md)
-  Defines the manual translation action used in the turn-based workflow.
-- [VoxCPM Options Redesign](docs/voxcpm-options-redesign.md)
-  Design contract for the next phase of VoxCPM2 / NanoVLLM-VoxCPM voice
-  settings: per-language modes, Hi-Fi cloning, Stable Generated library,
-  guided own-voice setup.
-- [Kokoro TTS Baseline](docs/kokoro-tts-baseline.md)
-  Historical Kokoro timing baseline.
+- [Image Translation Integration](docs/image-translation-integration.md)
+
+Archived design notes:
+
+- [View Modes And Session Lifecycle](docs/archived/view-modes-session-lifecycle.md)
+- [Translate Now Design](docs/archived/translate-now-design.md)
+- [VoxCPM Options Redesign](docs/archived/voxcpm-options-redesign.md)
+- [VoxCPM Options Redesign Implementation Log](docs/archived/voxcpm-options-redesign-implementation-log.md)
+- [Kokoro TTS Baseline](docs/archived/kokoro-tts-baseline.md)
 
 ## Acknowledgments
 
-- [Kokoro](https://github.com/hexgrad/kokoro) for the local TTS model and Python pipeline.
-- [VoxCPM2](https://huggingface.co/openbmb/VoxCPM2) for multilingual reference-audio TTS.
-- [NanoVLLM-VoxCPM](https://github.com/a710128/nanovllm-voxcpm) for high-throughput VoxCPM serving.
+- [Kokoro](https://github.com/hexgrad/kokoro) for local TTS model tooling.
+- [VoxCPM2](https://huggingface.co/openbmb/VoxCPM2) for multilingual
+  reference-audio TTS.
+- [NanoVLLM-VoxCPM](https://github.com/a710128/nanovllm-voxcpm) for
+  high-throughput VoxCPM serving.
 
 ## License
 

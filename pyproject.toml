@@ -3,9 +3,9 @@ requires = ["setuptools>=69"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "asr-translate-tts"
+name = "omni-translate-app"
 version = "0.1.0"
-description = "Mobile-first FastAPI app for turn-based speech translation using ASR, LLM, and TTS pool services."
+description = "Mobile-first FastAPI and web app for live speech and image translation using ASR, LLM, TTS, voice-library, and image-translation services."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
