@@ -19,7 +19,6 @@ translation, TTS, and image-translation services.
 - [Configuration](#configuration)
 - [Development](#development)
 - [Tests](#tests)
-- [Design Notes](#design-notes)
 - [Acknowledgments](#acknowledgments)
 - [License](#license)
 
@@ -99,7 +98,6 @@ config/settings.json           public defaults
 config/local.json              ignored machine-local overrides
 config/voice_reference_texts/  seed text for generated voice samples
 data/                          local artifacts and generated samples
-docs/                          current and archived design notes
 tests/                         backend unit tests
 ```
 
@@ -260,20 +258,6 @@ node --input-type=module --check < static/src/app.js
 ./.venv/bin/python -m py_compile app/main.py
 git diff --check
 ```
-
-## Design Notes
-
-Current integration notes:
-
-- [Image Translation Integration](docs/image-translation-integration.md)
-
-Archived design notes:
-
-- [View Modes And Session Lifecycle](docs/archived/view-modes-session-lifecycle.md)
-- [Translate Now Design](docs/archived/translate-now-design.md)
-- [VoxCPM Options Redesign](docs/archived/voxcpm-options-redesign.md)
-- [VoxCPM Options Redesign Implementation Log](docs/archived/voxcpm-options-redesign-implementation-log.md)
-- [Kokoro TTS Baseline](docs/archived/kokoro-tts-baseline.md)
 
 ## Acknowledgments
 
