@@ -7,13 +7,7 @@ async function fetchJson(url, options = {}) {
     },
   });
   if (!response.ok) {
-    let detail = '';
-    try {
-      const payload = await response.json();
-      detail = typeof payload.detail === 'string' ? payload.detail : JSON.stringify(payload.detail || payload);
-    } catch {
-      detail = await response.text();
-    }
+    const detail = await errorDetailFromResponse(response);
     throw new Error(detail || `HTTP ${response.status}`);
   }
   return response.json();
@@ -98,13 +92,7 @@ export const api = {
 
 async function imageTranslationPayload(response) {
   if (!response.ok) {
-    let detail = '';
-    try {
-      const payload = await response.json();
-      detail = typeof payload.detail === 'string' ? payload.detail : JSON.stringify(payload.detail || payload);
-    } catch {
-      detail = await response.text();
-    }
+    const detail = await errorDetailFromResponse(response);
     throw new Error(detail || `HTTP ${response.status}`);
   }
   const requestId = response.headers.get('X-Image-Translation-Request-Id') || '';
@@ -113,6 +101,53 @@ async function imageTranslationPayload(response) {
     blob: await response.blob(),
     requestId,
   };
+}
+
+const MAX_ERROR_DETAIL_LENGTH = 240;
+
+async function errorDetailFromResponse(response) {
+  const text = await response.text();
+  if (!text) return '';
+  const known = knownErrorMessage(text);
+  if (known) return known;
+  if (looksLikeHtmlError(text)) return `Server returned an error page (HTTP ${response.status}).`;
+  try {
+    const payload = JSON.parse(text);
+    const detail = errorDetailFromPayload(payload);
+    return boundedErrorDetail(knownErrorMessage(detail) || detail);
+  } catch {
+    return boundedErrorDetail(text);
+  }
+}
+
+function errorDetailFromPayload(payload) {
+  const detail = payload?.detail || payload?.error || payload;
+  if (typeof detail === 'string') return detail;
+  if (typeof detail?.message === 'string') return detail.message;
+  if (typeof detail?.code === 'string') return detail.code;
+  try {
+    return JSON.stringify(detail || payload);
+  } catch {
+    return '';
+  }
+}
+
+function knownErrorMessage(detail) {
+  const text = String(detail || '');
+  if (text.includes('model_loading')) return 'Translation model is still loading. Try again in a moment.';
+  if (text.includes('model_not_loaded')) return 'Translation model is not loaded.';
+  return '';
+}
+
+function looksLikeHtmlError(text) {
+  const sample = String(text || '').trim().slice(0, 300).toLowerCase();
+  return sample.startsWith('<!doctype') || sample.startsWith('<html') || sample.includes('<script');
+}
+
+function boundedErrorDetail(detail) {
+  const text = String(detail || '').replace(/\s+/g, ' ').trim();
+  if (text.length <= MAX_ERROR_DETAIL_LENGTH) return text;
+  return `${text.slice(0, MAX_ERROR_DETAIL_LENGTH - 1)}…`;
 }
 
 function filenameFromContentDisposition(value) {
