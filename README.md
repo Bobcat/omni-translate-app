@@ -136,6 +136,7 @@ HTTP:
 - `GET /api/config`
 - `POST /api/image-translation`
 - `POST /api/image-translation/{source_request_id}/retranslate`
+- `POST /api/image-translation/{source_request_id}/rerender`
 - `POST /api/voice-library/stable`
 - `POST /api/voice-library/stable/{language}/{gender}/keep-pending`
 - `POST /api/voice-library/stable/{language}/{gender}/discard-pending`

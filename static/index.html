@@ -17,7 +17,7 @@
     <link rel="stylesheet" href="/themes/tokens.css?v=20260518-theme-6">
     <link rel="stylesheet" href="/themes/light.css?v=20260518-theme-6">
     <link rel="stylesheet" href="/themes/dark.css?v=20260518-theme-6">
-    <link rel="stylesheet" href="/styles.css?v=20260619-clear-app-storage">
+    <link rel="stylesheet" href="/styles.css?v=20260711e-cohort-default">
   </head>
   <body>
     <main class="app is-setup">
@@ -105,6 +105,36 @@
               <div class="image-error" id="imageError" role="alert" hidden></div>
               <figcaption class="image-source-name" id="imageSourceName"></figcaption>
             </figure>
+            <details class="image-render-strip" id="imageRenderStrip" hidden>
+              <summary>Render options</summary>
+              <div class="image-render-strip-grid">
+                <label class="select-row"><span>Size mode</span>
+                  <select data-image-render="render_size_mode">
+                    <option value="median">median</option>
+                    <option value="min">min</option>
+                  </select></label>
+                <label class="select-row"><span>Erase fill</span>
+                  <select data-image-render="erase_fill_mode">
+                    <option value="flat">flat</option>
+                    <option value="inpaint">inpaint</option>
+                  </select></label>
+                <label class="select-row"><span>Width fit</span>
+                  <select data-image-render="width_fit_mode">
+                    <option value="footprint">footprint</option>
+                    <option value="extend">extend</option>
+                  </select></label>
+                <label class="select-row"><span>Size metric</span>
+                  <select data-image-render="size_metric_mode">
+                    <option value="extent">extent</option>
+                    <option value="band">band</option>
+                  </select></label>
+                <label class="select-row"><span>Size cohort</span>
+                  <select data-image-render="size_cohort_mode">
+                    <option value="off">off</option>
+                    <option value="vlm">vlm</option>
+                  </select></label>
+              </div>
+            </details>
           </div>
         </section>
       </section>
@@ -201,6 +231,12 @@
                 </span>
                 <span class="setting-value" id="historySettingsSummary">off</span>
               </button>
+              <button class="settings-nav-row" id="settingsImageRenderNav" type="button">
+                <span>
+                  <strong>Image translation</strong>
+                  <small>Options for translating images</small>
+                </span>
+              </button>
               <button class="settings-nav-row" id="settingsDevToolsNav" type="button">
                 <span>
                   <strong>Dev tools</strong>
@@ -213,6 +249,51 @@
                   <small id="installAppHint">Add to home screen</small>
                 </span>
               </button>
+            </div>
+
+            <div class="settings-page" id="settingsImageRenderPage" hidden>
+              <section class="setting-group" aria-label="Render options">
+                <div class="setting-group-title">Render options</div>
+                <p class="setting-group-hint">Changing an option re-renders the current translated image (no re-translation).</p>
+                <label class="select-row" for="imageRenderSizeMode">
+                  <span>Render size mode</span>
+                  <select id="imageRenderSizeMode">
+                    <option value="median">median - default</option>
+                    <option value="min">min - never overflow</option>
+                  </select>
+                </label>
+                <label class="select-row" for="imageEraseFillMode">
+                  <span>Erase fill</span>
+                  <select id="imageEraseFillMode">
+                    <option value="flat">flat - one colour</option>
+                    <option value="inpaint">inpaint - hybrid fill</option>
+                  </select>
+                </label>
+                <label class="select-row" for="imageWidthFitMode">
+                  <span>Width fit</span>
+                  <select id="imageWidthFitMode">
+                    <option value="footprint">footprint - exact fit</option>
+                    <option value="extend">extend - grow into space</option>
+                  </select>
+                </label>
+                <label class="select-row" for="imageSizeMetricMode">
+                  <span>Size metric</span>
+                  <select id="imageSizeMetricMode">
+                    <option value="extent">extent - polygon height</option>
+                    <option value="band">band - clamp outliers</option>
+                  </select>
+                </label>
+                <label class="select-row" for="imageSizeCohortMode">
+                  <span>Size cohort</span>
+                  <select id="imageSizeCohortMode">
+                    <option value="off">off - per element</option>
+                    <option value="vlm">vlm - snap same-pt siblings</option>
+                  </select>
+                </label>
+              </section>
+              <section class="setting-group">
+                <button class="link-row audio-reset-button" id="imageRenderResetButton" type="button">Reset to defaults</button>
+              </section>
             </div>
 
             <div class="settings-page" id="settingsMicrophonePage" hidden>
@@ -369,6 +450,6 @@
       </div>
 
     </main>
-    <script type="module" src="/src/app.js?v=20260628-bounded-api-errors"></script>
+    <script type="module" src="/src/app.js?v=20260711e-cohort-default"></script>
   </body>
 </html>

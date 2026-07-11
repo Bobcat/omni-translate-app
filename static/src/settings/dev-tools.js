@@ -10,6 +10,7 @@ import { els } from '../els.js';
 import { clearAppLocalStorage, saveDevToolsSettings } from '../domain/storage.js';
 import { renderLifecycle } from '../ui/render-status.js';
 import { updateActionButtons } from '../ui/action-buttons.js';
+import { renderImageTranslation } from '../image/lifecycle.js';
 
 let _installPrompt = null;
 
@@ -66,6 +67,7 @@ export function handleDevToolsShowControlsChange() {
   saveDevToolsSettings(state.devToolsSettings);
   renderLifecycle();
   updateActionButtons();
+  renderImageTranslation();
 }
 
 export function handleClearAppStorage() {

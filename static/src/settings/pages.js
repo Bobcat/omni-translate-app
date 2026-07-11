@@ -8,8 +8,9 @@ import { renderTuningSettings } from './tuning.js';
 import { renderTtsSettings } from './tts.js';
 import { renderVoiceLibraryPage, voiceLibraryOnExit } from './voice-library.js';
 import { renderDevToolsSettings } from './dev-tools.js';
+import { renderImageRenderControls } from './image-render.js';
 
-const PAGES = ['microphone', 'audio', 'history', 'dev-tools', 'tuning', 'voice-library'];
+const PAGES = ['microphone', 'audio', 'history', 'dev-tools', 'tuning', 'voice-library', 'image-render'];
 
 export function setSettingsPage(page) {
   const previous = state.settingsPage;
@@ -27,6 +28,7 @@ export function setSettingsPage(page) {
     renderTtsSettings();
   }
   if (state.settingsPage === 'voice-library') renderVoiceLibraryPage();
+  if (state.settingsPage === 'image-render') renderImageRenderControls();
 }
 
 export function renderSettingsPage() {
@@ -39,6 +41,7 @@ export function renderSettingsPage() {
   els.settingsDevToolsPage.hidden = page !== 'dev-tools';
   els.settingsTuningPage.hidden = page !== 'tuning';
   els.settingsVoiceLibraryPage.hidden = page !== 'voice-library';
+  els.settingsImageRenderPage.hidden = page !== 'image-render';
   els.settingsBackButton.classList.toggle('is-sheet-close', home);
   els.settingsBackButton.classList.toggle('is-subpage-back', !home);
   els.settingsBackButton.setAttribute('aria-label', home ? 'Close settings' : 'Back');
@@ -55,6 +58,8 @@ export function renderSettingsPage() {
     els.settingsSheetTitle.textContent = 'ASR tuning';
   } else if (page === 'voice-library') {
     els.settingsSheetTitle.textContent = 'Voice library';
+  } else if (page === 'image-render') {
+    els.settingsSheetTitle.textContent = 'Image translation';
   } else {
     els.settingsSheetTitle.textContent = 'Settings';
   }

@@ -8,13 +8,33 @@ export const APP_STORAGE_KEYS = Object.freeze({
   DEV_TOOLS_SETTINGS: 'dev_tools_settings',
   SETUP_LANGUAGES: 'setup_languages',
   VOXCPM2_VOICE_CONFIG: 'voxcpm2_voice_config',
+  IMAGE_RENDER_SETTINGS: 'image_render_settings',
 });
 export const TTS_GLOBAL_STORAGE_KEY = APP_STORAGE_KEYS.TTS_GLOBAL;
 export const RECENT_LANGUAGES_KEY = APP_STORAGE_KEYS.RECENT_LANGUAGES;
 export const DEV_TOOLS_SETTINGS_KEY = APP_STORAGE_KEYS.DEV_TOOLS_SETTINGS;
 export const SETUP_LANGUAGES_KEY = APP_STORAGE_KEYS.SETUP_LANGUAGES;
 export const VOXCPM2_VOICE_CONFIG_STORAGE_KEY = APP_STORAGE_KEYS.VOXCPM2_VOICE_CONFIG;
+export const IMAGE_RENDER_SETTINGS_KEY = APP_STORAGE_KEYS.IMAGE_RENDER_SETTINGS;
 export const RECENT_MAX = 4;
+
+// Image-translation render options. The allowed values mirror the service's flag enums; the
+// defaults mirror the service's own defaults. A stored value outside the enum falls back to the
+// default for that key, so a stale/garbage entry can never inject an invalid flag.
+export const IMAGE_RENDER_ALLOWED = Object.freeze({
+  render_size_mode: ['median', 'min'],
+  erase_fill_mode: ['inpaint', 'flat'],
+  width_fit_mode: ['footprint', 'extend'],
+  size_metric_mode: ['extent', 'band'],
+  size_cohort_mode: ['off', 'vlm'],
+});
+export const DEFAULT_IMAGE_RENDER = Object.freeze({
+  render_size_mode: 'median',
+  erase_fill_mode: 'inpaint',
+  width_fit_mode: 'footprint',
+  size_metric_mode: 'extent',
+  size_cohort_mode: 'vlm',
+});
 
 export function clearAppLocalStorage() {
   let removed = 0;
@@ -102,6 +122,31 @@ export function loadDevToolsSettings() {
 
 export function saveDevToolsSettings(devToolsSettings) {
   localStorage.setItem(DEV_TOOLS_SETTINGS_KEY, JSON.stringify(devToolsSettings));
+}
+
+export function loadImageRenderSettings() {
+  const out = { ...DEFAULT_IMAGE_RENDER };
+  try {
+    const saved = JSON.parse(localStorage.getItem(IMAGE_RENDER_SETTINGS_KEY) || '{}');
+    for (const [key, allowed] of Object.entries(IMAGE_RENDER_ALLOWED)) {
+      if (allowed.includes(saved[key])) out[key] = saved[key];
+    }
+  } catch {
+    // ignore parse / disabled storage — defaults stand
+  }
+  return out;
+}
+
+export function saveImageRenderSettings(imageRender) {
+  try {
+    const payload = {};
+    for (const key of Object.keys(IMAGE_RENDER_ALLOWED)) {
+      payload[key] = String(imageRender[key] || '');
+    }
+    localStorage.setItem(IMAGE_RENDER_SETTINGS_KEY, JSON.stringify(payload));
+  } catch (_) {
+    // ignore quota / disabled storage
+  }
 }
 
 export function getRecentLanguages() {

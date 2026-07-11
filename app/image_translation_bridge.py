@@ -49,13 +49,15 @@ def translate_image(
     content_type: str,
     source_language: str,
     target_language: str,
+    render_options: dict | None = None,
 ) -> tuple[bytes, str, str]:
     """Translate ``image_bytes`` and return ``(rendered_png_bytes, media_type, request_id)``.
 
     ``source_language``/``target_language`` are language names or ISO codes; they
-    are normalised to the ISO codes the service expects. Raises
-    ``ImageTranslationError`` on an unsupported type, a service failure, or a
-    timeout.
+    are normalised to the ISO codes the service expects. ``render_options`` carries
+    the render flags for the first render; empty/unknown values are dropped so the
+    service uses its own defaults for them. Raises ``ImageTranslationError`` on an
+    unsupported type, a service failure, or a timeout.
     """
     mime = (content_type or "").split(";")[0].strip().lower()
     if mime not in SUPPORTED_IMAGE_MIME:
@@ -67,17 +69,31 @@ def translate_image(
     if not target_code:
         raise ImageTranslationError("target language is required", status_code=400)
 
-    request_json = json.dumps(
-        {
-            "task": "translate_image",
-            "source_lang_code": source_code,
-            "target_lang_code": target_code,
-        }
-    )
+    request = {
+        "task": "translate_image",
+        "source_lang_code": source_code,
+        "target_lang_code": target_code,
+    }
+    for key in RENDER_OPTION_KEYS:
+        value = str((render_options or {}).get(key) or "").strip()
+        if value:
+            request[key] = value
+    request_json = json.dumps(request)
     request_id = _submit(request_json, image_bytes, filename or "image", mime)
     _await_completion(request_id)
     data, media_type = _fetch_rendered(request_id)
     return data, media_type, request_id
+
+
+# The render flags forwarded to the service's re-render (each optional; an omitted flag keeps
+# the source run's value). The frontend owns their values; this bridge only passes them through.
+RENDER_OPTION_KEYS = (
+    "render_size_mode",
+    "erase_fill_mode",
+    "width_fit_mode",
+    "size_metric_mode",
+    "size_cohort_mode",
+)
 
 
 def retranslate_image(
@@ -93,7 +109,30 @@ def retranslate_image(
     if not target_code:
         raise ImageTranslationError("target language is required", status_code=400)
 
-    request_id = _submit_retranslate(source_id, {"target_lang_code": target_code})
+    request_id = _submit_reentry(source_id, "retranslate", {"target_lang_code": target_code})
+    _await_completion(request_id)
+    data, media_type = _fetch_rendered(request_id)
+    return data, media_type, request_id
+
+
+def rerender_image(
+    *,
+    source_request_id: str,
+    render_options: dict,
+) -> tuple[bytes, str, str]:
+    """Re-render a prior image request with new render flags — reuses the cached translations,
+    no OCR/grouping/LLM call. Returns ``(rendered_png_bytes, media_type, request_id)``. Only the
+    known render flags are forwarded; unknown/empty values are dropped so the service keeps the
+    source run's value for them."""
+    source_id = str(source_request_id or "").strip()
+    if not source_id:
+        raise ImageTranslationError("source request_id is required", status_code=400)
+    payload = {
+        key: str(render_options[key]).strip()
+        for key in RENDER_OPTION_KEYS
+        if str(render_options.get(key) or "").strip()
+    }
+    request_id = _submit_reentry(source_id, "rerender", payload)
     _await_completion(request_id)
     data, media_type = _fetch_rendered(request_id)
     return data, media_type, request_id
@@ -130,11 +169,13 @@ def _submit(request_json: str, image_bytes: bytes, filename: str, mime: str) -> 
     return request_id
 
 
-def _submit_retranslate(source_request_id: str, payload: dict) -> str:
+def _submit_reentry(source_request_id: str, subpath: str, payload: dict) -> str:
+    """Submit a re-entry request (retranslate or rerender) against a prior request_id and
+    return the new request_id. Both endpoints take a JSON body and return a lifecycle envelope."""
     body = json.dumps(payload).encode("utf-8")
     safe_source_id = quote(source_request_id, safe="")
     request = Request(
-        f"{_base_url()}/v1/requests/{safe_source_id}/retranslate",
+        f"{_base_url()}/v1/requests/{safe_source_id}/{subpath}",
         data=body,
         headers={"Content-Type": "application/json"},
         method="POST",

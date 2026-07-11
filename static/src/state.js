@@ -12,7 +12,7 @@ import {
 } from './shared/constants.js';
 import { cloneSettings } from './shared/utils.js';
 import { buildLocalLanes, createLocalTurn } from './domain/lanes.js';
-import { loadDevToolsSettings, loadSetupLanguages } from './domain/storage.js';
+import { loadDevToolsSettings, loadSetupLanguages, loadImageRenderSettings } from './domain/storage.js';
 import { guessSetupLanguages, normalizeLanguageName } from './domain/languages.js';
 
 const _initialSetupLanguages = loadSetupLanguages() || guessSetupLanguages();
@@ -45,6 +45,10 @@ export const state = {
     requestId: '',
     requestToken: null,
   },
+  // Render options for image translation, shared by the settings-sheet subpage and the inline
+  // strip. Persisted from the settings sheet only (loaded here); strip changes are ad-hoc and
+  // never written. Defaults match the service's own defaults.
+  imageRender: loadImageRenderSettings(),
   micState: MIC_STATES.OFF,
   pcExportBusy: false,
   audioInputSampleRate: 16000,

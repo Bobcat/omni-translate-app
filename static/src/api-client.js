@@ -18,11 +18,14 @@ export const api = {
     return fetchJson('/api/config');
   },
 
-  async translateImage(file, { source, target }) {
+  async translateImage(file, { source, target, renderOptions = {} }) {
     const form = new FormData();
     form.append('image', file);
     form.append('source_language', String(source || ''));
     form.append('target_language', String(target || ''));
+    for (const [key, value] of Object.entries(renderOptions)) {
+      if (value) form.append(key, String(value));
+    }
     const response = await fetch('/api/image-translation', { method: 'POST', body: form });
     return imageTranslationPayload(response);
   },
@@ -32,6 +35,19 @@ export const api = {
     form.append('target_language', String(target || ''));
     const safeRequestId = encodeURIComponent(String(requestId || ''));
     const response = await fetch(`/api/image-translation/${safeRequestId}/retranslate`, { method: 'POST', body: form });
+    return imageTranslationPayload(response);
+  },
+
+  // Re-render a prior image request with new render flags — reuses the cached translations,
+  // no new translation. `renderOptions` keys are the render_*/erase_*/size_*/width_* flags;
+  // empty values are dropped so the service keeps the source run's value.
+  async rerenderImage(requestId, renderOptions = {}) {
+    const form = new FormData();
+    for (const [key, value] of Object.entries(renderOptions)) {
+      if (value) form.append(key, String(value));
+    }
+    const safeRequestId = encodeURIComponent(String(requestId || ''));
+    const response = await fetch(`/api/image-translation/${safeRequestId}/rerender`, { method: 'POST', body: form });
     return imageTranslationPayload(response);
   },
 

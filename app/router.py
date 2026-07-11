@@ -12,6 +12,7 @@ from app.asr_pc_export import pc_export_filename
 from app.config import get_int, get_str, rooted_path
 from app.image_translation_bridge import ImageTranslationError
 from app.image_translation_bridge import REQUEST_ID_HEADER
+from app.image_translation_bridge import rerender_image
 from app.image_translation_bridge import retranslate_image
 from app.image_translation_bridge import translate_image
 from app.live_settings import default_live_settings
@@ -77,6 +78,11 @@ def post_image_translation(
     image: UploadFile = File(...),
     source_language: str = Form(...),
     target_language: str = Form(...),
+    render_size_mode: str = Form(""),
+    erase_fill_mode: str = Form(""),
+    width_fit_mode: str = Form(""),
+    size_metric_mode: str = Form(""),
+    size_cohort_mode: str = Form(""),
 ) -> Response:
     content = image.file.read()
     if not content:
@@ -88,6 +94,13 @@ def post_image_translation(
             content_type=image.content_type or "",
             source_language=source_language,
             target_language=target_language,
+            render_options={
+                "render_size_mode": render_size_mode,
+                "erase_fill_mode": erase_fill_mode,
+                "width_fit_mode": width_fit_mode,
+                "size_metric_mode": size_metric_mode,
+                "size_cohort_mode": size_cohort_mode,
+            },
         )
     except ImageTranslationError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc))
@@ -103,6 +116,33 @@ def post_image_retranslation(
         data, media_type, request_id = retranslate_image(
             source_request_id=source_request_id,
             target_language=target_language,
+        )
+    except ImageTranslationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc))
+    return Response(content=data, media_type=media_type, headers={REQUEST_ID_HEADER: request_id})
+
+
+# Re-render a prior image request with new render flags — no re-translation (the service reuses
+# the cached translations). Sync def for the same threadpool reason as the other image routes.
+@api_router.post("/image-translation/{source_request_id}/rerender")
+def post_image_rerender(
+    source_request_id: str,
+    render_size_mode: str = Form(""),
+    erase_fill_mode: str = Form(""),
+    width_fit_mode: str = Form(""),
+    size_metric_mode: str = Form(""),
+    size_cohort_mode: str = Form(""),
+) -> Response:
+    try:
+        data, media_type, request_id = rerender_image(
+            source_request_id=source_request_id,
+            render_options={
+                "render_size_mode": render_size_mode,
+                "erase_fill_mode": erase_fill_mode,
+                "width_fit_mode": width_fit_mode,
+                "size_metric_mode": size_metric_mode,
+                "size_cohort_mode": size_cohort_mode,
+            },
         )
     except ImageTranslationError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc))

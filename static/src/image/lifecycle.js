@@ -47,6 +47,25 @@ export function retranslateImageToTarget(targetLanguage) {
   requestRetranslation(it.requestId, nextTarget, token);
 }
 
+// Re-render the current image with the current render options (state.imageRender) — reuses the
+// cached translations on the service, no re-translation. Called when a render option changes in
+// either the settings sheet or the inline strip. A no-op until there is a completed translation.
+export function rerenderCurrentImage() {
+  const it = state.imageTranslation;
+  if (state.appMode !== APP_MODES.IMAGE_TRANSLATION) return;
+  if (it.busy || !it.requestId || !it.translatedReady) return;
+  const token = {};
+  it.requestToken = token;
+  it.busy = true;
+  it.error = '';
+  renderImageTranslation();
+  renderLifecycle();
+  updateActionButtons();
+  api.rerenderImage(it.requestId, { ...state.imageRender })
+    .then((result) => applyImageTranslationResult(result, token, it.translatedTargetLanguage))
+    .catch((err) => applyRerenderError(err, token));
+}
+
 export function finishImageTranslation() {
   if (state.appMode !== APP_MODES.IMAGE_TRANSLATION) return false;
   syncImageTranslationHistory(state.appMode, APP_MODES.SETUP);
@@ -88,6 +107,7 @@ export function renderImageTranslation() {
   const showingTranslated = translatedReady && displayMode === 'translated';
   const imageUrl = showingTranslated ? translatedUrl : previewUrl;
   els.imageModeToggle.hidden = !translatedReady || busy;
+  els.imageRenderStrip.hidden = !translatedReady || busy || !state.devToolsSettings.showControls;
   els.imageBusyIndicator.hidden = !previewUrl || !busy || Boolean(error);
   els.imageError.hidden = !error;
   els.imageError.textContent = error || '';
@@ -142,7 +162,11 @@ function setSelectedImage(file) {
 function requestTranslation(file, token) {
   const lane = currentLane();
   const targetLanguage = lane.targetLanguage;
-  api.translateImage(file, { source: lane.sourceLanguage, target: targetLanguage })
+  api.translateImage(file, {
+    source: lane.sourceLanguage,
+    target: targetLanguage,
+    renderOptions: { ...state.imageRender },
+  })
     .then((result) => applyImageTranslationResult(result, token, targetLanguage))
     .catch((err) => applyImageTranslationError(err, token));
 }
@@ -164,6 +188,19 @@ function applyImageTranslationResult({ blob, requestId }, token, targetLanguage)
   it.translatedTargetLanguage = normalizeLanguageName(targetLanguage);
   it.error = '';
   it.busy = false;
+  renderImageTranslation();
+  renderLifecycle();
+  updateActionButtons();
+}
+
+// A re-render failure keeps the existing translated image (only the render flags changed, the
+// translation is unchanged) — so we clear the busy state and surface the error without wiping
+// the view. The strip stays visible so the user can adjust and retry.
+function applyRerenderError(err, token) {
+  const it = state.imageTranslation;
+  if (it.requestToken !== token) return;
+  it.busy = false;
+  it.error = String((err && err.message) || 'Re-render failed');
   renderImageTranslation();
   renderLifecycle();
   updateActionButtons();

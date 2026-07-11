@@ -727,6 +727,73 @@ button {
   display: none;
 }
 
+/* Ad-hoc render-options strip under the translated image: a collapsed details panel with the
+   five render selects in a wrapping grid. Shares state with the settings-sheet subpage. */
+.image-render-strip {
+  margin: 8px 12px 0;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  font-size: 0.85rem;
+}
+
+.image-render-strip[hidden] {
+  display: none;
+}
+
+.image-render-strip > summary {
+  cursor: pointer;
+  padding: 10px 14px;
+  color: var(--muted);
+  font-weight: 600;
+  list-style: none;
+}
+
+.image-render-strip > summary::-webkit-details-marker {
+  display: none;
+}
+
+.image-render-strip[open] > summary {
+  border-bottom: 1px solid var(--border);
+}
+
+.image-render-strip-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+  padding: 12px 14px;
+}
+
+.image-render-strip-grid .select-row {
+  display: grid;
+  grid-template-columns: minmax(0, 38%) minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.image-render-strip-grid .select-row > span {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.image-render-strip-grid select {
+  min-width: 0;
+  width: 100%;
+}
+
+/* Settings-sheet render options: a fixed two-column split so all five selects line up on both
+   edges (the shared .select-row auto-sizes the select to its option text, which reads ragged
+   with five differently-worded options) and the select — the important control — gets the
+   majority of the width rather than a 50/50 share with the label. */
+#settingsImageRenderPage .setting-group .select-row {
+  grid-template-columns: minmax(0, 38%) minmax(0, 1fr);
+}
+
+#settingsImageRenderPage .select-row select {
+  width: 100%;
+}
+
 .image-mode-option {
   min-width: 96px;
   height: 34px;

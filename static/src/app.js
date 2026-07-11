@@ -49,6 +49,7 @@ import {
   updateInstallRow,
   renderHistorySettings,
 } from './settings/dev-tools.js';
+import { bindImageRenderControls, renderImageRenderControls } from './settings/image-render.js';
 import {
   setStatus,
   renderLifecycle,
@@ -143,6 +144,8 @@ async function init() {
   els.settingsDevToolsNav.addEventListener('click', () => navigateSettingsPage('dev-tools'));
   els.settingsTuningNav.addEventListener('click', () => navigateSettingsPage('tuning'));
   els.settingsVoiceLibraryNav.addEventListener('click', () => navigateSettingsPage('voice-library'));
+  els.settingsImageRenderNav.addEventListener('click', () => navigateSettingsPage('image-render'));
+  bindImageRenderControls();
   els.voiceLibraryControls.addEventListener('change', handleVoiceLibraryChange);
   els.voiceLibraryControls.addEventListener('click', handleVoiceLibraryClick);
   els.devToolsShowControls.addEventListener('change', handleDevToolsShowControlsChange);
@@ -192,6 +195,7 @@ async function init() {
   renderTuningSettings();
   renderTtsSettings();
   renderHistorySettings();
+  renderImageRenderControls();
   renderImageTranslation();
   updateActionButtons();
   renderLifecycle();
