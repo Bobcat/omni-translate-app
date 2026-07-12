@@ -7,7 +7,7 @@ import { APP_MODES } from '../shared/constants.js';
 import { els } from '../els.js';
 import { api } from '../api-client.js';
 import { currentLane } from '../domain/lanes.js';
-import { normalizeLanguageName } from '../domain/languages.js';
+import { normalizeLanguageName, codeForLanguage } from '../domain/languages.js';
 import { renderLifecycle } from '../ui/render-status.js';
 import { updateActionButtons } from '../ui/action-buttons.js';
 
@@ -66,6 +66,21 @@ export function rerenderCurrentImage() {
     .catch((err) => applyRerenderError(err, token));
 }
 
+// Download the translated render as "<source-basename>_<target-code>.png". The rendered image is
+// always a PNG regardless of the source type, so the extension is forced to .png.
+export function saveTranslatedImage() {
+  const it = state.imageTranslation;
+  if (!it.translatedReady || !it.translatedUrl) return;
+  const base = String(it.fileName || 'image').replace(/\.[^.]+$/, '') || 'image';
+  const code = codeForLanguage(it.translatedTargetLanguage).toLowerCase();
+  const link = document.createElement('a');
+  link.href = it.translatedUrl;
+  link.download = `${base}_${code}.png`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+}
+
 export function finishImageTranslation() {
   if (state.appMode !== APP_MODES.IMAGE_TRANSLATION) return false;
   syncImageTranslationHistory(state.appMode, APP_MODES.SETUP);
@@ -107,6 +122,7 @@ export function renderImageTranslation() {
   const showingTranslated = translatedReady && displayMode === 'translated';
   const imageUrl = showingTranslated ? translatedUrl : previewUrl;
   els.imageModeToggle.hidden = !translatedReady || busy;
+  els.imageSaveButton.hidden = !translatedReady || busy;
   els.imageRenderStrip.hidden = !translatedReady || busy || !state.devToolsSettings.showControls;
   els.imageBusyIndicator.hidden = !previewUrl || !busy || Boolean(error);
   els.imageError.hidden = !error;

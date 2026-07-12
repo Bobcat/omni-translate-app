@@ -17,7 +17,7 @@
     <link rel="stylesheet" href="/themes/tokens.css?v=20260518-theme-6">
     <link rel="stylesheet" href="/themes/light.css?v=20260518-theme-6">
     <link rel="stylesheet" href="/themes/dark.css?v=20260518-theme-6">
-    <link rel="stylesheet" href="/styles.css?v=20260711e-cohort-default">
+    <link rel="stylesheet" href="/styles.css?v=20260712b-save-button">
   </head>
   <body>
     <main class="app is-setup">
@@ -93,6 +93,13 @@
                 <button class="image-mode-option" id="imageOriginalButton" type="button" aria-pressed="false">Original</button>
                 <button class="image-mode-option" id="imageTranslatedButton" type="button" aria-pressed="true">Translated</button>
               </div>
+              <button class="image-save-button" id="imageSaveButton" type="button" aria-label="Save translated image" title="Save translated image" hidden>
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M12 4v11"></path>
+                  <path d="m7 11 5 5 5-5"></path>
+                  <path d="M5 20h14"></path>
+                </svg>
+              </button>
               <div class="image-scroll-frame" id="imageScrollFrame">
                 <div class="image-scroll-content">
                   <div class="image-overlay-scroll-spacer" id="imageOverlayScrollSpacer" aria-hidden="true"></div>
@@ -450,6 +457,6 @@
       </div>
 
     </main>
-    <script type="module" src="/src/app.js?v=20260711e-cohort-default"></script>
+    <script type="module" src="/src/app.js?v=20260712b-save-button"></script>
   </body>
 </html>

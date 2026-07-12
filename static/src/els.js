@@ -16,6 +16,7 @@ export const els = {
   imageModeToggle: document.querySelector('#imageModeToggle'),
   imageOriginalButton: document.querySelector('#imageOriginalButton'),
   imageTranslatedButton: document.querySelector('#imageTranslatedButton'),
+  imageSaveButton: document.querySelector('#imageSaveButton'),
   imageScrollFrame: document.querySelector('#imageScrollFrame'),
   imageOverlayScrollSpacer: document.querySelector('#imageOverlayScrollSpacer'),
   imageDisplayPreview: document.querySelector('#imageDisplayPreview'),

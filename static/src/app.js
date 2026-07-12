@@ -81,6 +81,7 @@ import {
 import {
   handleImageFileChange,
   setImageDisplayMode,
+  saveTranslatedImage,
   finishImageTranslation,
   renderImageTranslation,
 } from './image/lifecycle.js';
@@ -118,6 +119,7 @@ async function init() {
   els.cameraFileInput.addEventListener('change', handleImageFileChange);
   els.imageOriginalButton.addEventListener('click', () => setImageDisplayMode('original'));
   els.imageTranslatedButton.addEventListener('click', () => setImageDisplayMode('translated'));
+  els.imageSaveButton.addEventListener('click', saveTranslatedImage);
   els.micToggleButton.addEventListener('click', handleMicToggle);
   els.pcExportButton.addEventListener('click', exportPcTranscript);
   els.turnModeButton?.addEventListener('click', () => setViewMode('turn'));
