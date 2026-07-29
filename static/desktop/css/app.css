@@ -14,6 +14,20 @@ body {
 
 /* === Sidebar additions (on top of shell.css) === */
 
+/* Claude-style serif wordmark (Anthropic Serif is proprietary; Georgia ships
+   on Windows/macOS/iOS, other platforms fall back to a serif). */
+.sidebar-header .sidebar-brand-title {
+  font-family: 'Cormorant Garamond', Georgia, 'Times New Roman', serif;
+  font-size: 1.45rem;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+.sidebar-header .sidebar-brand-title strong {
+  font-weight: 600;
+  color: var(--accent);
+}
+
 .nav-links {
   display: flex;
   flex-direction: column;
