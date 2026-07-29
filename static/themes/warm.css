@@ -50,6 +50,14 @@
     --setup-mode-pill-border: rgba(63, 57, 44, 0.28);
   }
 
+  /* Voice-lane bubbles: color-block separation. On the warm canvas the
+     default surface-soft (#fbf8f1 on #fefdf9) was nearly invisible; the
+     panels tone reads as a card without needing a border. */
+  :root[data-experiment="warm"] .turn-part {
+    background: #f5f1e8;
+    border-radius: 12px;
+  }
+
   /* Claude-style serif wordmark (Anthropic Serif is proprietary; Georgia
      ships on Windows/macOS/iOS, other platforms fall back to a serif). */
   :root[data-experiment="warm"] .app-title {
