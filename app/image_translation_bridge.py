@@ -62,7 +62,12 @@ def translate_image(
     mime = (content_type or "").split(";")[0].strip().lower()
     if mime not in SUPPORTED_IMAGE_MIME:
         raise ImageTranslationError(f"unsupported image type: {mime or 'unknown'}", status_code=415)
-    source_code = translation_language_code(source_language)
+    # "auto" is passed through: the service auto-detects the source language downstream.
+    source_code = (
+        "auto"
+        if str(source_language or "").strip().lower() == "auto"
+        else translation_language_code(source_language)
+    )
     target_code = translation_language_code(target_language)
     if not source_code:
         raise ImageTranslationError("source language is required", status_code=400)
