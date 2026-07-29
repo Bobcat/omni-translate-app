@@ -11,12 +11,19 @@
     <meta name="theme-color" content="#f5f7fa" media="(prefers-color-scheme: light)">
     <meta name="theme-color" content="#0e1117" media="(prefers-color-scheme: dark)">
     <title>Omni Translate</title>
+    <script>
+      // Warm-theme experiment: ?warm in the URL opts in (light mode only).
+      if (new URLSearchParams(window.location.search).has('warm')) {
+        document.documentElement.dataset.experiment = 'warm';
+      }
+    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Source+Sans+3:wght@400;500&display=swap">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600&family=Inter:wght@400;500;600;700&family=Source+Sans+3:wght@400;500&display=swap">
     <link rel="stylesheet" href="/themes/tokens.css?v=20260518-theme-6">
     <link rel="stylesheet" href="/themes/light.css?v=20260518-theme-6">
     <link rel="stylesheet" href="/themes/dark.css?v=20260518-theme-6">
+    <link rel="stylesheet" href="/themes/warm.css?v=20260728-warm-5">
     <link rel="stylesheet" href="/styles.css?v=20260712b-save-button">
   </head>
   <body>
