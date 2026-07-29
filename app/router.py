@@ -190,7 +190,14 @@ def get_pdf_translation_artifact(request_id: str, artifact_name: str) -> Respons
         data, media_type = get_pdf_artifact(request_id, artifact_name)
     except PdfTranslationError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc))
-    return Response(content=data, media_type=media_type)
+    return Response(
+        content=data,
+        media_type=media_type,
+        # A completed run's artifact is immutable per (request_id, name), so
+        # let the browser cache it: iframe reloads (view re-attach, reopen)
+        # then skip the upstream re-download.
+        headers={"Cache-Control": "private, max-age=86400, immutable"},
+    )
 
 
 @api_router.post("/pdf-translation/requests/{request_id}/cancel")
