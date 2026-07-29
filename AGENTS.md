@@ -25,6 +25,14 @@
 - Settings use mobile sheet semantics: top-level closes with a down chevron; subpages return with a left arrow.
 - Preserve accessibility labels when replacing text buttons with icon buttons.
 
+## Desktop Variant
+
+- `static/desktop/` is the desktop frontend: a workbench-style sidebar SPA. The landing route `GET /` (app/main.py) serves it to desktop user agents and the mobile-first app to mobile ones, so both live on the same URL; `?desktop` / `?mobile` force a variant, and `/desktop/` keeps working as a direct path.
+- It is built on the vendored spa-foundation package at `static/foundation/spa-foundation/` (a plain copy from the `spa-foundation` repo, same layout as the LLM Workbench vendor copy; update by re-copying — no build step).
+- Sidebar views live under `static/desktop/src/views/` (voice, image, pdf, settings), mounted via hash routes (`#voice`, `#image`, `#pdf`, `#settings`). The image and pdf views are wired to the backend (`/api/image-translation`, `/api/pdf-translation/requests`); voice and settings remain UI-only until wiring is explicitly requested.
+- The desktop app must stay lean/user-facing: do not port dev tools, tuning, or debug controls into it.
+- Cache-busting: when changing desktop CSS or JS, update the `?v=` query in `static/desktop/index.html` (same convention as the mobile `static/index.html`).
+
 ## Local Run
 
 ```bash

@@ -1,0 +1,762 @@
+/* Desktop app styles, on top of spa-foundation base.css + shell.css and the
+   active preset (modern/dark). Only colors/sizing from the preset variables
+   are used, so both presets keep working. */
+
+body {
+  font-family: var(--ui-font);
+  line-height: var(--ui-line-height);
+  color: var(--text-color);
+}
+
+[hidden] {
+  display: none !important;
+}
+
+/* === Sidebar additions (on top of shell.css) === */
+
+.nav-links {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow-y: auto;
+}
+
+.nav-links li .sidebar-icon {
+  width: var(--sidebar-item-icon-size);
+  height: var(--sidebar-item-icon-size);
+  margin-right: var(--sidebar-item-icon-gap);
+  flex-shrink: 0;
+}
+
+.sidebar:not(.expanded) .nav-links li .sidebar-icon {
+  margin-right: 0;
+}
+
+.nav-links li.sidebar-route-bottom {
+  margin-top: auto;
+}
+
+.sidebar-footer {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.theme-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  height: var(--sidebar-item-height);
+  padding: 0 var(--sidebar-item-padding-x);
+  border: none;
+  border-radius: var(--sidebar-item-radius);
+  background: none;
+  color: var(--text-color);
+  font-size: var(--sidebar-item-font-size);
+  cursor: pointer;
+}
+
+.theme-toggle:hover {
+  background-color: var(--hover-bg);
+}
+
+.theme-toggle-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.theme-toggle-icon svg {
+  width: var(--sidebar-item-icon-size);
+  height: var(--sidebar-item-icon-size);
+}
+
+.sidebar:not(.expanded) .theme-toggle {
+  justify-content: center;
+  width: 40px;
+  padding: 0;
+  margin: 0 auto;
+}
+
+.sidebar:not(.expanded) .theme-toggle-label {
+  display: none;
+}
+
+/* === Views (shared) === */
+
+.view {
+  height: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 24px 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  overflow-y: auto;
+}
+
+/* The stage views (image/pdf) fill the available width, like the workbench
+   stage; the voice view keeps the centered column. */
+.image-view,
+.pdf-view {
+  max-width: none;
+}
+
+.view-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+/* Download + reset stay pinned right, also when one of them is hidden. */
+.toolbar-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.setting-row select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding: 6px 28px 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  background-image: var(--select-chevron);
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 10px 6px;
+  color: var(--text-color);
+  font-size: 0.85rem;
+}
+
+.setting-row select:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* === Language picker (dialog instead of a native <select>; mirrors the
+   mobile bottom sheet — search, Recent section, A-Z groups, active check) === */
+
+.language-trigger {
+  padding: 6px 28px 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  background-image: var(--select-chevron);
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 10px 6px;
+  color: var(--text-color);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.language-trigger:hover {
+  border-color: var(--border-control);
+}
+
+.language-trigger:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.language-dialog-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+}
+
+.language-dialog {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(340px, calc(100vw - 32px));
+  max-height: min(560px, 76vh);
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--panel);
+  box-shadow: var(--shadow-tooltip);
+}
+
+.language-dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.language-dialog-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.language-dialog-search {
+  padding: 8px 12px;
+  border: 1px solid var(--field-border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text-color);
+  font-size: 0.9rem;
+}
+
+.language-dialog-search:focus {
+  outline: none;
+  border-color: var(--focus);
+}
+
+.language-dialog-list {
+  overflow-y: auto;
+}
+
+.language-section-header {
+  padding: 10px 10px 4px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.language-option-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  color: var(--text-color);
+  font-size: 0.9rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.language-option-row:hover {
+  background: var(--hover-bg);
+}
+
+.language-option-row.is-active {
+  font-weight: 600;
+}
+
+.language-option-check {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  color: var(--accent);
+}
+
+.language-option-empty {
+  padding: 12px 10px;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.status-line {
+  min-height: 1.2em;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.preview-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  text-align: center;
+}
+
+/* === Voice translation view === */
+
+.voice-languagebar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.language-pill {
+  min-width: 132px;
+  padding: 8px 16px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--text-color);
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.language-swap {
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--panel);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.language-swap:hover,
+.action-round:hover {
+  color: var(--text-color);
+}
+
+.language-swap svg {
+  width: 18px;
+  height: 18px;
+}
+
+.language-pill:disabled,
+.language-swap:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.vad-badge {
+  margin-left: auto;
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.voice-panes {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 16px;
+}
+
+.pane {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 16px;
+  overflow: auto;
+}
+
+.text-stream:empty::before {
+  content: attr(data-empty);
+  color: var(--muted);
+}
+
+.voice-actionbar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+}
+
+.action-round {
+  width: 52px;
+  height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--panel);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.action-round svg {
+  width: 22px;
+  height: 22px;
+}
+
+.action-round.primary {
+  width: 64px;
+  height: 64px;
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--text-inverse);
+}
+
+.action-round.primary svg {
+  width: 26px;
+  height: 26px;
+}
+
+.action-round:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* === Dropzone (image + pdf views) ===
+   Mirrors the LLM Workbench translation-requests dropzone (see
+   css/workflows/image-translation.css there); colors come from tokens.css. */
+
+.dropzone-card {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 24px;
+  min-height: clamp(220px, 34vh, 320px);
+  padding: 24px;
+  border: 1px solid var(--field-border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.dropzone-card.is-dragover {
+  border-color: var(--focus);
+  border-style: dashed;
+  background: var(--action-primary-soft);
+}
+
+.dropzone-drop {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  color: var(--text-quiet);
+}
+
+.dropzone-card.is-dragover .dropzone-drop {
+  color: var(--focus);
+}
+
+.dropzone-drop svg {
+  width: 88px;
+  height: 88px;
+  stroke-width: 1.2;
+  color: var(--muted);
+}
+
+.dropzone-card.is-dragover .dropzone-drop svg {
+  color: var(--focus);
+}
+
+.dropzone-hint {
+  font-size: 1.05rem;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.dropzone-sep {
+  width: 1px;
+  align-self: stretch;
+  justify-self: center;
+  background: var(--border-strong);
+}
+
+.dropzone-choose {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+
+.dropzone-choose > span {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.browse-btn {
+  border: 1px solid var(--action-primary-border);
+  border-radius: 8px;
+  padding: 9px 18px;
+  background: var(--action-primary);
+  color: var(--text-inverse);
+  font-size: 0.9rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.browse-btn:hover:not(:disabled) {
+  background: var(--action-primary-hover);
+}
+
+.browse-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+/* === Result frames (image + pdf views) ===
+   Original left, translated right; bare viewers (no card, no labels). */
+
+.result-grid {
+  flex: 1;
+  min-height: 260px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 16px;
+}
+
+.result-frame {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+
+/* Images render at native size scaled by the toolbar's CSS zoom: the frame
+   grows with the image and scrolls when zoomed past its column. The auto
+   inline margin centers an image narrower than the frame and falls back to
+   left-aligned (still scrollable) when it overflows. */
+.result-frame img {
+  display: block;
+  flex: none;
+  align-self: flex-start;
+  margin-inline: auto;
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.result-frame iframe {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  border: none;
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+/* "Show original" off: only the translated frame, full width. */
+.result-grid.is-single {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.result-grid.is-single .result-frame-original {
+  display: none;
+}
+
+/* Pending state inside the translated frame (spinner + optional Cancel). */
+.stage-pending {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  color: var(--muted);
+}
+
+.stage-pending-text {
+  font-size: 1rem;
+  font-weight: 500;
+  color: var(--text-color);
+}
+
+.spinner {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 4px solid var(--border);
+  border-top-color: var(--accent);
+  animation: omni-spin 0.9s linear infinite;
+}
+
+@keyframes omni-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.link-btn {
+  border: none;
+  background: none;
+  padding: 4px 8px;
+  color: var(--accent-strong);
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.link-btn:hover {
+  text-decoration: underline;
+}
+
+/* Square icon button (the × that returns to the dropzone, icon-only Download). */
+.icon-square-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--muted);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.icon-square-btn:hover {
+  background: var(--hover-bg);
+  color: var(--text-color);
+}
+
+.icon-square-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* iOS-style switch ("Show original"). */
+.switch-field {
+  cursor: pointer;
+}
+
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 40px;
+  height: 22px;
+  flex-shrink: 0;
+}
+
+.switch input {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.switch-slider {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  background: var(--border-strong);
+  transition: background-color 0.15s ease;
+}
+
+.switch-slider::before {
+  content: '';
+  position: absolute;
+  left: 3px;
+  top: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 0.15s ease;
+}
+
+.switch input:checked + .switch-slider {
+  background: var(--accent);
+}
+
+.switch input:checked + .switch-slider::before {
+  transform: translateX(18px);
+}
+
+.switch input:focus-visible + .switch-slider {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* Zoom slider + percentage in the stage toolbar. */
+.zoom-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.zoom-field input[type='range'] {
+  width: 120px;
+  accent-color: var(--accent);
+}
+
+.zoom-field output {
+  min-width: 4ch;
+  color: var(--muted);
+  font-size: 0.82rem;
+  text-align: right;
+}
+
+.status-line.is-error {
+  color: var(--danger);
+}
+
+/* === Settings view === */
+
+.settings-view {
+  max-width: 760px;
+}
+
+.settings-group {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 18px 20px;
+}
+
+.settings-group h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  font-size: 0.87rem;
+}
+
+.setting-row select {
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text-color);
+  font-size: 0.85rem;
+}
+
+.setting-row input[type="range"] {
+  width: 220px;
+  accent-color: var(--primary);
+}
+
+@media (max-width: 720px) {
+  .view {
+    padding: 16px;
+  }
+
+  .voice-panes,
+  .dropzone-card,
+  .result-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .dropzone-sep {
+    width: auto;
+    height: 1px;
+    align-self: auto;
+  }
+
+  .result-grid {
+    flex: none;
+  }
+
+  .result-frame {
+    min-height: 240px;
+  }
+}
