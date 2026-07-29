@@ -1,0 +1,67 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
+
+:root {
+  /* Modern preset: modern shell tint + readability tweaks */
+  --ui-font: "Inter", "Plus Jakarta Sans", system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, "Noto Sans", "Liberation Sans", sans-serif;
+  --ui-line-height: 1.56;
+  --dialog-body-line-height: 1.52;
+  --bg: #f5f7fa;
+  --panel: #ffffff;
+  --border: #dde5ee;
+  --muted: #5b6778;
+  --primary: #245fcb;
+  --chrome-bg: #ffffff;
+  --chrome-border: #e5ebf2;
+  --sidebar-bg: #fcfdff;
+  --hover-bg: #f3f6fa;
+  --active-bg: #e9f1ff;
+  --active-text: #163a68;
+  --text-color: #3b495b;
+  --sidebar-toggle-color: #7c8ea3;
+  --sidebar-toggle-font-size: 1.08rem;
+  --sidebar-toggle-size: 36px;
+  --sidebar-toggle-icon-weight: 200;
+  --sidebar-toggle-icon-grad: -100;
+  --sidebar-header-justify: flex-end;
+  --sidebar-header-padding-x: 8px;
+  --sidebar-brand-display: inline-flex;
+  --sidebar-item-height: 42px;
+  --sidebar-item-radius: 12px;
+  --sidebar-item-padding-x: 14px;
+  --sidebar-item-font-size: 0.87rem;
+  --sidebar-item-icon-gap: 10px;
+  --dialog-card-radius: 16px;
+  --dialog-card-shadow: 0 18px 36px rgba(15, 23, 42, 0.15);
+  --dialog-topbar-bg: rgba(248, 250, 252, 0.96);
+}
+
+.sidebar-header .icon-btn .toggle-icon.material-symbols-outlined {
+  font-size: 0;
+  position: relative;
+}
+
+.sidebar-header .icon-btn .toggle-icon.material-symbols-outlined::before {
+  content: "";
+  position: absolute;
+  inset: 3px;
+  border: 1.75px solid currentColor;
+  border-radius: 4px;
+}
+
+.sidebar-header .icon-btn .toggle-icon.material-symbols-outlined::after {
+  content: "";
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  width: 2px;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.sidebar.expanded .sidebar-header .icon-btn .toggle-icon.material-symbols-outlined::after {
+  left: 6px;
+}
+
+.sidebar:not(.expanded) .sidebar-header .icon-btn .toggle-icon.material-symbols-outlined::after {
+  right: 6px;
+}

@@ -1,0 +1,139 @@
+* {
+  box-sizing: border-box;
+}
+
+:root {
+  --color-white: #fff;
+  --color-surface-100: #f5f5f5;
+  --color-slate-900: #0f172a;
+  --color-slate-800: #1e293b;
+  --color-slate-700: #334155;
+  --color-slate-600: #475569;
+  --color-slate-200: #e2e8f0;
+  --color-blue-600: #2563eb;
+  --chrome-font-size: 0.86rem;
+  --chrome-padding-v: 8px;
+  --chrome-padding-h: 12px;
+  --dialog-overlay-bg: rgba(0, 0, 0, 0.38);
+  --dialog-overlay-padding: 16px;
+  --dialog-card-max-height: calc(100vh - 24px);
+  --dialog-card-padding: 0;
+  --dialog-topbar-gap: 10px;
+  --dialog-topbar-padding: 8px 10px;
+  --dialog-topbar-blur: blur(6px);
+  --dialog-body-padding: 10px;
+  --dialog-drag-x: 0px;
+  --dialog-drag-y: 0px;
+}
+
+body {
+  margin: 0;
+  font-family: var(--ui-font);
+  line-height: var(--ui-line-height);
+  background: var(--bg);
+  color: var(--color-slate-800);
+}
+
+input,
+textarea,
+button,
+select {
+  font-family: inherit;
+}
+
+header {
+  position: sticky;
+  top: 0;
+  z-index: 1200;
+  padding: var(--chrome-padding-v) var(--chrome-padding-h);
+  border-bottom: 1px solid var(--chrome-border);
+  background: var(--chrome-bg);
+  font-size: var(--chrome-font-size);
+}
+
+.modal.hidden {
+  display: none;
+}
+
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--dialog-overlay-padding);
+  background: var(--dialog-overlay-bg);
+}
+
+.modal-card {
+  width: min(560px, 96vw);
+  border: 1px solid var(--border);
+  border-radius: var(--dialog-card-radius);
+  background: var(--bg);
+  box-shadow: var(--dialog-card-shadow);
+  padding: 14px;
+}
+
+.modal-card h3 {
+  margin: 4px 0 10px;
+  font-size: 1.05rem;
+}
+
+.modal-card p {
+  margin: 0 0 12px;
+  color: var(--muted);
+}
+
+.modal-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.dialog-card {
+  padding: var(--dialog-card-padding);
+  max-height: var(--dialog-card-max-height);
+  --drag-x: var(--dialog-drag-x);
+  --drag-y: var(--dialog-drag-y);
+  transform: translate(var(--drag-x), var(--drag-y));
+}
+
+.dialog-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--dialog-topbar-gap);
+  padding: var(--dialog-topbar-padding);
+  background: var(--dialog-topbar-bg);
+  backdrop-filter: var(--dialog-topbar-blur);
+  border-bottom: 1px solid var(--border);
+  border-radius: var(--dialog-card-radius) var(--dialog-card-radius) 0 0;
+}
+
+.dialog-drag-handle {
+  cursor: grab;
+  user-select: none;
+}
+
+.dialog-drag-handle:active {
+  cursor: grabbing;
+}
+
+.dialog-title {
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.dialog-grip {
+  color: var(--muted);
+  letter-spacing: 2px;
+  font-size: 0.95rem;
+  line-height: 1;
+}
+
+.dialog-body {
+  padding: var(--dialog-body-padding);
+  font-size: 0.85rem;
+  line-height: var(--dialog-body-line-height);
+}

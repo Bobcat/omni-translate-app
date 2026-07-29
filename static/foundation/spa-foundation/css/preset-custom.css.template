@@ -1,0 +1,56 @@
+/* Preset template for creating a new visual preset. */
+/* Copy to preset-<name>.css and adjust values as needed. */
+/* Remove or replace the @import line if your preset uses different fonts. */
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
+
+:root {
+  --ui-font: "Inter", "Plus Jakarta Sans", system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, "Noto Sans", "Liberation Sans", sans-serif;
+  --ui-line-height: 1.56;
+  --dialog-body-line-height: 1.52;
+  --bg: #f5f7fa;
+  --panel: #ffffff;
+  --border: #dde5ee;
+  --muted: #5b6778;
+  --primary: #245fcb;
+  --chrome-bg: #ffffff;
+  --chrome-border: #e5ebf2;
+  --chrome-font-size: 0.86rem;
+  --chrome-padding-v: 8px;
+  --chrome-padding-h: 12px;
+  --dialog-overlay-bg: rgba(0, 0, 0, 0.38);
+  --dialog-overlay-padding: 16px;
+  --dialog-card-max-height: calc(100vh - 24px);
+  --dialog-card-padding: 0;
+  --dialog-topbar-gap: 10px;
+  --dialog-topbar-padding: 8px 10px;
+  --dialog-topbar-bg: rgba(248, 250, 252, 0.96);
+  --dialog-topbar-blur: blur(6px);
+  --dialog-body-padding: 10px;
+  --dialog-drag-x: 0px;
+  --dialog-drag-y: 0px;
+  --dialog-card-radius: 16px;
+  --dialog-card-shadow: 0 18px 36px rgba(15, 23, 42, 0.15);
+  --sidebar-bg: #fcfdff;
+  --hover-bg: #f3f6fa;
+  --active-bg: #e9f1ff;
+  --active-text: #163a68;
+  --text-color: #3b495b;
+  --sidebar-toggle-bg: transparent;
+  --sidebar-toggle-border: transparent;
+  --sidebar-toggle-shadow: none;
+  --sidebar-toggle-color: #7c8ea3;
+  --sidebar-toggle-font-size: 1.08rem;
+  --sidebar-toggle-size: 36px;
+  --sidebar-toggle-radius: 50%;
+  --sidebar-toggle-icon-weight: 200;
+  --sidebar-toggle-icon-grad: -100;
+  --sidebar-header-justify: flex-end;
+  --sidebar-header-padding-x: 8px;
+  --sidebar-brand-display: inline-flex;
+  --sidebar-item-height: 42px;
+  --sidebar-item-radius: 12px;
+  --sidebar-item-padding-x: 14px;
+  --sidebar-item-font-size: 0.87rem;
+  --sidebar-item-icon-size: 20px;
+  --sidebar-item-icon-gap: 10px;
+}
