@@ -1,6 +1,8 @@
 // Desktop shell bootstrap: sidebar navigation + hash router on the vendored
 // spa-foundation package, following the same pattern as the LLM Workbench
-// app. Views are UI-only for now — no backend wiring.
+// app. Views are kept alive across navigation (created once, re-attached on
+// return) so a running translation keeps its stage; a view with work in
+// flight marks its sidebar entry via the view-busy event.
 
 import {
   RouterCore,
@@ -9,6 +11,7 @@ import {
   bindMobileSidebarDismiss,
 } from '../foundation/spa-foundation/index.js';
 import { iconMarkup } from './src/shared/icons.js';
+import { VIEW_BUSY_EVENT } from './src/shared/view-activity.js';
 import { createVoiceView } from './src/views/voice/index.js';
 import { createImageView } from './src/views/image/index.js';
 import { createPdfView } from './src/views/pdf/index.js';
@@ -99,12 +102,43 @@ const router = new RouterCore(appRoot, {
 });
 
 ALL_NAV_ITEMS.forEach((item) => {
+  // Keep-alive, same pattern as the LLM Workbench shell: the view element is
+  // created once and cached per route. Navigating away only detaches it (the
+  // router clears the host), so DOM state, closures and in-flight polling
+  // survive; returning re-attaches the same element. __onActivate /
+  // __onDeactivate let a view hook into that cycle when it needs to.
+  let cachedView = null;
   router.register(item.route, {
     mount: (host) => {
       host.innerHTML = '';
-      host.appendChild(VIEW_FACTORIES[item.id]());
+      if (!cachedView) cachedView = VIEW_FACTORIES[item.id]();
+      host.appendChild(cachedView);
+      if (typeof cachedView.__onActivate === 'function') cachedView.__onActivate();
+    },
+    unmount: () => {
+      if (cachedView && typeof cachedView.__onDeactivate === 'function') cachedView.__onDeactivate();
     },
   });
+});
+
+// Sidebar entries whose view reported work in flight. Held here rather than
+// in the views: the indicator has to stay correct while you are looking at
+// another view (the whole point of keep-alive is that the view keeps running
+// while detached).
+const busyViews = new Set();
+
+function updateViewRunningState() {
+  navList.querySelectorAll('[data-route]').forEach((item) => {
+    item.classList.toggle('is-running', busyViews.has(String(item.dataset.route || '')));
+  });
+}
+
+window.addEventListener(VIEW_BUSY_EVENT, (event) => {
+  const view = String(event?.detail?.view || '');
+  if (!view) return;
+  if (event.detail.busy) busyViews.add(view);
+  else busyViews.delete(view);
+  updateViewRunningState();
 });
 
 function updateSidebarUI(isOpen) {

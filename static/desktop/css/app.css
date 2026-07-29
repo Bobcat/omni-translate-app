@@ -50,6 +50,11 @@ body {
   margin-top: auto;
 }
 
+/* A view with work in flight marks its sidebar icon (view-busy event). */
+.nav-links li.is-running .sidebar-icon {
+  color: var(--accent);
+}
+
 .sidebar-footer {
   margin-top: 12px;
   padding-top: 12px;

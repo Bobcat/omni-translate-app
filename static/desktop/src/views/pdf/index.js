@@ -1,6 +1,7 @@
 import { iconMarkup } from '../../shared/icons.js';
 import { populateLanguageSelect, recordLanguageMru } from '../../shared/languages.js';
 import { submitPdf, getPdfRequest, cancelPdf, pdfArtifactUrl } from '../../shared/api.js';
+import { publishViewBusy } from '../../shared/view-activity.js';
 
 // PDF translation view, same stage model as the LLM Workbench: an empty state
 // (dropzone) swaps for a loaded state (original frame + translated frame) once
@@ -10,6 +11,11 @@ import { submitPdf, getPdfRequest, cancelPdf, pdfArtifactUrl } from '../../share
 // the translated document; × returns to the dropzone (cancelling a running
 // request first). Changing the target resubmits the same file. `runToken`
 // makes stale poll ticks and responses a no-op.
+//
+// The shell keeps views alive across navigation, so the poll keeps running
+// while the view is detached — both the sidebar busy indicator and the stage
+// have to be right while you are elsewhere, and one small GET per interval
+// beats being wrong. Work in flight marks the sidebar entry via view-busy.
 
 const POLL_INTERVAL_MS = 1000;
 const TERMINAL_STATES = new Set(['completed', 'failed', 'cancelled']);
@@ -87,6 +93,10 @@ export function createPdfView() {
 
   populateLanguageSelect(targetSelect, 'English');
   applyViewMode();
+
+  function setBusy(busy) {
+    publishViewBusy('pdf', busy);
+  }
 
   function setStatus(message, isError = false) {
     statusEl.textContent = message || '';
@@ -173,26 +183,29 @@ export function createPdfView() {
 
   async function poll(token) {
     stopPolling();
-    if (token !== runToken || !container.isConnected || !requestId) return;
+    if (token !== runToken || !requestId) return;
     try {
       const envelope = await getPdfRequest(requestId);
-      if (token !== runToken || !container.isConnected) return;
+      if (token !== runToken) return;
       const state = String(envelope?.state || '').toLowerCase();
       requestState = state;
       if (state === 'completed') {
         showTranslated(envelope);
+        setBusy(false);
         return;
       }
       if (TERMINAL_STATES.has(state)) {
         clearPending();
         setStatus(envelope?.error?.message || `Translation ${state}.`, true);
+        setBusy(false);
         return;
       }
       setPending(pendingTextFor(envelope));
     } catch (err) {
-      if (token !== runToken || !container.isConnected) return;
+      if (token !== runToken) return;
       clearPending();
       setStatus(err.message || 'Could not fetch the translation status.', true);
+      setBusy(false);
       return;
     }
     pollTimer = window.setTimeout(() => poll(token), POLL_INTERVAL_MS);
@@ -212,22 +225,25 @@ export function createPdfView() {
     setStageLoaded(true);
     setPending('Uploading…');
     setStatus('');
+    setBusy(true);
     try {
       const envelope = await submitPdf(file, { target: targetSelect.value });
-      if (token !== runToken || !container.isConnected) return;
+      if (token !== runToken) return;
       requestId = String(envelope?.request_id || '');
       requestState = String(envelope?.state || '').toLowerCase();
       if (!requestId) {
         clearPending();
         setStatus('The service did not return a request id.', true);
+        setBusy(false);
         return;
       }
       setPending(pendingTextFor(envelope));
       poll(token);
     } catch (err) {
-      if (token !== runToken || !container.isConnected) return;
+      if (token !== runToken) return;
       clearPending();
       setStatus(err.message || 'Could not submit the PDF.', true);
+      setBusy(false);
     }
   }
 
@@ -244,6 +260,7 @@ export function createPdfView() {
     ++runToken;
     stopPolling();
     await cancelRequest();
+    setBusy(false);
     currentFile = null;
     requestId = '';
     requestState = '';

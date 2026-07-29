@@ -1,6 +1,7 @@
 import { iconMarkup } from '../../shared/icons.js';
 import { populateLanguageSelect, recordLanguageMru } from '../../shared/languages.js';
 import { translateImage, retranslateImage } from '../../shared/api.js';
+import { publishViewBusy } from '../../shared/view-activity.js';
 
 // Image translation view, same stage model as the PDF view: an empty state
 // (dropzone) swaps for a loaded state (original frame + translated frame) once
@@ -10,6 +11,10 @@ import { translateImage, retranslateImage } from '../../shared/api.js';
 // current image (the service reuses its OCR, so that is cheap). `runToken`
 // makes a stale response a no-op when the user drops a new file, switches
 // target, or resets mid-flight.
+//
+// The shell keeps views alive across navigation: a response that arrives
+// while the view is detached still renders, and work in flight marks the
+// sidebar entry via view-busy.
 
 const ACCEPTED_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp']);
 
@@ -92,6 +97,10 @@ export function createImageView() {
   populateLanguageSelect(targetSelect, 'English');
   applyViewMode();
 
+  function setBusy(busy) {
+    publishViewBusy('image', busy);
+  }
+
   function setStatus(message, isError = false) {
     statusEl.textContent = message || '';
     statusEl.classList.toggle('is-error', !!isError);
@@ -160,14 +169,17 @@ export function createImageView() {
     setStageLoaded(true);
     pending.hidden = false;
     setStatus('');
+    setBusy(true);
     try {
       const result = await translateImage(file, { source: 'auto', target: targetSelect.value });
-      if (token !== runToken || !container.isConnected) return;
+      if (token !== runToken) return;
       requestId = result.requestId;
       showTranslated(result.blob);
+      setBusy(false);
     } catch (err) {
-      if (token !== runToken || !container.isConnected) return;
+      if (token !== runToken) return;
       showError(err.message);
+      setBusy(false);
     }
   }
 
@@ -177,20 +189,24 @@ export function createImageView() {
     translatedImg.hidden = true;
     pending.hidden = false;
     setStatus('');
+    setBusy(true);
     try {
       const result = await retranslateImage(requestId, { target: targetSelect.value });
-      if (token !== runToken || !container.isConnected) return;
+      if (token !== runToken) return;
       requestId = result.requestId;
       showTranslated(result.blob);
+      setBusy(false);
     } catch (err) {
-      if (token !== runToken || !container.isConnected) return;
+      if (token !== runToken) return;
       showError(err.message);
+      setBusy(false);
     }
   }
 
   function resetView() {
     ++runToken;
     requestId = '';
+    setBusy(false);
     downloadLink.hidden = true;
     originalImg.removeAttribute('src');
     translatedImg.removeAttribute('src');
@@ -250,6 +266,12 @@ export function createImageView() {
     dropzone.classList.remove('is-dragover');
     acceptFile(event.dataTransfer.files[0]);
   });
+
+  // Auto-fit needs layout widths, which are 0 while the view is detached;
+  // re-fit on return if the user never took over the slider.
+  container.__onActivate = () => {
+    if (zoomAuto && !stage.hidden) fitZoom();
+  };
 
   return container;
 }
