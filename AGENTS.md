@@ -51,8 +51,11 @@ Run the relevant subset before handing back changes. For normal frontend/backend
 node --input-type=module --check < static/src/app.js
 python -m py_compile app/main.py
 python -m unittest discover -s tests
+node --test tests/js/
 git diff --check
 ```
+
+`tests/js/` holds `node --test` suites for DOM-less frontend modules (e.g. the desktop text view's translation runner). `static/package.json` exists only to mark all browser JS under `static/` as ES modules for Node; it declares no dependencies and there is no build step.
 
 ## Git Discipline
 

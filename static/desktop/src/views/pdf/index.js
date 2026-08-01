@@ -9,8 +9,9 @@ import { publishViewBusy } from '../../shared/view-activity.js';
 // the view polls it — a PDF can take minutes, so the translated frame shows a
 // spinner with Cancel meanwhile. "Show original" collapses the stage to just
 // the translated document; × returns to the dropzone (cancelling a running
-// request first). Changing the target resubmits the same file. `runToken`
-// makes stale poll ticks and responses a no-op.
+// request first). Changing the target resubmits the same file, cancelling the
+// job it replaces. `runToken` makes stale poll ticks and responses a no-op —
+// a stale submit cancels the job it created before being ignored.
 //
 // The shell keeps views alive across navigation, so the poll keeps running
 // while the view is detached — both the sidebar busy indicator and the stage
@@ -19,6 +20,9 @@ import { publishViewBusy } from '../../shared/view-activity.js';
 
 const POLL_INTERVAL_MS = 1000;
 const TERMINAL_STATES = new Set(['completed', 'failed', 'cancelled']);
+// Matches the backend limit (pdf_translation.max_upload_bytes); checking here
+// spares the user a full upload before the 413.
+const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 
 export function createPdfView() {
   const container = document.createElement('div');
@@ -214,6 +218,12 @@ export function createPdfView() {
   async function translate(file) {
     const token = ++runToken;
     stopPolling();
+    // Cancel the request this one replaces (e.g. a target-language change
+    // mid-run) so it stops occupying the shared service queue. Fire and
+    // forget, same tolerance as resetView: a slow or failed cancel must not
+    // delay the replacement. Reads the current requestId synchronously, so
+    // it must run before the reset below.
+    cancelRequest();
     currentFile = file;
     requestId = '';
     requestState = '';
@@ -228,7 +238,10 @@ export function createPdfView() {
     setBusy(true);
     try {
       const envelope = await submitPdf(file, { target: targetSelect.value });
-      if (token !== runToken) return;
+      if (token !== runToken) {
+        cancelStaleSubmit(envelope);
+        return;
+      }
       requestId = String(envelope?.request_id || '');
       requestState = String(envelope?.state || '').toLowerCase();
       if (!requestId) {
@@ -254,6 +267,17 @@ export function createPdfView() {
     } catch {
       // A failed cancel must not trap the user on the stage; the reset proceeds.
     }
+  }
+
+  // A submit abandoned while still in flight (language change, reset, a newer
+  // file — requestId was not known yet, so cancelRequest could not reach it)
+  // still creates a job server-side. Cancel the id from the stale envelope
+  // instead of dropping it, or the orphaned job keeps occupying the shared
+  // queue. Fire and forget, same tolerance as cancelRequest.
+  function cancelStaleSubmit(envelope) {
+    const id = String(envelope?.request_id || '');
+    if (!id) return;
+    cancelPdf(id).catch(() => {});
   }
 
   async function resetView() {
@@ -290,6 +314,10 @@ export function createPdfView() {
     if (!file) return;
     if (file.type !== 'application/pdf' && !/\.pdf$/i.test(file.name || '')) {
       setStatus('Unsupported file type — choose a PDF.', true);
+      return;
+    }
+    if (file.size > MAX_UPLOAD_BYTES) {
+      setStatus(`PDF too large — the maximum is ${Math.floor(MAX_UPLOAD_BYTES / (1024 * 1024))} MB.`, true);
       return;
     }
     translate(file);

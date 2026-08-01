@@ -4,12 +4,13 @@ import { translateText } from '../../shared/api.js';
 import { publishViewBusy } from '../../shared/view-activity.js';
 import { guessSetupLanguages } from '../../../../src/domain/languages.js';
 import { loadSetupLanguages, persistSetupLanguages } from '../../../../src/domain/storage.js';
+import { createTranslationRunner } from './translation-runner.js';
 
 // Text translation view — the classic typed/pasted-text workflow. The timing
 // policy lives here (debounce + ceiling, see the research note): the backend
 // is a stateless one-shot endpoint that always re-translates the full current
-// text. Freshness is guarded newest-wins with a runToken, same pattern as the
-// image view.
+// text. Request coordination (one in flight, newest-wins, cleanup) lives in
+// translation-runner.js — DOM-less so it is testable with node:test.
 //
 // The shell keeps views alive across navigation: text, output and an
 // in-flight request survive view switches; the sidebar entry is marked busy
@@ -70,13 +71,37 @@ export function createTextView() {
   populateLanguageSelect(sourceSelect, initialLanguages.source);
   populateLanguageSelect(targetSelect, initialLanguages.target);
 
-  let runToken = 0;
-  let inFlight = false;
-  let dirtyWhileInFlight = false;
-  let pendingFinal = false;
   let debounceTimer = null;
   let ceilingTimer = null;
   let lastFireAt = 0;
+
+  const runner = createTranslationRunner({
+    minChars: MIN_CHARS,
+    getPayload: () => ({
+      source: sourceSelect.value,
+      target: targetSelect.value,
+      text: inputEl.value,
+    }),
+    translate: translateText,
+    onResult: (result) => {
+      outputEl.textContent = String(result.translated_text || '');
+      setStatus('');
+    },
+    onError: (err) => {
+      setStatus(err.message || 'Translation failed.', true);
+    },
+    onBusy: (busy) => {
+      publishViewBusy('text', busy);
+      if (busy) {
+        // Every dispatch cancels pending timers — including the runner's own
+        // dirty refire, which does not pass through fireTranslation.
+        cancelTimers();
+        lastFireAt = Date.now();
+        setStatus('Translating…');
+      }
+    },
+    onStateChange: updateControls,
+  });
 
   function persistLanguages() {
     persistSetupLanguages(sourceSelect.value, targetSelect.value);
@@ -89,7 +114,7 @@ export function createTextView() {
 
   function updateControls() {
     const hasText = inputEl.value.trim().length >= MIN_CHARS;
-    translateBtn.disabled = inFlight || !hasText;
+    translateBtn.disabled = runner.isInFlight() || !hasText;
     copyBtn.hidden = !outputEl.textContent;
     paneSourceLabel.textContent = sourceSelect.value;
     paneTargetLabel.textContent = targetSelect.value;
@@ -113,7 +138,7 @@ export function createTextView() {
     updateControls();
     if (inputEl.value.trim().length < MIN_CHARS) {
       cancelTimers();
-      ++runToken;
+      runner.invalidate();
       outputEl.textContent = '';
       setStatus('');
       updateControls();
@@ -142,51 +167,11 @@ export function createTextView() {
     }
   }
 
-  async function fireTranslation({ final = false } = {}) {
+  // Dispatch goes through the runner (request state, newest-wins, cleanup);
+  // the view only makes sure no pending timer fires a second request.
+  function fireTranslation({ final = false } = {}) {
     cancelTimers();
-    if (inFlight) {
-      // One request at a time; re-fire with the newest text on completion.
-      dirtyWhileInFlight = true;
-      pendingFinal = pendingFinal || final;
-      return;
-    }
-    const text = inputEl.value;
-    if (text.trim().length < MIN_CHARS) {
-      updateControls();
-      return;
-    }
-    inFlight = true;
-    dirtyWhileInFlight = false;
-    pendingFinal = false;
-    lastFireAt = Date.now();
-    const token = ++runToken;
-    publishViewBusy('text', true);
-    setStatus('Translating…');
-    updateControls();
-    try {
-      const result = await translateText({
-        source: sourceSelect.value,
-        target: targetSelect.value,
-        text,
-        final,
-      });
-      if (token !== runToken) return;
-      outputEl.textContent = String(result.translated_text || '');
-      setStatus('');
-    } catch (err) {
-      if (token !== runToken) return;
-      setStatus(err.message || 'Translation failed.', true);
-    } finally {
-      if (token === runToken) {
-        inFlight = false;
-        publishViewBusy('text', false);
-        updateControls();
-        if (dirtyWhileInFlight) {
-          dirtyWhileInFlight = false;
-          fireTranslation({ final: pendingFinal });
-        }
-      }
-    }
+    runner.fire({ final });
   }
 
   function swapLanguages() {

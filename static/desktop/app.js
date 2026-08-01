@@ -163,6 +163,15 @@ themeToggle.addEventListener('click', () => {
   shellPersistence.save();
 });
 
+// History URLs are built from the current path and query — never bare
+// '#route' fragments. The landing page injects <base href="/desktop/"> for
+// the assets, and a bare fragment resolves against that base: the address
+// bar would jump from / (or /?desktop) to /desktop/#route, dropping the
+// force-variant query. Path-absolute URLs are immune to <base>.
+function routeUrl(route) {
+  return `${window.location.pathname}${window.location.search}#${route}`;
+}
+
 function navigateFromNavList(event) {
   const item = event.target.closest('[data-route]');
   if (!item) return;
@@ -170,7 +179,7 @@ function navigateFromNavList(event) {
   if (event.type === 'keydown') event.preventDefault();
   const route = String(item.dataset.route || '');
   if (router.has(route)) {
-    router.navigate(route, null, { url: `#${route}` });
+    router.navigate(route, null, { url: routeUrl(route) });
   }
 }
 
@@ -190,7 +199,7 @@ function init() {
   // Voice is the app's main flow: land there when the hash is empty or unknown.
   const hash = window.location.hash.replace(/^#/, '');
   const initialRoute = router.has(hash) ? hash : 'voice';
-  router.start(initialRoute, null, { url: `#${initialRoute}` });
+  router.start(initialRoute, null, { url: routeUrl(initialRoute) });
 }
 
 init();

@@ -212,8 +212,16 @@ export function createVoiceSession({ onChange, resumeButton }) {
     emit();
     let socket = null;
     let capture = null;
+    let trackedCapture = Promise.resolve();
     try {
       const capturePromise = createStartedCapture({ targetSampleRate: state.audioInputSampleRate });
+      // Hand the started capture over as soon as it resolves — not only on the
+      // happy path — so the catch below can stop it when the session request or
+      // socket connect fails while the mic is still starting. The rejection
+      // swallow just silences this branch; Promise.all still sees failures.
+      trackedCapture = capturePromise.then((startedCapture) => {
+        capture = startedCapture;
+      }, () => {});
       const session = await requestVoiceSession({
         sideA: state.sideALanguage,
         sideB: state.sideBLanguage,
@@ -229,9 +237,7 @@ export function createVoiceSession({ onChange, resumeButton }) {
       });
       await Promise.all([
         socket.connect(),
-        capturePromise.then((startedCapture) => {
-          capture = startedCapture;
-        }),
+        capturePromise,
       ]);
       state.socket = socket;
       state.audioInputSampleRate = session.audio_input?.sample_rate_hz || 16000;
@@ -242,6 +248,8 @@ export function createVoiceSession({ onChange, resumeButton }) {
       publishViewBusy('voice', true);
       state.status = 'listening';
     } catch (error) {
+      // Wait for the mic start to settle so `capture` is final before cleanup.
+      await trackedCapture;
       capture?.stop();
       socket?.close();
       cleanupSession();
