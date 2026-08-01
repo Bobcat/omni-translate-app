@@ -23,6 +23,44 @@ async function errorDetail(response) {
   return '';
 }
 
+export async function getConfig() {
+  const response = await fetch('/api/config', { headers: { Accept: 'application/json' } });
+  await ensureOk(response);
+  return response.json();
+}
+
+// Voice sessions only pin the language pair; live/TTS settings stay at the
+// server defaults (the desktop app has no tuning UI).
+export async function createVoiceSession({ sideA, sideB }) {
+  const response = await fetch('/api/sessions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({
+      side_a_language: String(sideA || ''),
+      side_b_language: String(sideB || ''),
+    }),
+  });
+  await ensureOk(response);
+  return response.json();
+}
+
+// One-shot text translation: stateless, the client re-sends the full current
+// text and guards freshness itself (runToken in the view).
+export async function translateText({ source, target, text, final = false }) {
+  const response = await fetch('/api/text-translation', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({
+      source_language: String(source || ''),
+      target_language: String(target || ''),
+      text: String(text || ''),
+      final: Boolean(final),
+    }),
+  });
+  await ensureOk(response);
+  return response.json();
+}
+
 export async function translateImage(file, { source, target }) {
   const form = new FormData();
   form.append('image', file);

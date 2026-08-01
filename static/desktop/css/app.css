@@ -290,13 +290,6 @@ body {
   font-size: 0.82rem;
 }
 
-.preview-note {
-  margin: 0;
-  color: var(--muted);
-  font-size: 0.78rem;
-  text-align: center;
-}
-
 /* === Voice translation view === */
 
 .voice-languagebar {
@@ -349,9 +342,9 @@ body {
 .vad-badge {
   margin-left: auto;
   padding: 3px 10px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--accent);
   border-radius: 999px;
-  color: var(--muted);
+  color: var(--accent-strong);
   font-size: 0.75rem;
 }
 
@@ -364,16 +357,86 @@ body {
 }
 
 .pane {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 14px;
   padding: 16px;
+  overflow: hidden;
+}
+
+.pane-header {
+  flex-shrink: 0;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.text-stream {
+  flex: 1;
+  min-height: 0;
   overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
 .text-stream:empty::before {
   content: attr(data-empty);
   color: var(--muted);
+}
+
+.turn-part {
+  line-height: 1.5;
+  white-space: pre-wrap;
+  border-radius: 8px;
+  padding: 2px 6px;
+  margin: 0 -6px;
+}
+
+.text-preview {
+  color: var(--muted);
+}
+
+.turn-part.is-speaking {
+  background: var(--replay-glow-primary);
+}
+
+.turn-part.is-spoken {
+  color: var(--text-subtle);
+}
+
+.bubble-speak-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin-left: 6px;
+  vertical-align: middle;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--panel);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.bubble-speak-button:hover {
+  color: var(--text-color);
+}
+
+.bubble-speak-button svg {
+  width: 13px;
+  height: 13px;
+}
+
+.bubble-speak-button.is-stop {
+  color: var(--danger);
+  border-color: var(--danger-border);
 }
 
 .voice-actionbar {
@@ -414,9 +477,81 @@ body {
   height: 26px;
 }
 
+.action-round.primary.is-listening {
+  background: var(--danger);
+  border-color: var(--danger);
+}
+
+.action-round.is-busy {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
 .action-round:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+.voice-statusrow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.voice-statusrow .status-line {
+  flex: 1;
+  margin: 0;
+}
+
+.resume-audio-btn {
+  padding: 6px 14px;
+  border: 1px solid var(--border-control);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--text-color);
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.resume-audio-btn:hover {
+  border-color: var(--border-control-hover);
+}
+
+/* === Text translation view === */
+
+.text-panes {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 16px;
+}
+
+.text-input {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  border: none;
+  padding: 0;
+  background: transparent;
+  color: var(--text-color);
+  font: inherit;
+  line-height: 1.5;
+  resize: none;
+  outline: none;
+}
+
+.text-output {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.text-output:empty::before {
+  content: attr(data-empty);
+  color: var(--muted);
 }
 
 /* === Dropzone (image + pdf views) ===
@@ -760,6 +895,7 @@ body {
   }
 
   .voice-panes,
+  .text-panes,
   .dropzone-card,
   .result-grid {
     grid-template-columns: minmax(0, 1fr);

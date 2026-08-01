@@ -13,6 +13,7 @@ import {
 import { iconMarkup } from './src/shared/icons.js';
 import { VIEW_BUSY_EVENT } from './src/shared/view-activity.js';
 import { createVoiceView } from './src/views/voice/index.js';
+import { createTextView } from './src/views/text/index.js';
 import { createImageView } from './src/views/image/index.js';
 import { createPdfView } from './src/views/pdf/index.js';
 import { createSettingsView } from './src/views/settings/index.js';
@@ -20,6 +21,7 @@ import { createSettingsView } from './src/views/settings/index.js';
 const STORAGE_KEY = 'omni-translate.desktop.shell';
 
 const NAV_ITEMS = [
+  { id: 'text', route: 'text', name: 'Text translation', icon: 'languages' },
   { id: 'image', route: 'image', name: 'Image translation', icon: 'image' },
   { id: 'pdf', route: 'pdf', name: 'PDF translation', icon: 'file-text' },
   { id: 'voice', route: 'voice', name: 'Voice translation', icon: 'mic' },
@@ -31,6 +33,7 @@ const AUX_ITEMS = [
 
 const VIEW_FACTORIES = {
   voice: createVoiceView,
+  text: createTextView,
   image: createImageView,
   pdf: createPdfView,
   settings: createSettingsView,

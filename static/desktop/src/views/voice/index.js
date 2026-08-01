@@ -1,25 +1,36 @@
 import { iconMarkup } from '../../shared/icons.js';
+import { populateLanguageSelect, recordLanguageMru } from '../../shared/languages.js';
+import { createVoiceSession, visibleText } from './session.js';
 
-// Voice translation view — UI shell only (no backend wiring yet). Layout:
-// language bar on top, source/target panes side by side, action bar below.
+// Voice translation view, wired to the same backend session flow as the
+// mobile app (see ./session.js for the protocol state machine). Layout:
+// language bar on top, source/target panes side by side, action bar below,
+// status line at the bottom. The shell keeps this view alive across
+// navigation, so a running session survives view switches; the sidebar
+// entry is marked busy while the session is live.
 
 export function createVoiceView() {
   const container = document.createElement('div');
   container.className = 'view voice-view';
   container.innerHTML = `
     <div class="voice-languagebar">
-      <button type="button" class="language-pill" id="voiceSourceLanguage" disabled>Dutch</button>
-      <button type="button" class="language-swap" id="voiceSwapLanguages" aria-label="Swap direction" title="Swap direction" disabled>
+      <button type="button" class="language-pill" id="voiceSourceLanguage"></button>
+      <button type="button" class="language-swap" id="voiceSwapLanguages" aria-label="Swap direction" title="Swap direction">
         ${iconMarkup('swap')}
       </button>
-      <button type="button" class="language-pill" id="voiceTargetLanguage" disabled>English</button>
+      <button type="button" class="language-pill" id="voiceTargetLanguage"></button>
       <span class="vad-badge" id="voiceVadBadge" hidden>Speech detected</span>
+      <button type="button" class="icon-square-btn" id="voiceEndSession" aria-label="End session" title="End session" hidden>
+        ${iconMarkup('x')}
+      </button>
     </div>
     <div class="voice-panes">
       <article class="pane source-pane">
+        <div class="pane-header" id="voicePaneSourceLabel"></div>
         <div class="text-stream" id="voiceSourceText" data-empty="No speech recognized yet"></div>
       </article>
       <article class="pane target-pane">
+        <div class="pane-header" id="voicePaneTargetLabel"></div>
         <div class="text-stream" id="voiceTargetText" data-empty="No translation yet"></div>
       </article>
     </div>
@@ -27,14 +38,264 @@ export function createVoiceView() {
       <button type="button" class="action-round" id="voiceTranslateNow" aria-label="Translate now" title="Translate now" disabled>
         ${iconMarkup('languages')}
       </button>
-      <button type="button" class="action-round primary" id="voiceMicToggle" aria-label="Start microphone" title="Start microphone" disabled>
+      <button type="button" class="action-round primary" id="voiceMicToggle" aria-label="Start microphone" title="Start microphone">
         ${iconMarkup('mic')}
       </button>
       <button type="button" class="action-round" id="voiceSpeakNow" aria-label="Speak now" title="Speak now" disabled>
         ${iconMarkup('volume-2')}
       </button>
     </div>
-    <p class="preview-note">UI preview — not wired to the backend yet.</p>
+    <div class="voice-statusrow">
+      <p class="status-line" id="voiceStatus" role="status"></p>
+      <button type="button" class="resume-audio-btn" id="voiceResumeAudio" hidden>Resume audio</button>
+    </div>
   `;
+
+  const sourcePill = container.querySelector('#voiceSourceLanguage');
+  const targetPill = container.querySelector('#voiceTargetLanguage');
+  const swapBtn = container.querySelector('#voiceSwapLanguages');
+  const vadBadge = container.querySelector('#voiceVadBadge');
+  const endSessionBtn = container.querySelector('#voiceEndSession');
+  const paneSourceLabel = container.querySelector('#voicePaneSourceLabel');
+  const paneTargetLabel = container.querySelector('#voicePaneTargetLabel');
+  const sourceText = container.querySelector('#voiceSourceText');
+  const targetText = container.querySelector('#voiceTargetText');
+  const translateNowBtn = container.querySelector('#voiceTranslateNow');
+  const micToggleBtn = container.querySelector('#voiceMicToggle');
+  const speakNowBtn = container.querySelector('#voiceSpeakNow');
+  const statusEl = container.querySelector('#voiceStatus');
+  const resumeBtn = container.querySelector('#voiceResumeAudio');
+
+  const session = createVoiceSession({ onChange: render, resumeButton: resumeBtn });
+
+  setupAutoFollow(sourceText);
+  setupAutoFollow(targetText);
+
+  populateLanguageSelect(sourcePill, session.state.sideALanguage);
+  populateLanguageSelect(targetPill, session.state.sideBLanguage);
+
+  sourcePill.addEventListener('change', () => {
+    recordLanguageMru(sourcePill.value);
+    session.setLanguage('source', sourcePill.value);
+  });
+  targetPill.addEventListener('change', () => {
+    recordLanguageMru(targetPill.value);
+    session.setLanguage('target', targetPill.value);
+  });
+  swapBtn.addEventListener('click', () => session.swap());
+  endSessionBtn.addEventListener('click', () => session.endSession());
+  micToggleBtn.addEventListener('click', () => session.toggleMic());
+  translateNowBtn.addEventListener('click', () => session.translateNow());
+  speakNowBtn.addEventListener('click', () => session.speakNow());
+
+  // Bubble actions (replay / speak / stop) on the target lane, one
+  // delegated listener — same affordances as the mobile transcript.
+  targetText.addEventListener('click', (event) => {
+    const button = event.target?.closest?.('.bubble-speak-button');
+    if (!button || !targetText.contains(button)) return;
+    // Interacting with an earlier bubble: don't yank the stream back to
+    // the bottom on the next render.
+    targetText.dataset.autofollow = 'off';
+    const action = button.dataset.audioAction || 'replay';
+    if (action === 'stop') {
+      session.stopAudio();
+      return;
+    }
+    if (action === 'speak') {
+      session.speakPart(button.dataset.partId);
+      return;
+    }
+    session.replayPart({ laneId: button.dataset.replayLane, text: button.dataset.replayText });
+  });
+
+  session.loadConfig();
+  render();
+
+  function render() {
+    renderLanguageBar();
+    renderPanes();
+    renderButtons();
+    renderStatus();
+  }
+
+  function renderLanguageBar() {
+    const { state } = session;
+    const lane = session.currentLane();
+    populateLanguageSelect(sourcePill, state.sideALanguage);
+    populateLanguageSelect(targetPill, state.sideBLanguage);
+    // Language choice is a setup-time decision; during a live session the
+    // pills just label the pair (the pane headers follow the active lane).
+    const locked = state.live || state.starting;
+    sourcePill.disabled = locked;
+    targetPill.disabled = locked;
+    sourcePill.setAttribute('aria-label', `Source language: ${state.sideALanguage}`);
+    targetPill.setAttribute('aria-label', `Target language: ${state.sideBLanguage}`);
+    swapBtn.disabled = state.starting;
+    paneSourceLabel.textContent = lane.sourceLanguage;
+    paneTargetLabel.textContent = lane.targetLanguage;
+    vadBadge.hidden = !state.vadVisible;
+    endSessionBtn.hidden = !state.live;
+  }
+
+  function renderPanes() {
+    const turn = session.state.currentTurn;
+    renderTurnStream(sourceText, turn.parts, 'source', turn.sourceText);
+    renderTurnStream(targetText, turn.parts, 'target', turn.targetText);
+    pinToBottomIfFollowing(sourceText);
+    pinToBottomIfFollowing(targetText);
+  }
+
+  function renderTurnStream(el, parts, role, fallbackText) {
+    const { state } = session;
+    const fragment = document.createDocumentFragment();
+    for (const part of parts || []) {
+      const committedText = role === 'source' ? part.sourceCommittedText : part.targetCommittedText;
+      const previewText = role === 'source' ? part.sourcePreviewText : part.targetPreviewText;
+      if (!visibleText(committedText, previewText)) continue;
+      const row = document.createElement('div');
+      row.className = 'turn-part';
+      if (part.speechState === 'spoken') row.classList.add('is-spoken');
+      if (part.speechState === 'speaking') row.classList.add('is-speaking');
+      renderTextStream(row, committedText, previewText);
+      if (role === 'target' && state.ttsEnabled) {
+        appendBubbleButton(row, part, committedText, previewText);
+      }
+      fragment.append(row);
+    }
+    if (!fragment.childNodes.length && fallbackText) {
+      const row = document.createElement('div');
+      row.className = 'turn-part';
+      row.textContent = String(fallbackText || '');
+      fragment.append(row);
+    }
+    el.replaceChildren(fragment);
+  }
+
+  // Stop / replay / speak affordance per bubble, ported from the mobile
+  // render-turn logic: stop while this bubble's audio plays, replay once
+  // spoken, speak-now for closed (or mic-off) unspoken bubbles.
+  function appendBubbleButton(row, part, committedText, previewText) {
+    const { state } = session;
+    const replayText = String(committedText || '').trim();
+    const speakText = visibleText(committedText, previewText);
+    const canSpeakVisibleText = Boolean(speakText && (part.isClosed || state.micState === 'off'));
+    const playing = state.audioPlayback;
+    const isStopForThis = Boolean(
+      playing && (
+        (!playing.replay && part.speechState === 'speaking')
+        || (playing.replay && part.speechState === 'spoken' && replayText && replayText === String(playing.replayText || ''))
+      ),
+    );
+    if (isStopForThis) {
+      row.classList.add('is-playing-audio');
+      row.append(createBubbleButton({ mode: 'stop', text: replayText, partId: part.partId }));
+    } else if (part.speechState === 'spoken' && replayText) {
+      row.append(createBubbleButton({ mode: 'replay', text: replayText, partId: part.partId }));
+    } else if (part.speechState !== 'spoken' && canSpeakVisibleText) {
+      row.append(createBubbleButton({ mode: 'speak', text: speakText, partId: part.partId }));
+    }
+  }
+
+  function createBubbleButton({ text, partId, mode }) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'bubble-speak-button';
+    button.dataset.replayText = text;
+    button.dataset.replayLane = session.state.currentTurn.laneId;
+    if (partId) button.dataset.partId = partId;
+    if (mode === 'stop') {
+      button.classList.add('is-stop');
+      button.dataset.audioAction = 'stop';
+      button.setAttribute('aria-label', 'Stop playback');
+      button.title = 'Stop';
+      button.innerHTML = iconMarkup('stop');
+    } else {
+      button.dataset.audioAction = mode === 'speak' ? 'speak' : 'replay';
+      button.setAttribute('aria-label', mode === 'speak' ? 'Speak' : 'Replay');
+      button.title = mode === 'speak' ? 'Speak' : 'Replay';
+      button.innerHTML = iconMarkup('volume-2');
+    }
+    return button;
+  }
+
+  function renderTextStream(row, committed, preview) {
+    const committedText = String(committed || '');
+    const previewText = previewSuffixText(committedText, preview);
+    if (!committedText && !previewText) return;
+    const committedSpan = document.createElement('span');
+    committedSpan.className = 'text-committed';
+    committedSpan.textContent = committedText;
+    const previewSpan = document.createElement('span');
+    previewSpan.className = 'text-preview';
+    previewSpan.textContent = previewText;
+    row.append(committedSpan, previewSpan);
+  }
+
+  function renderButtons() {
+    const { state } = session;
+    const live = state.live && Boolean(state.socket?.isOpen());
+    const turnIsSpeaking = state.currentTurn.state === 'open_speaking';
+
+    micToggleBtn.disabled = state.starting || (state.live && !state.socket?.isOpen());
+    micToggleBtn.classList.toggle('is-listening', state.micState === 'listening');
+    let micLabel = 'Start microphone';
+    if (state.starting && !state.live) micLabel = 'Connecting';
+    else if (state.live) micLabel = state.micState === 'listening' ? 'Turn microphone off' : 'Turn microphone on';
+    micToggleBtn.setAttribute('aria-label', micLabel);
+    micToggleBtn.title = micLabel;
+
+    translateNowBtn.disabled = !(live && state.currentTurn.canTranslateNow && !turnIsSpeaking);
+
+    const canPlayAudio = Boolean(live && session.audioQueue.hasNonReplayAudio());
+    const canSpeakTarget = Boolean(
+      live && state.ttsEnabled && state.currentTurn.speakableTargetText && !turnIsSpeaking,
+    );
+    speakNowBtn.disabled = state.speakNowPending || !(canSpeakTarget || canPlayAudio);
+    speakNowBtn.classList.toggle('is-busy', turnIsSpeaking);
+    let speakLabel = 'Speak now';
+    if (canPlayAudio && state.audioStatus.startsWith('Playing')) speakLabel = 'Playing';
+    else if (canPlayAudio) speakLabel = 'Play audio';
+    speakNowBtn.setAttribute('aria-label', speakLabel);
+    speakNowBtn.title = speakLabel;
+  }
+
+  function renderStatus() {
+    const { state } = session;
+    let text = '';
+    let isError = false;
+    if (state.status === 'error') {
+      text = state.statusMessage || 'Something went wrong.';
+      isError = true;
+    } else if (state.status === 'connecting') {
+      text = 'Connecting…';
+    } else {
+      text = state.audioStatus || '';
+    }
+    statusEl.textContent = text;
+    statusEl.classList.toggle('is-error', isError);
+  }
+
   return container;
+}
+
+function previewSuffixText(committed, preview) {
+  const left = String(committed || '');
+  const right = String(preview || '').trim();
+  if (!right) return '';
+  return /\s$/.test(left) || !left ? right : ` ${right}`;
+}
+
+// Scroll pinning per stream: follow new content unless the user scrolled
+// up; scrolling back near the bottom re-arms following.
+function setupAutoFollow(el) {
+  el.dataset.autofollow = 'on';
+  el.addEventListener('scroll', () => {
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+    el.dataset.autofollow = nearBottom ? 'on' : 'off';
+  });
+}
+
+function pinToBottomIfFollowing(el) {
+  if (el.dataset.autofollow === 'off') return;
+  el.scrollTop = el.scrollHeight;
 }
