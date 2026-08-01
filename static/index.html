@@ -8,23 +8,42 @@
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
-    <meta name="theme-color" content="#f5f7fa" media="(prefers-color-scheme: light)">
-    <meta name="theme-color" content="#0e1117" media="(prefers-color-scheme: dark)">
+    <meta name="theme-color" content="#fcfaf5">
     <title>Omni Translate</title>
     <script>
-      // Warm-theme experiment: ?warm in the URL opts in (light mode only).
-      if (new URLSearchParams(window.location.search).has('warm')) {
-        document.documentElement.dataset.experiment = 'warm';
-      }
+      // Appearance: resolve the saved theme/palette before first paint so the
+      // right palette applies without a flash. Keep the storage key, allowed
+      // values, defaults and theme-color hexes in sync with
+      // /src/domain/storage.js and /src/domain/appearance.js.
+      (function () {
+        var theme = 'system';
+        var palette = 'warm';
+        try {
+          var saved = JSON.parse(localStorage.getItem('appearance_settings') || '{}');
+          if (saved.theme === 'system' || saved.theme === 'light' || saved.theme === 'dark') theme = saved.theme;
+          if (saved.palette === 'warm' || saved.palette === 'cool') palette = saved.palette;
+        } catch (err) { /* storage unavailable: defaults stand */ }
+        var dark = theme === 'dark'
+          || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        var root = document.documentElement;
+        root.dataset.theme = dark ? 'dark' : 'light';
+        root.dataset.palette = palette;
+        var meta = document.querySelector('meta[name="theme-color"]');
+        if (meta) {
+          meta.content = dark
+            ? (palette === 'warm' ? '#161513' : '#0e1117')
+            : (palette === 'warm' ? '#fcfaf5' : '#f5f7fa');
+        }
+      })();
     </script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600&family=Inter:wght@400;500;600;700&family=Source+Sans+3:wght@400;500&display=swap">
     <link rel="stylesheet" href="/themes/tokens.css?v=20260518-theme-6">
-    <link rel="stylesheet" href="/themes/light.css?v=20260518-theme-6">
-    <link rel="stylesheet" href="/themes/dark.css?v=20260518-theme-6">
-    <link rel="stylesheet" href="/themes/warm.css?v=20260728-warm-6">
-    <link rel="stylesheet" href="/styles.css?v=20260712b-save-button">
+    <link rel="stylesheet" href="/themes/light.css?v=20260730-appearance-1">
+    <link rel="stylesheet" href="/themes/dark.css?v=20260730-appearance-1">
+    <link rel="stylesheet" href="/themes/warm.css?v=20260730-appearance-1">
+    <link rel="stylesheet" href="/styles.css?v=20260730-appearance-1">
   </head>
   <body>
     <main class="app is-setup">
@@ -224,6 +243,13 @@
           </header>
           <div class="settings-views">
             <div class="settings-page" id="settingsHomePage">
+              <button class="settings-nav-row" id="settingsAppearanceNav" type="button">
+                <span>
+                  <strong>Appearance</strong>
+                  <small>Theme and palette</small>
+                </span>
+                <span class="setting-value" id="appearanceSettingsSummary">Warm · System</span>
+              </button>
               <button class="settings-nav-row" id="settingsMicrophoneNav" type="button">
                 <span>
                   <strong>Microphone</strong>
@@ -263,6 +289,24 @@
                   <small id="installAppHint">Add to home screen</small>
                 </span>
               </button>
+            </div>
+
+            <div class="settings-page" id="settingsAppearancePage" hidden>
+              <section class="setting-group" aria-label="Theme">
+                <div class="setting-group-title">Theme</div>
+                <div class="segmented" role="radiogroup" aria-label="Theme">
+                  <label><input type="radio" name="appearanceTheme" value="system" checked><span>System</span></label>
+                  <label><input type="radio" name="appearanceTheme" value="light"><span>Light</span></label>
+                  <label><input type="radio" name="appearanceTheme" value="dark"><span>Dark</span></label>
+                </div>
+              </section>
+              <section class="setting-group" aria-label="Palette">
+                <div class="setting-group-title">Palette</div>
+                <div class="segmented" role="radiogroup" aria-label="Palette">
+                  <label><input type="radio" name="appearancePalette" value="warm" checked><span>Warm</span></label>
+                  <label><input type="radio" name="appearancePalette" value="cool"><span>Cool</span></label>
+                </div>
+              </section>
             </div>
 
             <div class="settings-page" id="settingsImageRenderPage" hidden>
@@ -464,6 +508,6 @@
       </div>
 
     </main>
-    <script type="module" src="/src/app.js?v=20260712b-save-button"></script>
+    <script type="module" src="/src/app.js?v=20260730-appearance-1"></script>
   </body>
 </html>

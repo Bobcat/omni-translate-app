@@ -9,6 +9,7 @@ import { renderAudioSettings } from './audio.js';
 import { renderTuningSettings } from './tuning.js';
 import { renderTtsSettings } from './tts.js';
 import { renderHistorySettings } from './dev-tools.js';
+import { renderAppearanceSettings } from './appearance.js';
 import { voiceLibraryOnExit } from './voice-library.js';
 
 let _settingsSheetDepth = 0;
@@ -24,6 +25,7 @@ export function openSettingsSheet() {
   if (!els.settingsSheet.hidden) return;
   els.settingsSheet.hidden = false;
   setSettingsPage('home');
+  renderAppearanceSettings();
   renderAudioSettings();
   renderTuningSettings();
   renderTtsSettings();
