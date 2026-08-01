@@ -174,7 +174,16 @@ def post_pdf_translation_request(
     document_file: UploadFile = File(...),
     target_language: str = Form(...),
 ) -> dict[str, Any]:
-    content = document_file.file.read()
+    # Bounded read: never hold more than the limit in memory, and reject
+    # oversized uploads without relying on a reverse-proxy limit. Same
+    # config pattern as text_translation.max_chars.
+    max_bytes = get_int("pdf_translation.max_upload_bytes", 25 * 1024 * 1024, min_value=1)
+    content = document_file.file.read(max_bytes + 1)
+    if len(content) > max_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"document too large (max {max_bytes // (1024 * 1024)} MB)",
+        )
     if not content:
         raise HTTPException(status_code=400, detail="empty document upload")
     try:

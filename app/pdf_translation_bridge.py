@@ -43,9 +43,13 @@ def submit_pdf(
 
     ``target_language`` is a language name or ISO code; it is normalised to the
     ISO code the service expects. The source is auto-detected downstream
-    (fixed ``auto``). Raises ``PdfTranslationError`` on a service failure.
+    (fixed ``auto``). Raises ``PdfTranslationError`` on invalid input (status
+    400) or a service failure (status 502).
     """
-    target_code = translation_language_code(target_language)
+    try:
+        target_code = translation_language_code(target_language)
+    except ValueError as exc:
+        raise PdfTranslationError(str(exc), status_code=400) from exc
     if not target_code:
         raise PdfTranslationError("target language is required", status_code=400)
     request_json = json.dumps(
