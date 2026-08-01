@@ -24,6 +24,7 @@ from app.pdf_translation_bridge import get_pdf_artifact
 from app.pdf_translation_bridge import get_pdf_request
 from app.pdf_translation_bridge import submit_pdf
 from app.protocol import PROTOCOL_VERSION
+from app.saas_setup import resolve_request_entitlements
 from app.sessions import SESSIONS
 from app.translation_bridge import TranslationBridge
 from app.translation_bridge import translation_language_code
@@ -37,6 +38,8 @@ from app.voice_library import stable_voice_library_status
 
 from realtime_translation_engine.types import LiveDispatchRequest
 from realtime_translation_engine.types import TranslationOpportunity
+
+from saas.fastapi_glue import set_identity_cookie
 
 
 api_router = APIRouter(prefix="/api")
@@ -92,6 +95,7 @@ async def config() -> dict[str, Any]:
 # threadpool and the bridge's blocking poll never stalls the event loop.
 @api_router.post("/image-translation")
 def post_image_translation(
+    request: Request,
     image: UploadFile = File(...),
     source_language: str = Form(...),
     target_language: str = Form(...),
@@ -104,6 +108,12 @@ def post_image_translation(
     content = image.file.read()
     if not content:
         raise HTTPException(status_code=400, detail="empty image upload")
+    # The caller's plan gates the feature and sets the source-text ceiling the
+    # service enforces after OCR (before any translation call). A just-created
+    # anonymous identity rides back as a cookie on the image response.
+    entitlements, identity_token = resolve_request_entitlements(request)
+    entitlements.require_enabled("image_translation.enabled")
+    max_characters = entitlements.get_int("image_translation.max_characters_per_job")
     try:
         data, media_type, request_id = translate_image(
             image_bytes=content,
@@ -118,10 +128,23 @@ def post_image_translation(
                 "size_metric_mode": size_metric_mode,
                 "size_cohort_mode": size_cohort_mode,
             },
+            max_source_characters=max_characters,
         )
     except ImageTranslationError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=str(exc))
-    return Response(content=data, media_type=media_type, headers={REQUEST_ID_HEADER: request_id})
+        raise HTTPException(status_code=exc.status_code, detail=_image_error_detail(exc))
+    response = Response(content=data, media_type=media_type, headers={REQUEST_ID_HEADER: request_id})
+    if identity_token is not None:
+        set_identity_cookie(request, response, identity_token)
+    return response
+
+
+def _image_error_detail(exc: ImageTranslationError) -> Any:
+    """Structured detail when the bridge carries a machine-readable rejection code,
+    the plain message otherwise (both frontends read ``detail.message`` or the
+    string form)."""
+    if not exc.code:
+        return str(exc)
+    return {"code": exc.code, "message": str(exc), "details": exc.details}
 
 
 @api_router.post("/image-translation/{source_request_id}/retranslate")

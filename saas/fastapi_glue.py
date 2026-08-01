@@ -29,9 +29,62 @@ def saas_error_handler(_request: Request, exc: SaasError) -> JSONResponse:
     )
 
 
+DEFAULT_COOKIE_NAME = "ot_anon"
+DEFAULT_COOKIE_MAX_AGE_S = 180 * 24 * 3600
+
+
 def _request_is_https(request: Request) -> bool:
     forwarded = (request.headers.get("x-forwarded-proto") or "").split(",")[0].strip().lower()
     return forwarded == "https" or request.url.scheme == "https"
+
+
+def resolve_anonymous_identity(
+    request: Request,
+    *,
+    store: SaasStore,
+    signing_secret: str,
+    tenant: str,
+    anonymous_plan: str = "anonymous",
+    cookie_name: str = DEFAULT_COOKIE_NAME,
+) -> tuple[Principal, str | None]:
+    """Signed anonymous cookie → existing principal; otherwise create a fresh
+    identity and return its token. The id never leaves the server unsigned.
+
+    The token is RETURNED, not set on a response: a route returning a raw
+    ``Response`` has no injected response param, so every caller attaches the
+    cookie to its own response via ``set_identity_cookie``."""
+    token = request.cookies.get(cookie_name, "")
+    identity_id = verify_identity_token(token, signing_secret) if token else None
+    if identity_id is not None:
+        row = store.get_identity(tenant, identity_id)
+        if row is not None and row["status"] == "active":
+            return Principal(tenant=tenant, kind="anonymous", id=identity_id, plan_code=anonymous_plan), None
+    identity_id = store.create_identity(tenant)
+    return (
+        Principal(tenant=tenant, kind="anonymous", id=identity_id, plan_code=anonymous_plan),
+        sign_identity(identity_id, signing_secret),
+    )
+
+
+def set_identity_cookie(
+    request: Request,
+    response: Response,
+    token: str,
+    *,
+    cookie_name: str = DEFAULT_COOKIE_NAME,
+    cookie_max_age_s: int = DEFAULT_COOKIE_MAX_AGE_S,
+) -> None:
+    response.set_cookie(
+        cookie_name,
+        token,
+        max_age=cookie_max_age_s,
+        httponly=True,
+        samesite="lax",
+        # Secure cookies are rejected by browsers on plain http; only mark
+        # secure when this request actually arrived over https (incl. via
+        # the Cloudflare proxy).
+        secure=_request_is_https(request),
+    )
 
 
 def create_saas_router(
@@ -43,34 +96,25 @@ def create_saas_router(
     tenant: str,
     anonymous_plan: str = "anonymous",
     usage_metrics: list[Mapping[str, Any]] | None = None,
-    cookie_name: str = "ot_anon",
-    cookie_max_age_s: int = 180 * 24 * 3600,
+    cookie_name: str = DEFAULT_COOKIE_NAME,
+    cookie_max_age_s: int = DEFAULT_COOKIE_MAX_AGE_S,
 ) -> APIRouter:
     router = APIRouter(prefix="/api")
 
     def resolve_principal(request: Request, response: Response) -> Principal:
-        """Signed anonymous cookie → existing principal; otherwise create a
-        fresh identity and issue its token. The id never leaves the server
-        unsigned."""
-        token = request.cookies.get(cookie_name, "")
-        identity_id = verify_identity_token(token, signing_secret) if token else None
-        if identity_id is not None:
-            row = store.get_identity(tenant, identity_id)
-            if row is not None and row["status"] == "active":
-                return Principal(tenant=tenant, kind="anonymous", id=identity_id, plan_code=anonymous_plan)
-        identity_id = store.create_identity(tenant)
-        response.set_cookie(
-            cookie_name,
-            sign_identity(identity_id, signing_secret),
-            max_age=cookie_max_age_s,
-            httponly=True,
-            samesite="lax",
-            # Secure cookies are rejected by browsers on plain http; only mark
-            # secure when this request actually arrived over https (incl. via
-            # the Cloudflare proxy).
-            secure=_request_is_https(request),
+        principal, token = resolve_anonymous_identity(
+            request,
+            store=store,
+            signing_secret=signing_secret,
+            tenant=tenant,
+            anonymous_plan=anonymous_plan,
+            cookie_name=cookie_name,
         )
-        return Principal(tenant=tenant, kind="anonymous", id=identity_id, plan_code=anonymous_plan)
+        if token is not None:
+            set_identity_cookie(
+                request, response, token, cookie_name=cookie_name, cookie_max_age_s=cookie_max_age_s
+            )
+        return principal
 
     # Sync def: store is sync sqlite — let FastAPI use the threadpool.
     @router.get("/me")
