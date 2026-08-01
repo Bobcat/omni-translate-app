@@ -18,8 +18,15 @@ from app.image_translation_bridge import translate_image
 from app.live_settings import default_live_settings
 from app.live_settings import merge_live_settings
 from app.live_settings import normalize_live_settings_delta
+from app.pdf_translation_bridge import PdfTranslationError
+from app.pdf_translation_bridge import cancel_pdf_request
+from app.pdf_translation_bridge import get_pdf_artifact
+from app.pdf_translation_bridge import get_pdf_request
+from app.pdf_translation_bridge import submit_pdf
 from app.protocol import PROTOCOL_VERSION
 from app.sessions import SESSIONS
+from app.translation_bridge import TranslationBridge
+from app.translation_bridge import translation_language_code
 from app.tts_bridge import artifact_path
 from app.tts_bridge import tts_settings_payload
 from app.tts_bridge import tts_settings_snapshot
@@ -27,6 +34,9 @@ from app.voice_library import discard_pending_stable_sample
 from app.voice_library import generate_stable_sample
 from app.voice_library import keep_pending_stable_sample
 from app.voice_library import stable_voice_library_status
+
+from realtime_translation_engine.types import LiveDispatchRequest
+from realtime_translation_engine.types import TranslationOpportunity
 
 
 api_router = APIRouter(prefix="/api")
@@ -43,6 +53,13 @@ class GenerateStableVoiceSampleRequest(BaseModel):
     language: str
     gender: str
     engine: str
+
+
+class TextTranslationRequest(BaseModel):
+    source_language: str
+    target_language: str
+    text: str
+    final: bool = False
 
 
 @api_router.get("/health")
@@ -147,6 +164,110 @@ def post_image_rerender(
     except ImageTranslationError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc))
     return Response(content=data, media_type=media_type, headers={REQUEST_ID_HEADER: request_id})
+
+
+# PDF translation: unlike images, the submit returns a lifecycle envelope immediately
+# and the desktop client polls it — a PDF can take minutes, so the route must not
+# hold the connection. Sync defs for the same threadpool reason as the image routes.
+@api_router.post("/pdf-translation/requests")
+def post_pdf_translation_request(
+    document_file: UploadFile = File(...),
+    target_language: str = Form(...),
+) -> dict[str, Any]:
+    # Bounded read: never hold more than the limit in memory, and reject
+    # oversized uploads without relying on a reverse-proxy limit. Same
+    # config pattern as text_translation.max_chars.
+    max_bytes = get_int("pdf_translation.max_upload_bytes", 25 * 1024 * 1024, min_value=1)
+    content = document_file.file.read(max_bytes + 1)
+    if len(content) > max_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"document too large (max {max_bytes // (1024 * 1024)} MB)",
+        )
+    if not content:
+        raise HTTPException(status_code=400, detail="empty document upload")
+    try:
+        return submit_pdf(
+            document_bytes=content,
+            filename=document_file.filename or "document.pdf",
+            content_type=document_file.content_type or "application/pdf",
+            target_language=target_language,
+        )
+    except PdfTranslationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc))
+
+
+@api_router.get("/pdf-translation/requests/{request_id}")
+def get_pdf_translation_request(request_id: str) -> dict[str, Any]:
+    try:
+        return get_pdf_request(request_id)
+    except PdfTranslationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc))
+
+
+@api_router.get("/pdf-translation/requests/{request_id}/artifacts/{artifact_name}")
+def get_pdf_translation_artifact(request_id: str, artifact_name: str) -> Response:
+    try:
+        data, media_type = get_pdf_artifact(request_id, artifact_name)
+    except PdfTranslationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc))
+    return Response(
+        content=data,
+        media_type=media_type,
+        # A completed run's artifact is immutable per (request_id, name), so
+        # let the browser cache it: iframe reloads (view re-attach, reopen)
+        # then skip the upstream re-download.
+        headers={"Cache-Control": "private, max-age=86400, immutable"},
+    )
+
+
+@api_router.post("/pdf-translation/requests/{request_id}/cancel")
+def post_pdf_translation_cancel(request_id: str) -> dict[str, Any]:
+    try:
+        return cancel_pdf_request(request_id)
+    except PdfTranslationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc))
+
+
+# One-shot text translation (typed/pasted text — the classic translator workflow).
+# Stateless request/response: unlike voice sessions there is no event stream, the
+# client re-sends the full current text and guards result freshness itself.
+# Sync def for the same threadpool reason as the image routes: an LLM call takes
+# seconds and must not hold the event loop.
+@api_router.post("/text-translation")
+def post_text_translation(payload: TextTranslationRequest) -> dict[str, Any]:
+    text = str(payload.text or "")
+    if not text.strip():
+        raise HTTPException(status_code=400, detail="empty text")
+    max_chars = get_int("text_translation.max_chars", 5000)
+    if len(text) > max_chars:
+        raise HTTPException(status_code=400, detail=f"text too long (max {max_chars} characters)")
+    try:
+        translation_language_code(payload.source_language)
+        translation_language_code(payload.target_language)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    bridge = TranslationBridge(
+        source_language=payload.source_language,
+        target_language=payload.target_language,
+    )
+    # Same invocation shape as the live voice flow (runtime.py): the bridge only
+    # reads the opportunity. commits_target gates the optional second pass.
+    request = LiveDispatchRequest(
+        request_id=1,
+        committed_target_base_revision=0,
+        opportunity=TranslationOpportunity(
+            lane="commit",
+            source_window=text,
+            source_chunks_used=1,
+            commits_target=bool(payload.final),
+        ),
+    )
+    try:
+        result = bridge.run(request)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"translation failed: {exc}")
+    return {"translated_text": result.text, "model": result.model}
 
 
 @api_router.post("/voice-library/stable")

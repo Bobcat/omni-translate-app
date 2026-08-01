@@ -1,0 +1,34 @@
+:root {
+  /* Classic visual preset */
+  --ui-font: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, "Noto Sans", "Liberation Sans", sans-serif;
+  --ui-line-height: 1.45;
+  --dialog-body-line-height: 1.45;
+  --bg: #f8fafc;
+  --panel: #fafafa;
+  --border: #e2e8f0;
+  --muted: #666;
+  --primary: #1f6feb;
+  --chrome-bg: #f8fafc;
+  --chrome-border: var(--border);
+  --dialog-card-radius: 14px;
+  --dialog-card-shadow: 0 16px 40px rgba(0, 0, 0, 0.18);
+  --dialog-topbar-bg: rgba(255, 255, 255, 0.92);
+  --sidebar-bg: #f0f4f9;
+  --hover-bg: #e1e5ea;
+  --text-color: #444746;
+  --active-bg: #d3e3fd;
+  --active-text: #001d35;
+  --sidebar-toggle-color: var(--text-color);
+  --sidebar-toggle-font-size: 1.05rem;
+  --sidebar-toggle-size: 40px;
+  --sidebar-toggle-icon-weight: 400;
+  --sidebar-toggle-icon-grad: 0;
+  --sidebar-header-justify: flex-start;
+  --sidebar-header-padding-x: 16px;
+  --sidebar-brand-display: none;
+  --sidebar-item-height: 40px;
+  --sidebar-item-radius: 20px;
+  --sidebar-item-padding-x: 16px;
+  --sidebar-item-font-size: 0.8rem;
+  --sidebar-item-icon-gap: 12px;
+}

@@ -145,10 +145,8 @@ button {
   color: currentColor;
 }
 
-@media (prefers-color-scheme: dark) {
-  .app.is-image-translation .titlebar-back-button {
-    background: var(--surface);
-  }
+:root[data-theme="dark"] .app.is-image-translation .titlebar-back-button {
+  background: var(--surface);
 }
 
 .language-pill,
@@ -634,14 +632,12 @@ button {
   transform: scale(0.98);
 }
 
-@media (prefers-color-scheme: dark) {
-  .setup-mode-pill {
-    --setup-mode-pill-accent: #fff;
-    --setup-mode-pill-bg: #263db8;
-    --setup-mode-pill-active-bg: #1f339c;
-    --setup-mode-pill-border: transparent;
-    box-shadow: none;
-  }
+:root[data-theme="dark"] .setup-mode-pill {
+  --setup-mode-pill-accent: #fff;
+  --setup-mode-pill-bg: #263db8;
+  --setup-mode-pill-active-bg: #1f339c;
+  --setup-mode-pill-border: transparent;
+  box-shadow: none;
 }
 
 .setup-mode-icon {
@@ -761,10 +757,8 @@ button {
   stroke-linejoin: round;
 }
 
-@media (prefers-color-scheme: dark) {
-  .image-save-button {
-    background: var(--surface);
-  }
+:root[data-theme="dark"] .image-save-button {
+  background: var(--surface);
 }
 
 .image-save-button:focus-visible {
@@ -1604,6 +1598,52 @@ button {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Segmented radio control (appearance settings): equal-width options on an
+   inset track; the real inputs stay keyboard-accessible but visually hidden. */
+.segmented {
+  display: flex;
+  gap: 4px;
+  margin-top: 8px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-soft);
+}
+
+.segmented label {
+  position: relative;
+  flex: 1;
+}
+
+.segmented input {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.segmented span {
+  display: block;
+  padding: 6px 0;
+  border-radius: calc(var(--radius) - 3px);
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 500;
+  text-align: center;
+}
+
+.segmented input:checked + span {
+  background: var(--surface);
+  color: var(--text-strong);
+  box-shadow: var(--shadow-soft);
+}
+
+.segmented input:focus-visible + span {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 
 .voice-output-main {

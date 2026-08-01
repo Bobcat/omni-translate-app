@@ -1,0 +1,96 @@
+/* Warm palette (Claude-like calm) — one of the two palette axes, applied via
+   data-palette="warm" on <html> (the default; "cool" is the plain palette, no
+   overrides). The light block restyles the full token set; the dark block only
+   warms the neutral surfaces, so the theme and palette axes stay independent.
+   data-theme carries the *effective* theme (see /src/domain/appearance.js). */
+
+:root[data-theme="light"][data-palette="warm"] {
+  /* Surfaces: warm paper, same family as the desktop warm theme. */
+  --bg: #fcfaf5;
+  --surface: #fefdf9;
+  --surface-soft: #fbf8f1;
+  --panels-bg: #f5f1e8;
+  --dock-bg: #f5f2ec;
+  --sheet-header-bg: rgba(254, 253, 249, 0.96);
+
+  /* Ink. */
+  --text: #201d17;
+  --text-strong: #14120d;
+  --muted: #6b6557;
+  --text-preview: #7a7466;
+  --empty-state: #b3ab99;
+
+  /* Borders. */
+  --border: rgba(63, 57, 44, 0.14);
+  --border-hover: rgba(63, 57, 44, 0.28);
+
+  /* Primary carries no color (near-black), terracotta is the accent. */
+  --primary: #23201a;
+  --primary-pressed: #3b362b;
+  --primary-rgb: 35, 32, 26;
+  --on-primary: #faf7f0;
+  --accent: #cf6b4a;
+
+  /* Depth. */
+  --scrim: rgba(62, 56, 43, 0.32);
+  --shadow: 0 18px 36px rgba(69, 60, 44, 0.15);
+  --shadow-soft: 0 1px 3px rgba(69, 60, 44, 0.07);
+
+  /* Level meter. */
+  --level-bg: #eee9dd;
+}
+
+/* Setup pills: their --setup-mode-pill-* vars are defined on the element
+   itself in styles.css, so overriding them needs element-level scope. */
+:root[data-theme="light"][data-palette="warm"] .setup-mode-pill {
+  --setup-mode-pill-accent: #23201a;
+  --setup-mode-pill-bg: #fefdf9;
+  --setup-mode-pill-active-bg: #f5f1e8;
+  --setup-mode-pill-border: rgba(63, 57, 44, 0.28);
+}
+
+/* Voice-lane bubbles: color-block separation. On the warm canvas the
+   default surface-soft (#fbf8f1 on #fefdf9) was nearly invisible; the
+   panels tone reads as a card without needing a border. */
+:root[data-theme="light"][data-palette="warm"] .turn-part {
+  background: #f5f1e8;
+  border-radius: 12px;
+}
+
+/* Claude-style serif wordmark (Anthropic Serif is proprietary; Georgia
+   ships on Windows/macOS/iOS, other platforms fall back to a serif). */
+:root[data-theme="light"][data-palette="warm"] .app-title {
+  font-family: 'Cormorant Garamond', Georgia, 'Times New Roman', serif;
+  font-size: 1.5rem;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+:root[data-theme="light"][data-palette="warm"] .app-title strong {
+  font-weight: 600;
+  color: var(--accent);
+}
+
+/* Warm dark: only the neutrals shift (cool blue-grey 220 -> warm brown-grey
+   ~30, same lightness/saturation family). Accents stay as dark.css has them. */
+:root[data-theme="dark"][data-palette="warm"] {
+  --bg: hsl(30, 9%, 8%);
+  --panels-bg: hsl(30, 9%, 7%);
+  --surface: hsl(30, 8%, 17%);
+  --surface-soft: hsl(30, 7%, 22%);
+
+  --text: hsl(35, 8%, 88%);
+  --text-strong: hsl(35, 10%, 95%);
+  --muted: hsl(30, 6%, 52%);
+  --text-preview: hsl(30, 5%, 48%);
+  --empty-state: hsl(30, 6%, 38%);
+
+  --border: hsl(30, 8%, 26%);
+  --border-hover: hsl(30, 8%, 35%);
+
+  --level-bg: hsl(30, 8%, 18%);
+  --scrim: hsla(30, 15%, 4%, 0.6);
+  --sheet-header-bg: hsla(30, 10%, 13%, 0.96);
+  --dock-bg: hsl(30, 10%, 10%);
+  --shadow: 0 18px 36px hsla(30, 25%, 4%, 0.4);
+  --shadow-soft: 0 1px 3px hsla(30, 25%, 4%, 0.15);
+}

@@ -50,6 +50,8 @@ import {
   renderHistorySettings,
 } from './settings/dev-tools.js';
 import { bindImageRenderControls, renderImageRenderControls } from './settings/image-render.js';
+import { bindAppearanceSettings, renderAppearanceSettings } from './settings/appearance.js';
+import { initAppearance } from './domain/appearance.js';
 import {
   setStatus,
   renderLifecycle,
@@ -147,7 +149,9 @@ async function init() {
   els.settingsTuningNav.addEventListener('click', () => navigateSettingsPage('tuning'));
   els.settingsVoiceLibraryNav.addEventListener('click', () => navigateSettingsPage('voice-library'));
   els.settingsImageRenderNav.addEventListener('click', () => navigateSettingsPage('image-render'));
+  els.settingsAppearanceNav.addEventListener('click', () => navigateSettingsPage('appearance'));
   bindImageRenderControls();
+  bindAppearanceSettings();
   els.voiceLibraryControls.addEventListener('change', handleVoiceLibraryChange);
   els.voiceLibraryControls.addEventListener('click', handleVoiceLibraryClick);
   els.devToolsShowControls.addEventListener('change', handleDevToolsShowControlsChange);
@@ -193,6 +197,8 @@ async function init() {
   setupAutoFollow(els.sourceText);
   setupAutoFollow(els.targetText);
   renderTranscript();
+  initAppearance();
+  renderAppearanceSettings();
   renderAudioSettings();
   renderTuningSettings();
   renderTtsSettings();

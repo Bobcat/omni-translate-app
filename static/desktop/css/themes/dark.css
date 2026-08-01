@@ -1,0 +1,83 @@
+/* Omni Translate desktop theme — dark mode. Neutral cool greys, based on the
+   foundation preset-dark palette (dark mode reads as black/grey, not warm).
+   Primary buttons invert to a quiet light grey; the accent is the preset's
+   soft blue (switch, focus, links, spinner). */
+
+:root[data-theme="dark"] {
+  /* Foundation preset overrides (mirror preset-dark). */
+  --bg: hsl(220, 16%, 8%);
+  --panel: hsl(220, 14%, 15%);
+  --border: rgba(230, 236, 248, 0.14);
+  --muted: hsl(220, 8%, 52%);
+  --text-color: hsl(220, 10%, 88%);
+  --primary: hsl(224, 60%, 65%);
+  --hover-bg: rgba(230, 236, 248, 0.07);
+  --active-bg: rgba(230, 236, 248, 0.1);
+  --active-text: hsl(220, 10%, 95%);
+  --sidebar-bg: hsl(220, 16%, 6.5%);
+  --sidebar-toggle-color: hsl(220, 8%, 62%);
+  --sidebar-toggle-bg: transparent;
+  --sidebar-toggle-border: transparent;
+  --sidebar-toggle-shadow: none;
+
+  --chrome-bg: hsl(220, 16%, 7%);
+  --surface: hsl(220, 14%, 15%);
+  --surface-soft: hsl(220, 15%, 13%);
+  --surface-muted: hsl(220, 13%, 19%);
+  --surface-hover: hsl(220, 12%, 24%);
+  --surface-translucent: hsla(220, 15%, 13%, 0.92);
+  --surface-translucent-soft: hsla(220, 15%, 13%, 0.68);
+  --surface-inverse: hsl(220, 10%, 88%);
+
+  --text-strong: hsl(220, 10%, 95%);
+  --text-subtle: hsl(220, 8%, 62%);
+  --text-quiet: hsl(220, 8%, 62%);
+  --text-inverse: #171a20;
+  --text-inverse-muted: hsl(220, 8%, 40%);
+
+  --border-soft: rgba(230, 236, 248, 0.16);
+  --border-subtle: rgba(230, 236, 248, 0.1);
+  --border-control: rgba(230, 236, 248, 0.26);
+  --border-control-hover: rgba(230, 236, 248, 0.38);
+  --field-border: rgba(230, 236, 248, 0.4);
+  --border-strong: rgba(230, 236, 248, 0.3);
+
+  /* Primary = quiet light grey surface (inverted), no hue. */
+  --action-primary: #e6e8ec;
+  --action-primary-hover: #f2f4f7;
+  --action-primary-soft: rgba(230, 232, 236, 0.08);
+  --action-primary-border: transparent;
+
+  --accent: hsl(224, 60%, 65%);
+  --accent-strong: hsl(224, 65%, 74%);
+  --focus: hsl(224, 60%, 65%);
+  --focus-ring: hsla(224, 60%, 65%, 0.35);
+
+  --danger: #d9735f;
+  --danger-bg: #3a211b;
+  --danger-bg-hover: #462820;
+  --danger-border: #5c322a;
+  --success: #7fa86b;
+  --success-bg: #1f2a1a;
+  --success-border: #37492c;
+  --warning: hsl(38, 70%, 65%);
+  --warning-bg: hsl(38, 35%, 15%);
+  --warning-bg-hover: hsl(38, 35%, 19%);
+  --warning-border: hsl(38, 30%, 30%);
+  --warning-accent: hsl(38, 75%, 60%);
+  --info: hsl(215, 70%, 70%);
+  --info-bg: hsl(215, 35%, 17%);
+  --info-border: hsl(215, 30%, 32%);
+
+  --control-track: hsl(220, 10%, 30%);
+  --media-placeholder: hsl(220, 13%, 19%);
+  --media-label-bg: rgba(10, 12, 16, 0.72);
+  --tooltip-bg: hsl(220, 16%, 5%);
+  --shadow-soft: 0 1px 2px rgba(0, 0, 0, 0.2);
+  --shadow-control: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-tooltip: 0 2px 10px rgba(0, 0, 0, 0.5);
+  --replay-glow-primary: hsla(224, 60%, 65%, 0.1);
+  --replay-glow-secondary: rgba(230, 236, 248, 0.05);
+  --shell-brand-color: hsl(220, 10%, 92%);
+  --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='%237d8390' d='M1.2.3 5 4.1 8.8.3 10 1.5 5 6 0 1.5z'/%3E%3C/svg%3E");
+}

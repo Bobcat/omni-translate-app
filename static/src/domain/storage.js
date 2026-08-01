@@ -9,6 +9,7 @@ export const APP_STORAGE_KEYS = Object.freeze({
   SETUP_LANGUAGES: 'setup_languages',
   VOXCPM2_VOICE_CONFIG: 'voxcpm2_voice_config',
   IMAGE_RENDER_SETTINGS: 'image_render_settings',
+  APPEARANCE_SETTINGS: 'appearance_settings',
 });
 export const TTS_GLOBAL_STORAGE_KEY = APP_STORAGE_KEYS.TTS_GLOBAL;
 export const RECENT_LANGUAGES_KEY = APP_STORAGE_KEYS.RECENT_LANGUAGES;
@@ -16,7 +17,39 @@ export const DEV_TOOLS_SETTINGS_KEY = APP_STORAGE_KEYS.DEV_TOOLS_SETTINGS;
 export const SETUP_LANGUAGES_KEY = APP_STORAGE_KEYS.SETUP_LANGUAGES;
 export const VOXCPM2_VOICE_CONFIG_STORAGE_KEY = APP_STORAGE_KEYS.VOXCPM2_VOICE_CONFIG;
 export const IMAGE_RENDER_SETTINGS_KEY = APP_STORAGE_KEYS.IMAGE_RENDER_SETTINGS;
+export const APPEARANCE_SETTINGS_KEY = APP_STORAGE_KEYS.APPEARANCE_SETTINGS;
 export const RECENT_MAX = 4;
+
+// Appearance settings (settings-sheet Appearance page): two independent axes —
+// theme (system/light/dark) and palette (warm/cool). The inline script in
+// static/index.html reads the same key before first paint; keep the key, the
+// allowed values and these defaults in sync with it.
+export const DEFAULT_APPEARANCE = Object.freeze({ theme: 'system', palette: 'warm' });
+const APPEARANCE_THEMES = Object.freeze(['system', 'light', 'dark']);
+const APPEARANCE_PALETTES = Object.freeze(['warm', 'cool']);
+
+export function loadAppearanceSettings() {
+  const out = { ...DEFAULT_APPEARANCE };
+  try {
+    const saved = JSON.parse(localStorage.getItem(APPEARANCE_SETTINGS_KEY) || '{}');
+    if (APPEARANCE_THEMES.includes(saved.theme)) out.theme = saved.theme;
+    if (APPEARANCE_PALETTES.includes(saved.palette)) out.palette = saved.palette;
+  } catch {
+    // ignore parse / disabled storage — defaults stand
+  }
+  return out;
+}
+
+export function saveAppearanceSettings(settings) {
+  try {
+    localStorage.setItem(APPEARANCE_SETTINGS_KEY, JSON.stringify({
+      theme: APPEARANCE_THEMES.includes(settings?.theme) ? settings.theme : DEFAULT_APPEARANCE.theme,
+      palette: APPEARANCE_PALETTES.includes(settings?.palette) ? settings.palette : DEFAULT_APPEARANCE.palette,
+    }));
+  } catch (_) {
+    // ignore quota / disabled storage
+  }
+}
 
 // Image-translation render options. The allowed values mirror the service's flag enums; the
 // defaults mirror the service's own defaults. A stored value outside the enum falls back to the

@@ -9,8 +9,9 @@ import { renderTtsSettings } from './tts.js';
 import { renderVoiceLibraryPage, voiceLibraryOnExit } from './voice-library.js';
 import { renderDevToolsSettings } from './dev-tools.js';
 import { renderImageRenderControls } from './image-render.js';
+import { renderAppearanceSettings } from './appearance.js';
 
-const PAGES = ['microphone', 'audio', 'history', 'dev-tools', 'tuning', 'voice-library', 'image-render'];
+const PAGES = ['appearance', 'microphone', 'audio', 'history', 'dev-tools', 'tuning', 'voice-library', 'image-render'];
 
 export function setSettingsPage(page) {
   const previous = state.settingsPage;
@@ -29,12 +30,14 @@ export function setSettingsPage(page) {
   }
   if (state.settingsPage === 'voice-library') renderVoiceLibraryPage();
   if (state.settingsPage === 'image-render') renderImageRenderControls();
+  if (state.settingsPage === 'appearance') renderAppearanceSettings();
 }
 
 export function renderSettingsPage() {
   const page = state.settingsPage;
   const home = page === 'home';
   els.settingsHomePage.hidden = page !== 'home';
+  els.settingsAppearancePage.hidden = page !== 'appearance';
   els.settingsMicrophonePage.hidden = page !== 'microphone';
   els.settingsAudioPage.hidden = page !== 'audio';
   els.settingsHistoryPage.hidden = page !== 'history';
@@ -48,6 +51,8 @@ export function renderSettingsPage() {
   els.settingsBackButton.title = home ? 'Close settings' : 'Back';
   if (page === 'microphone') {
     els.settingsSheetTitle.textContent = 'Microphone';
+  } else if (page === 'appearance') {
+    els.settingsSheetTitle.textContent = 'Appearance';
   } else if (page === 'audio') {
     els.settingsSheetTitle.textContent = 'Text-to-Speech options';
   } else if (page === 'history') {

@@ -25,6 +25,14 @@
 - Settings use mobile sheet semantics: top-level closes with a down chevron; subpages return with a left arrow.
 - Preserve accessibility labels when replacing text buttons with icon buttons.
 
+## Desktop Variant
+
+- `static/desktop/` is the desktop frontend: a workbench-style sidebar SPA. The landing route `GET /` (app/main.py) serves it to desktop user agents and the mobile-first app to mobile ones, so both live on the same URL; `?desktop` / `?mobile` force a variant, and `/desktop/` keeps working as a direct path.
+- It is built on the vendored spa-foundation package at `static/foundation/spa-foundation/` (a plain copy from the `spa-foundation` repo, same layout as the LLM Workbench vendor copy; update by re-copying — no build step).
+- Sidebar views live under `static/desktop/src/views/` (text, voice, image, pdf, settings), mounted via hash routes (`#text`, `#voice`, `#image`, `#pdf`, `#settings`). The text view is wired to `POST /api/text-translation` (stateless one-shot; the view owns the debounce+ceiling timing policy and guards freshness newest-wins). The image and pdf views are wired to the backend (`/api/image-translation`, `/api/pdf-translation/requests`); the voice view is wired to the same session backend as the mobile app (`POST /api/sessions` + websocket, protocol state machine in `views/voice/session.js`, reusing the mobile `SessionSocket`/`AudioCapture`/`AudioQueue` modules; live/TTS settings stay at server defaults). A live voice session survives view switches (keep-alive) and marks its sidebar entry via view-busy. Settings remains UI-only until wiring is explicitly requested.
+- The desktop app must stay lean/user-facing: do not port dev tools, tuning, or debug controls into it.
+- Cache-busting: when changing desktop CSS or JS, update the `?v=` query in `static/desktop/index.html` (same convention as the mobile `static/index.html`).
+
 ## Local Run
 
 ```bash
@@ -43,8 +51,11 @@ Run the relevant subset before handing back changes. For normal frontend/backend
 node --input-type=module --check < static/src/app.js
 python -m py_compile app/main.py
 python -m unittest discover -s tests
+node --test tests/js/
 git diff --check
 ```
+
+`tests/js/` holds `node --test` suites for DOM-less frontend modules (e.g. the desktop text view's translation runner). `static/package.json` exists only to mark all browser JS under `static/` as ES modules for Node; it declares no dependencies and there is no build step.
 
 ## Git Discipline
 

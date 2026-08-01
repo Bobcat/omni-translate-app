@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Omni Translate</title>
+  <script>
+    // Boot before paint: resolve the saved theme preset and sidebar state so
+    // the shell renders correctly on first frame (no flash). Saved choice
+    // wins; otherwise follow the OS color scheme.
+    (function () {
+      document.documentElement.classList.add('shell-booting');
+      var STORAGE_KEY = 'omni-translate.desktop.shell';
+      var saved = null;
+      try { saved = JSON.parse(window.localStorage.getItem(STORAGE_KEY) || 'null'); } catch (e) {}
+      var preset = saved && (saved.preset === 'dark' || saved.preset === 'modern')
+        ? saved.preset
+        : (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'modern');
+      window.__OMNI_DESKTOP_INITIAL_SHELL__ = {
+        preset: preset,
+        sidebarOpen: saved && typeof saved.sidebarOpen === 'boolean' ? saved.sidebarOpen : true,
+      };
+      document.documentElement.dataset.theme = preset === 'dark' ? 'dark' : 'light';
+      // Match the preset's --bg while its stylesheet is still loading, so
+      // the boot curtain never reads as a white flash.
+      document.documentElement.style.background = preset === 'dark' ? '#111318' : '#fcfaf5';
+    }());
+  </script>
+  <style>
+    .shell-booting .app-container { visibility: hidden; }
+  </style>
+  <link rel="stylesheet" href="../foundation/spa-foundation/css/base.css">
+  <link rel="stylesheet" href="../foundation/spa-foundation/css/shell.css">
+  <!-- Single preset stylesheet (same pattern as the LLM Workbench shell):
+       the inline script below sets the href pre-paint from the saved
+       preset, and the theme toggle swaps the href. -->
+  <link
+    rel="stylesheet"
+    id="presetStylesheet"
+    data-modern-href="../foundation/spa-foundation/css/preset-modern.css"
+    data-dark-href="../foundation/spa-foundation/css/preset-dark.css"
+  >
+  <script>
+    (function () {
+      var initialShell = window.__OMNI_DESKTOP_INITIAL_SHELL__;
+      var presetStylesheet = document.getElementById('presetStylesheet');
+      presetStylesheet.href = initialShell.preset === 'dark'
+        ? presetStylesheet.dataset.darkHref
+        : presetStylesheet.dataset.modernHref;
+      // Lift the boot curtain only once the preset stylesheet is really
+      // loaded: it defines every color variable, so painting earlier looks
+      // unstyled on slow connections. window load is the fallback so the
+      // curtain can never stick.
+      var lifted = false;
+      var lift = function () {
+        if (lifted) return;
+        lifted = true;
+        document.documentElement.style.background = '';
+        document.documentElement.classList.remove('shell-booting');
+      };
+      presetStylesheet.addEventListener('load', lift);
+      window.addEventListener('load', lift);
+    }());
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600&display=swap">
+  <link rel="stylesheet" href="css/tokens.css?v=20260728-warm-12">
+  <link rel="stylesheet" href="css/themes/dark.css?v=20260728-dark-neutral-2">
+  <link rel="stylesheet" href="css/app.css?v=20260729-text-1">
+  <!-- Preload the ES module graph so first loads fetch in parallel instead
+       of as a sequential waterfall (no build step). Keep in sync with the
+       imports in app.js. -->
+  <link rel="modulepreload" href="app.js?v=20260801-review-fixes-2">
+  <link rel="modulepreload" href="../foundation/spa-foundation/index.js">
+  <link rel="modulepreload" href="../foundation/spa-foundation/RouterCore.js">
+  <link rel="modulepreload" href="../foundation/spa-foundation/ShellState.js">
+  <link rel="modulepreload" href="../foundation/spa-foundation/DialogService.js">
+  <link rel="modulepreload" href="../foundation/spa-foundation/DialogAnchor.js">
+  <link rel="modulepreload" href="../foundation/spa-foundation/ModalController.js">
+  <link rel="modulepreload" href="../foundation/spa-foundation/DialogDragController.js">
+  <link rel="modulepreload" href="../foundation/spa-foundation/RouteHotkeys.js">
+  <link rel="modulepreload" href="../src/domain/languages.js">
+  <link rel="modulepreload" href="src/shared/icons.js">
+  <link rel="modulepreload" href="src/shared/languages.js">
+  <link rel="modulepreload" href="src/shared/api.js">
+  <link rel="modulepreload" href="src/views/voice/index.js">
+  <link rel="modulepreload" href="src/views/voice/session.js">
+  <link rel="modulepreload" href="src/views/text/index.js">
+  <link rel="modulepreload" href="src/views/image/index.js">
+  <link rel="modulepreload" href="src/views/pdf/index.js">
+  <link rel="modulepreload" href="src/views/settings/index.js">
+</head>
+<body>
+  <div class="app-container">
+    <aside id="sidebar" class="sidebar" aria-label="Main navigation">
+      <div class="sidebar-header">
+        <div class="sidebar-brand" aria-label="Omni Translate">
+          <span class="sidebar-brand-title"><strong>Omni</strong> Translate</span>
+        </div>
+        <button id="sidebarToggle" class="icon-btn" type="button" aria-label="Toggle sidebar">
+          <span id="sidebarToggleIcon" class="toggle-icon"></span>
+        </button>
+      </div>
+      <div class="sidebar-content">
+        <ul id="navList" class="nav-links">
+          <!-- Nav items rendered by app.js -->
+        </ul>
+        <div class="sidebar-footer">
+          <button id="themeToggle" class="theme-toggle" type="button">
+            <span id="themeToggleIcon" class="theme-toggle-icon"></span>
+            <span id="themeToggleLabel" class="theme-toggle-label">Dark theme</span>
+          </button>
+        </div>
+      </div>
+    </aside>
+
+    <main id="appRoot" class="main-content" aria-live="polite"></main>
+  </div>
+  <script>
+    // Apply the persisted sidebar state pre-paint. The boot curtain is
+    // lifted by the preset stylesheet's load handler in the head.
+    (function () {
+      var initial = window.__OMNI_DESKTOP_INITIAL_SHELL__ || { sidebarOpen: true };
+      var sidebar = document.getElementById('sidebar');
+      if (sidebar) {
+        sidebar.classList.toggle('expanded', !!initial.sidebarOpen);
+      }
+    }());
+  </script>
+  <script type="module" src="app.js?v=20260801-review-fixes-2"></script>
+</body>
+</html>
