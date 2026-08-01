@@ -25,6 +25,8 @@ from app.pdf_translation_bridge import get_pdf_request
 from app.pdf_translation_bridge import submit_pdf
 from app.protocol import PROTOCOL_VERSION
 from app.sessions import SESSIONS
+from app.translation_bridge import TranslationBridge
+from app.translation_bridge import translation_language_code
 from app.tts_bridge import artifact_path
 from app.tts_bridge import tts_settings_payload
 from app.tts_bridge import tts_settings_snapshot
@@ -32,6 +34,9 @@ from app.voice_library import discard_pending_stable_sample
 from app.voice_library import generate_stable_sample
 from app.voice_library import keep_pending_stable_sample
 from app.voice_library import stable_voice_library_status
+
+from realtime_translation_engine.types import LiveDispatchRequest
+from realtime_translation_engine.types import TranslationOpportunity
 
 
 api_router = APIRouter(prefix="/api")
@@ -48,6 +53,13 @@ class GenerateStableVoiceSampleRequest(BaseModel):
     language: str
     gender: str
     engine: str
+
+
+class TextTranslationRequest(BaseModel):
+    source_language: str
+    target_language: str
+    text: str
+    final: bool = False
 
 
 @api_router.get("/health")
@@ -206,6 +218,47 @@ def post_pdf_translation_cancel(request_id: str) -> dict[str, Any]:
         return cancel_pdf_request(request_id)
     except PdfTranslationError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc))
+
+
+# One-shot text translation (typed/pasted text — the classic translator workflow).
+# Stateless request/response: unlike voice sessions there is no event stream, the
+# client re-sends the full current text and guards result freshness itself.
+# Sync def for the same threadpool reason as the image routes: an LLM call takes
+# seconds and must not hold the event loop.
+@api_router.post("/text-translation")
+def post_text_translation(payload: TextTranslationRequest) -> dict[str, Any]:
+    text = str(payload.text or "")
+    if not text.strip():
+        raise HTTPException(status_code=400, detail="empty text")
+    max_chars = get_int("text_translation.max_chars", 5000)
+    if len(text) > max_chars:
+        raise HTTPException(status_code=400, detail=f"text too long (max {max_chars} characters)")
+    try:
+        translation_language_code(payload.source_language)
+        translation_language_code(payload.target_language)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    bridge = TranslationBridge(
+        source_language=payload.source_language,
+        target_language=payload.target_language,
+    )
+    # Same invocation shape as the live voice flow (runtime.py): the bridge only
+    # reads the opportunity. commits_target gates the optional second pass.
+    request = LiveDispatchRequest(
+        request_id=1,
+        committed_target_base_revision=0,
+        opportunity=TranslationOpportunity(
+            lane="commit",
+            source_window=text,
+            source_chunks_used=1,
+            commits_target=bool(payload.final),
+        ),
+    )
+    try:
+        result = bridge.run(request)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"translation failed: {exc}")
+    return {"translated_text": result.text, "model": result.model}
 
 
 @api_router.post("/voice-library/stable")
