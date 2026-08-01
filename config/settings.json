@@ -2,6 +2,30 @@
   "service": {
     "root_path": ""
   },
+  "saas": {
+    "tenant": "omni-translate",
+    "database_path": "data/saas.db",
+    "plans": {
+      "anonymous": {
+        "image_translation": { "enabled": true, "max_characters_per_job": 1500 },
+        "pdf_translation": { "enabled": false },
+        "document_persistence": { "enabled": false },
+        "translation_editing": { "enabled": false },
+        "rerender": { "enabled": true, "consumes_translation_quota": false }
+      },
+      "free": {
+        "image_translation": { "enabled": true, "max_characters_per_job": 1500 },
+        "pdf_translation": { "enabled": true, "pages_per_period": 12, "period": "month", "max_pages_per_job": 10 },
+        "document_persistence": { "enabled": true },
+        "translation_editing": { "enabled": true },
+        "rerender": { "enabled": true, "consumes_translation_quota": false },
+        "download": { "enabled": true }
+      }
+    },
+    "usage_metrics": [
+      { "metric": "pdf_translation.pages", "period": "month", "limit_key": "pdf_translation.pages_per_period" }
+    ]
+  },
   "asr_pool": {
     "base_url": "http://127.0.0.1:8090",
     "token": ""

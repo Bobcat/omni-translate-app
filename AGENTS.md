@@ -15,6 +15,7 @@
 - Keep app state in the app layer. Do not push app reset/local-history/turn UX responsibilities into runner/package state.
 - Treat the MVP as turn-based: explicit user actions, active lane, clear turn, speak now, finish.
 - Backend changes should map directly to current frontend-reachable behavior.
+- `saas/` is the domain-free SaaS control layer (principals, entitlements, quota, usage ledger), built to be extractable into a standalone package/service later. Keep translation/image/PDF vocabulary out of it; host wiring lives in `app/saas_setup.py` and plan values in `config/settings.json` under `saas.*`. Working docs are in `plan/` (gitignored).
 
 ## UI Rules
 

@@ -6,3 +6,5 @@ __pycache__/
 config/local.json
 data/
 docs.zip
+reviews/
+plan/
