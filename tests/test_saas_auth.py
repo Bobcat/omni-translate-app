@@ -196,6 +196,7 @@ class AuthClientConfigTests(unittest.TestCase):
         values = {
             "saas.auth.issuer": "https://ref.supabase.co/auth/v1",
             "saas.auth.publishable_key": "sb_publishable_x",
+            "saas.auth.google_client_id": "gid.apps.googleusercontent.com",
         }
         with patch("app.router.optional_str", side_effect=lambda path: values.get(path)):
             cfg = _auth_client_config()
@@ -205,6 +206,26 @@ class AuthClientConfigTests(unittest.TestCase):
                 "configured": True,
                 "supabase_url": "https://ref.supabase.co",
                 "publishable_key": "sb_publishable_x",
+                "google_client_id": "gid.apps.googleusercontent.com",
+            },
+        )
+
+    def test_config_reports_unconfigured_without_a_google_client_id(self) -> None:
+        from app.router import _auth_client_config
+
+        values = {
+            "saas.auth.issuer": "https://ref.supabase.co/auth/v1",
+            "saas.auth.publishable_key": "sb_publishable_x",
+        }
+        with patch("app.router.optional_str", side_effect=lambda path: values.get(path)):
+            cfg = _auth_client_config()
+        self.assertEqual(
+            cfg,
+            {
+                "configured": False,
+                "supabase_url": "https://ref.supabase.co",
+                "publishable_key": "sb_publishable_x",
+                "google_client_id": "",
             },
         )
 
@@ -214,7 +235,13 @@ class AuthClientConfigTests(unittest.TestCase):
         with patch("app.router.optional_str", return_value=None):
             cfg = _auth_client_config()
         self.assertEqual(
-            cfg, {"configured": False, "supabase_url": "", "publishable_key": ""}
+            cfg,
+            {
+                "configured": False,
+                "supabase_url": "",
+                "publishable_key": "",
+                "google_client_id": "",
+            },
         )
 
 

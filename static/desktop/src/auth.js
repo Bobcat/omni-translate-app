@@ -1,17 +1,26 @@
-// Supabase Auth, Google sign-in only. The SDK is loaded as an ES module from
-// the CDN, and only when /api/config reports auth as configured — an
-// unconfigured deployment stays anonymous-only and never fetches it.
-// Session persistence, OAuth-hash detection and token refresh are the SDK
-// defaults. The module is DOM-free; the account UI lives in settings/views.
+// Supabase Auth, Google sign-in only, via Google Identity Services: the
+// Google-rendered button opens the account chooser in a popup (no page
+// redirect, so no return-URL handling anywhere) and yields an ID token,
+// which the Supabase SDK exchanges for a session (signInWithIdToken). Both
+// libraries load lazily and only when /api/config reports auth as
+// configured — an unconfigured deployment stays anonymous-only and never
+// fetches them. Session persistence and token refresh are SDK defaults.
+// The account UI lives in settings/views; this module only renders into an
+// element it is handed.
 
 import { setAuthTokenProvider } from './shared/auth-headers.js';
 
 const SUPABASE_SDK_URL = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
+const GIS_SDK_URL = 'https://accounts.google.com/gsi/client';
+const GOOGLE_BUTTON_WIDTH = 280;
 
 let enabled = false;
 let initialized = false;
 let client = null;
 let readyPromise = null;
+let gisPromise = null;
+let gisInitialized = false;
+let googleClientId = '';
 let accessToken = '';
 let current = { signedIn: false, email: '' };
 const listeners = new Set();
@@ -25,7 +34,7 @@ export function initAuth(authConfig) {
   // covers sign-in, sign-out and token refresh.
   setAuthTokenProvider(getAccessToken);
   // A failed setup (e.g. the CDN is unreachable) must not reject app init;
-  // the account UI then stays on the sign-in card and sign-in clicks no-op.
+  // the account UI then stays on the sign-in card and its button never renders.
   readyPromise = setup(authConfig).catch((err) => {
     console.warn('Auth init failed:', err);
   });
@@ -40,8 +49,8 @@ export function getAccessToken() {
   return accessToken;
 }
 
-// Resolves once the initial session (restored, from the OAuth redirect hash,
-// or none) has been applied. Resolves immediately when auth is not configured.
+// Resolves once the initial session (restored or none) has been applied.
+// Resolves immediately when auth is not configured.
 export function whenAuthReady() {
   return readyPromise || Promise.resolve();
 }
@@ -54,14 +63,36 @@ export function onAuthChange(callback) {
   return () => listeners.delete(callback);
 }
 
-export async function signInWithGoogle() {
-  await whenAuthReady();
-  if (!client) return;
-  // On success the browser navigates to Google and back to redirectTo.
-  await client.auth.signInWithOAuth({
-    provider: 'google',
-    options: { redirectTo: window.location.href },
-  });
+// Renders Google's own sign-in button into `element` — Google's branding
+// rules require their rendered button rather than a home-grown one. It
+// opens the account chooser in a popup. Safe to call before auth init has
+// settled (a view created during the first ticks of app boot, ahead of the
+// /api/config response): the render then waits for the first settled auth
+// state. No-op when a library fails to load or the element already holds a
+// button; the card then just shows no button.
+export async function renderGoogleButton(element) {
+  try {
+    if (!initialized) await firstAuthState();
+    const gis = await loadGis();
+    if (!gis || !client || !googleClientId || element.childElementCount) return;
+    if (!gisInitialized) {
+      gis.accounts.id.initialize({
+        client_id: googleClientId,
+        callback: handleGoogleCredential,
+      });
+      gisInitialized = true;
+    }
+    gis.accounts.id.renderButton(element, {
+      type: 'standard',
+      theme: 'outline',
+      size: 'large',
+      shape: 'pill',
+      text: 'continue_with',
+      width: GOOGLE_BUTTON_WIDTH,
+    });
+  } catch (err) {
+    console.warn('Google sign-in button failed:', err);
+  }
 }
 
 export async function signOut() {
@@ -69,16 +100,61 @@ export async function signOut() {
   await client.auth.signOut();
 }
 
-async function setup({ supabase_url: supabaseUrl, publishable_key: publishableKey }) {
+// Resolves on the first auth-state notification — i.e. once setup() has
+// applied the initial session.
+function firstAuthState() {
+  return new Promise((resolve) => {
+    const unsubscribe = onAuthChange(() => {
+      unsubscribe();
+      resolve();
+    });
+  });
+}
+
+// The popup yields a Google ID token; the SDK verifies and exchanges it for
+// a Supabase session, which reports through onAuthStateChange like any
+// other sign-in.
+async function handleGoogleCredential({ credential }) {
+  if (!credential || !client) return;
+  try {
+    const { error } = await client.auth.signInWithIdToken({
+      provider: 'google',
+      token: credential,
+    });
+    if (error) console.warn('Google sign-in failed:', error.message);
+  } catch (err) {
+    console.warn('Google sign-in failed:', err);
+  }
+}
+
+// Loads the Google Identity Services script once; resolves to null when the
+// script cannot be loaded (offline, blocked by an extension).
+function loadGis() {
+  if (window.google?.accounts) return Promise.resolve(window.google);
+  if (!gisPromise) {
+    gisPromise = new Promise((resolve) => {
+      const script = document.createElement('script');
+      script.src = GIS_SDK_URL;
+      script.async = true;
+      script.onload = () => resolve(window.google || null);
+      script.onerror = () => resolve(null);
+      document.head.appendChild(script);
+    });
+  }
+  return gisPromise;
+}
+
+async function setup({ supabase_url: supabaseUrl, publishable_key: publishableKey, google_client_id: clientId }) {
+  googleClientId = clientId || '';
   const { createClient } = await import(SUPABASE_SDK_URL);
   client = createClient(supabaseUrl, publishableKey);
   client.auth.onAuthStateChange((_event, session) => {
     applySession(session);
     notify();
   });
-  // getSession() awaits the client's own initialization (storage restore +
-  // OAuth hash detection), so this reflects the same session the initial
-  // onAuthStateChange event reported; applying it twice is harmless.
+  // getSession() awaits the client's own initialization (storage restore),
+  // so this reflects the same session the initial onAuthStateChange event
+  // reported; applying it twice is harmless.
   const { data } = await client.auth.getSession();
   applySession(data?.session || null);
   initialized = true;

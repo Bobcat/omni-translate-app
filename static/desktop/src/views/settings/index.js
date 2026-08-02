@@ -1,7 +1,10 @@
 // Settings view — UI shell only. Lean user-facing groups (microphone, speech)
 // with placeholder controls; wiring and the real option set come later. The
-// Account group at the top is live: it is the desktop sign-in surface, and it
-// only exists when the deployment has an auth provider configured.
+// Account group at the top is live: it is the desktop sign-in surface. Auth
+// init may not have settled when this view is created (a reload landing on
+// #settings runs the factory ahead of the /api/config response), so the
+// group starts hidden and the first auth state reveals it — on a deployment
+// without an auth provider no state ever arrives and it stays hidden.
 
 import { isEnabled, onAuthChange, signOut } from '../../auth.js';
 import { getMe } from '../../shared/api.js';
@@ -43,30 +46,30 @@ export function createSettingsView() {
     <p class="preview-note">UI preview — not wired to the backend yet.</p>
   `;
 
-  if (isEnabled()) {
-    const accountGroup = document.createElement('section');
-    accountGroup.className = 'settings-group';
-    accountGroup.setAttribute('aria-label', 'Account');
-    container.prepend(accountGroup);
-    initAccountGroup(accountGroup);
-  }
+  const accountGroup = document.createElement('section');
+  accountGroup.className = 'settings-group';
+  accountGroup.setAttribute('aria-label', 'Account');
+  accountGroup.hidden = true;
+  container.prepend(accountGroup);
+  initAccountGroup(accountGroup);
 
   return container;
 }
 
 // Signed out: the sign-in card. Signed in: email, plan label and a sign-out
-// button. Re-renders on every auth-state change.
+// button. Revealed and re-rendered on every auth-state change.
 function initAccountGroup(accountGroup) {
   let planFetchToken = 0;
 
   onAuthChange((authState) => {
-    render(authState);
+    accountGroup.hidden = !isEnabled();
+    if (!accountGroup.hidden) render(authState);
   });
 
   function render(authState) {
     accountGroup.replaceChildren();
     if (!authState.signedIn) {
-      accountGroup.appendChild(createSignInCard('Link your plan and usage to your account.'));
+      accountGroup.appendChild(createSignInCard('You are currently not signed in.'));
       return;
     }
     const title = document.createElement('h3');

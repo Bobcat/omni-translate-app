@@ -1533,34 +1533,19 @@ button {
   font-weight: 600;
 }
 
-.signin-card-reason,
-.signin-card-note {
+.signin-card-reason {
   margin: 0;
   color: var(--muted);
   font-size: 0.78rem;
   line-height: 1.35;
 }
 
-.google-signin-button {
+.google-signin-holder {
   display: flex;
-  align-items: center;
   justify-content: center;
-  gap: 10px;
-  width: 100%;
-  padding: 10px 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: #ffffff;
-  color: #1f1f1f;
-  font-size: 0.85rem;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.google-signin-button svg {
-  width: 18px;
-  height: 18px;
-  flex-shrink: 0;
+  /* Reserve the button's height so the card does not jump when the
+     Google-rendered iframe lands. */
+  min-height: 40px;
 }
 
 .setting-group .range-row {

@@ -6,7 +6,7 @@
 
 import { els } from '../els.js';
 import { api } from '../api-client.js';
-import { isEnabled, onAuthChange, signInWithGoogle, signOut } from '../auth.js';
+import { isEnabled, onAuthChange, renderGoogleButton, signOut } from '../auth.js';
 
 let authState = { signedIn: false, email: '' };
 let planFetchToken = 0;
@@ -14,7 +14,7 @@ let planFetchToken = 0;
 export function initAccountSettings() {
   els.settingsAccountNav.hidden = !isEnabled();
   if (!isEnabled()) return;
-  els.googleSignInButton.addEventListener('click', () => { signInWithGoogle(); });
+  renderGoogleButton(els.googleSignInHolder);
   els.accountSignOutButton.addEventListener('click', () => { signOut(); });
   onAuthChange((next) => {
     authState = next;

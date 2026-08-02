@@ -9,7 +9,8 @@
       "issuer": "",
       "audience": "authenticated",
       "user_plan": "free",
-      "publishable_key": ""
+      "publishable_key": "",
+      "google_client_id": ""
     },
     "plans": {
       "anonymous": {

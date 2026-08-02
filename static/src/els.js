@@ -61,7 +61,7 @@ export const els = {
   accountSignedIn: document.querySelector('#accountSignedIn'),
   accountEmail: document.querySelector('#accountEmail'),
   accountPlan: document.querySelector('#accountPlan'),
-  googleSignInButton: document.querySelector('#googleSignInButton'),
+  googleSignInHolder: document.querySelector('#googleSignInHolder'),
   accountSignOutButton: document.querySelector('#accountSignOutButton'),
   settingsMicrophoneNav: document.querySelector('#settingsMicrophoneNav'),
   settingsAudioNav: document.querySelector('#settingsAudioNav'),

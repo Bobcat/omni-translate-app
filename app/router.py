@@ -101,10 +101,12 @@ def _auth_client_config() -> dict[str, Any]:
     if not supabase_url and issuer:
         supabase_url = issuer.removesuffix("/auth/v1")
     publishable_key = optional_str("saas.auth.publishable_key")
+    google_client_id = optional_str("saas.auth.google_client_id")
     return {
-        "configured": bool(supabase_url and publishable_key),
+        "configured": bool(supabase_url and publishable_key and google_client_id),
         "supabase_url": supabase_url or "",
         "publishable_key": publishable_key or "",
+        "google_client_id": google_client_id or "",
     }
 
 
