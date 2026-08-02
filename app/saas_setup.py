@@ -17,9 +17,10 @@ from fastapi import APIRouter, Request
 
 from app.config import REPO_ROOT, get_setting, get_str, optional_str
 from saas.entitlements import EntitlementService, EntitlementSet
-from saas.fastapi_glue import create_saas_router, resolve_anonymous_identity
+from saas.fastapi_glue import create_saas_router, resolve_request_principal
 from saas.principals import generate_secret
 from saas.storage import SaasStore
+from saas.tokens import ExternalTokenVerifier
 from saas.usage import QuotaService
 
 
@@ -30,6 +31,8 @@ class SaasContext:
     quota_service: QuotaService
     signing_secret: str
     tenant: str
+    token_verifier: ExternalTokenVerifier | None
+    user_plan: str
 
 
 _context: SaasContext | None = None
@@ -63,6 +66,22 @@ def _build_context() -> SaasContext:
         quota_service=QuotaService(store),
         signing_secret=signing_secret,
         tenant=tenant,
+        token_verifier=_build_token_verifier(),
+        user_plan=get_str("saas.auth.user_plan", "free"),
+    )
+
+
+def _build_token_verifier() -> ExternalTokenVerifier | None:
+    """The external auth provider's JWT verifier; None until saas.auth.issuer is
+    configured (local.json), which keeps every request on the anonymous path."""
+    issuer = optional_str("saas.auth.issuer")
+    if not issuer:
+        return None
+    return ExternalTokenVerifier(
+        issuer=issuer,
+        audience=get_str("saas.auth.audience", "authenticated"),
+        jwks_url=optional_str("saas.auth.jwks_url") or f"{issuer.rstrip('/')}/.well-known/jwks.json",
+        hs256_secret=optional_str("saas.auth.hs256_secret"),
     )
 
 
@@ -74,20 +93,25 @@ def build_saas_router() -> APIRouter:
         quota_service=ctx.quota_service,
         signing_secret=ctx.signing_secret,
         tenant=ctx.tenant,
+        user_plan=ctx.user_plan,
+        token_verifier=ctx.token_verifier,
         usage_metrics=list(get_setting("saas.usage_metrics", []) or []),
     )
 
 
 def resolve_request_entitlements(request: Request) -> tuple[EntitlementSet, str | None]:
-    """The caller's resolved entitlements, plus the fresh identity token when the
-    identity was just provisioned — None when the cookie was already valid. The
-    route attaches the token to ITS response via ``attach_identity_cookie`` (a
-    raw-``Response`` route has no injected response param to set cookies on)."""
+    """The caller's resolved entitlements, plus the fresh identity token when an
+    anonymous identity was just provisioned (None for bearer-auth users and valid
+    cookies). The route attaches the token to ITS response via
+    ``set_identity_cookie`` (a raw-``Response`` route has no injected response
+    param to set cookies on)."""
     ctx = get_saas_context()
-    principal, token = resolve_anonymous_identity(
+    principal, token = resolve_request_principal(
         request,
         store=ctx.store,
         signing_secret=ctx.signing_secret,
         tenant=ctx.tenant,
+        user_plan=ctx.user_plan,
+        token_verifier=ctx.token_verifier,
     )
     return ctx.entitlement_service.resolve(principal), token

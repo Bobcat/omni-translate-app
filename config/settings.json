@@ -5,6 +5,11 @@
   "saas": {
     "tenant": "omni-translate",
     "database_path": "data/saas.db",
+    "auth": {
+      "issuer": "",
+      "audience": "authenticated",
+      "user_plan": "free"
+    },
     "plans": {
       "anonymous": {
         "image_translation": { "enabled": true, "max_characters_per_job": 1500 },

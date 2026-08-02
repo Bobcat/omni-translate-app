@@ -19,6 +19,7 @@ from saas.entitlements import EntitlementService
 from saas.errors import SaasError
 from saas.principals import Principal, sign_identity, verify_identity_token
 from saas.storage import SaasStore
+from saas.tokens import ExternalTokenVerifier
 from saas.usage import QuotaService
 
 
@@ -66,6 +67,46 @@ def resolve_anonymous_identity(
     )
 
 
+def resolve_request_principal(
+    request: Request,
+    *,
+    store: SaasStore,
+    signing_secret: str,
+    tenant: str,
+    anonymous_plan: str = "anonymous",
+    user_plan: str = "free",
+    token_verifier: ExternalTokenVerifier | None = None,
+    cookie_name: str = DEFAULT_COOKIE_NAME,
+) -> tuple[Principal, str | None]:
+    """Resolution order (brief §7): a valid bearer token → user principal; else the
+    signed anonymous cookie; else a fresh anonymous identity (its token returned for
+    the caller to set). An UNVERIFIABLE bearer falls through to anonymous — the
+    client notices the plan drop via /api/me and re-authenticates."""
+    if token_verifier is not None:
+        subject = _bearer_subject(request, token_verifier)
+        if subject is not None:
+            identity_id = store.get_or_create_external_identity(tenant, subject)
+            return Principal(tenant=tenant, kind="user", id=identity_id, plan_code=user_plan), None
+    return resolve_anonymous_identity(
+        request,
+        store=store,
+        signing_secret=signing_secret,
+        tenant=tenant,
+        anonymous_plan=anonymous_plan,
+        cookie_name=cookie_name,
+    )
+
+
+def _bearer_subject(request: Request, verifier: ExternalTokenVerifier) -> str | None:
+    header = request.headers.get("authorization") or ""
+    scheme, _, token = header.partition(" ")
+    if scheme.strip().lower() != "bearer" or not token.strip():
+        return None
+    claims = verifier.verify(token.strip())
+    subject = str(claims.get("sub") or "").strip() if claims else ""
+    return subject or None
+
+
 def set_identity_cookie(
     request: Request,
     response: Response,
@@ -95,6 +136,8 @@ def create_saas_router(
     signing_secret: str,
     tenant: str,
     anonymous_plan: str = "anonymous",
+    user_plan: str = "free",
+    token_verifier: ExternalTokenVerifier | None = None,
     usage_metrics: list[Mapping[str, Any]] | None = None,
     cookie_name: str = DEFAULT_COOKIE_NAME,
     cookie_max_age_s: int = DEFAULT_COOKIE_MAX_AGE_S,
@@ -102,12 +145,14 @@ def create_saas_router(
     router = APIRouter(prefix="/api")
 
     def resolve_principal(request: Request, response: Response) -> Principal:
-        principal, token = resolve_anonymous_identity(
+        principal, token = resolve_request_principal(
             request,
             store=store,
             signing_secret=signing_secret,
             tenant=tenant,
             anonymous_plan=anonymous_plan,
+            user_plan=user_plan,
+            token_verifier=token_verifier,
             cookie_name=cookie_name,
         )
         if token is not None:

@@ -22,14 +22,20 @@ from pathlib import Path
 from typing import Any, Iterator
 
 SCHEMA = """
-CREATE TABLE IF NOT EXISTS anonymous_identities (
+CREATE TABLE IF NOT EXISTS identities (
     tenant TEXT NOT NULL,
     id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL DEFAULT 'anonymous',
+    external_subject TEXT,
     created_at TEXT NOT NULL,
     last_seen_at TEXT NOT NULL,
     expires_at TEXT,
     status TEXT NOT NULL DEFAULT 'active'
 );
+-- One identity per external auth subject (e.g. an identity provider's user id);
+-- anonymous rows carry no subject and are exempt from the uniqueness rule.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_identities_external_subject
+    ON identities (tenant, external_subject) WHERE external_subject IS NOT NULL;
 CREATE TABLE IF NOT EXISTS usage_events (
     tenant TEXT NOT NULL,
     id TEXT PRIMARY KEY,
@@ -69,6 +75,22 @@ def _utcnow() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _migrate_identities(conn: sqlite3.Connection) -> None:
+    """Pre-user DBs carry ``anonymous_identities`` without kind/subject columns;
+    fold it into ``identities`` so existing anonymous principals keep working.
+    Idempotent; a fresh database has neither table and skips straight to SCHEMA."""
+    tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    if "anonymous_identities" in tables and "identities" not in tables:
+        conn.execute("ALTER TABLE anonymous_identities RENAME TO identities")
+        tables.add("identities")  # the snapshot predates the rename
+    if "identities" in tables:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(identities)")}
+        if "kind" not in columns:
+            conn.execute("ALTER TABLE identities ADD COLUMN kind TEXT NOT NULL DEFAULT 'anonymous'")
+        if "external_subject" not in columns:
+            conn.execute("ALTER TABLE identities ADD COLUMN external_subject TEXT")
+
+
 class SaasStore:
     def __init__(self, path: str | Path) -> None:
         self._path = str(path)
@@ -81,6 +103,7 @@ class SaasStore:
                 Path(self._path).parent.mkdir(parents=True, exist_ok=True)
                 self._conn = sqlite3.connect(self._path, check_same_thread=False)
                 self._conn.row_factory = sqlite3.Row
+                _migrate_identities(self._conn)
                 self._conn.executescript(SCHEMA)
             return self._conn
 
@@ -108,14 +131,14 @@ class SaasStore:
                 conn.rollback()
                 raise
 
-    # -- anonymous identities -------------------------------------------------
+    # -- identities -----------------------------------------------------------
 
     def create_identity(self, tenant: str) -> uuid.UUID:
         identity_id = uuid.uuid4()
         now = _utcnow()
         with self.transaction() as conn:
             conn.execute(
-                "INSERT INTO anonymous_identities (tenant, id, created_at, last_seen_at, status)"
+                "INSERT INTO identities (tenant, id, created_at, last_seen_at, status)"
                 " VALUES (?, ?, ?, ?, 'active')",
                 (tenant, str(identity_id), now, now),
             )
@@ -124,15 +147,39 @@ class SaasStore:
     def get_identity(self, tenant: str, identity_id: uuid.UUID) -> sqlite3.Row | None:
         with self.transaction() as conn:
             row = conn.execute(
-                "SELECT * FROM anonymous_identities WHERE tenant = ? AND id = ?",
+                "SELECT * FROM identities WHERE tenant = ? AND id = ?",
                 (tenant, str(identity_id)),
             ).fetchone()
             if row is not None:
                 conn.execute(
-                    "UPDATE anonymous_identities SET last_seen_at = ? WHERE tenant = ? AND id = ?",
+                    "UPDATE identities SET last_seen_at = ? WHERE tenant = ? AND id = ?",
                     (_utcnow(), tenant, str(identity_id)),
                 )
             return row
+
+    def get_or_create_external_identity(self, tenant: str, subject: str) -> uuid.UUID:
+        """The stable identity for an external auth subject (a user id from the
+        identity provider): the existing row wins, else a fresh user-kind
+        identity. The partial unique index plus the write lock close the race."""
+        with self.transaction() as conn:
+            row = conn.execute(
+                "SELECT id FROM identities WHERE tenant = ? AND external_subject = ?",
+                (tenant, str(subject)),
+            ).fetchone()
+            if row is not None:
+                conn.execute(
+                    "UPDATE identities SET last_seen_at = ? WHERE tenant = ? AND external_subject = ?",
+                    (_utcnow(), tenant, str(subject)),
+                )
+                return uuid.UUID(row["id"])
+            identity_id = uuid.uuid4()
+            now = _utcnow()
+            conn.execute(
+                "INSERT INTO identities (tenant, id, kind, external_subject, created_at,"
+                " last_seen_at, status) VALUES (?, ?, 'user', ?, ?, ?, 'active')",
+                (tenant, str(identity_id), str(subject), now, now),
+            )
+            return identity_id
 
     # -- usage ledger -----------------------------------------------------------
 
