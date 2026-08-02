@@ -1,6 +1,10 @@
 // Backend API for the desktop workflows. Thin fetch wrappers; errors surface the
 // server's `detail` message so views can show it as-is.
 
+import { authHeaders } from './auth-headers.js';
+
+export { setAuthTokenProvider } from './auth-headers.js';
+
 const MAX_ERROR_DETAIL_LENGTH = 240;
 
 async function ensureOk(response) {
@@ -24,7 +28,13 @@ async function errorDetail(response) {
 }
 
 export async function getConfig() {
-  const response = await fetch('/api/config', { headers: { Accept: 'application/json' } });
+  const response = await fetch('/api/config', { headers: authHeaders({ Accept: 'application/json' }) });
+  await ensureOk(response);
+  return response.json();
+}
+
+export async function getMe() {
+  const response = await fetch('/api/me', { headers: authHeaders({ Accept: 'application/json' }) });
   await ensureOk(response);
   return response.json();
 }
@@ -34,7 +44,7 @@ export async function getConfig() {
 export async function createVoiceSession({ sideA, sideB }) {
   const response = await fetch('/api/sessions', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    headers: authHeaders({ 'Content-Type': 'application/json', Accept: 'application/json' }),
     body: JSON.stringify({
       side_a_language: String(sideA || ''),
       side_b_language: String(sideB || ''),
@@ -49,7 +59,7 @@ export async function createVoiceSession({ sideA, sideB }) {
 export async function translateText({ source, target, text, final = false }) {
   const response = await fetch('/api/text-translation', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    headers: authHeaders({ 'Content-Type': 'application/json', Accept: 'application/json' }),
     body: JSON.stringify({
       source_language: String(source || ''),
       target_language: String(target || ''),
@@ -66,7 +76,7 @@ export async function translateImage(file, { source, target }) {
   form.append('image', file);
   form.append('source_language', String(source || 'auto'));
   form.append('target_language', String(target || ''));
-  const response = await fetch('/api/image-translation', { method: 'POST', body: form });
+  const response = await fetch('/api/image-translation', { method: 'POST', body: form, headers: authHeaders() });
   return imagePayload(response);
 }
 
@@ -74,7 +84,7 @@ export async function retranslateImage(requestId, { target }) {
   const form = new FormData();
   form.append('target_language', String(target || ''));
   const safeId = encodeURIComponent(String(requestId || ''));
-  const response = await fetch(`/api/image-translation/${safeId}/retranslate`, { method: 'POST', body: form });
+  const response = await fetch(`/api/image-translation/${safeId}/retranslate`, { method: 'POST', body: form, headers: authHeaders() });
   return imagePayload(response);
 }
 
@@ -89,7 +99,7 @@ export async function submitPdf(file, { target }) {
   const form = new FormData();
   form.append('document_file', file);
   form.append('target_language', String(target || ''));
-  const response = await fetch('/api/pdf-translation/requests', { method: 'POST', body: form });
+  const response = await fetch('/api/pdf-translation/requests', { method: 'POST', body: form, headers: authHeaders() });
   await ensureOk(response);
   return response.json();
 }
@@ -97,7 +107,7 @@ export async function submitPdf(file, { target }) {
 export async function getPdfRequest(requestId) {
   const safeId = encodeURIComponent(String(requestId || ''));
   const response = await fetch(`/api/pdf-translation/requests/${safeId}`, {
-    headers: { Accept: 'application/json' },
+    headers: authHeaders({ Accept: 'application/json' }),
   });
   await ensureOk(response);
   return response.json();
@@ -107,7 +117,7 @@ export async function cancelPdf(requestId) {
   const safeId = encodeURIComponent(String(requestId || ''));
   const response = await fetch(`/api/pdf-translation/requests/${safeId}/cancel`, {
     method: 'POST',
-    headers: { Accept: 'application/json' },
+    headers: authHeaders({ Accept: 'application/json' }),
   });
   await ensureOk(response);
   return response.json();

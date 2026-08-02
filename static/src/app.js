@@ -51,6 +51,8 @@ import {
 } from './settings/dev-tools.js';
 import { bindImageRenderControls, renderImageRenderControls } from './settings/image-render.js';
 import { bindAppearanceSettings, renderAppearanceSettings } from './settings/appearance.js';
+import { initAccountSettings } from './settings/account.js';
+import { initAuth } from './auth.js';
 import { initAppearance } from './domain/appearance.js';
 import {
   setStatus,
@@ -116,6 +118,11 @@ async function init() {
   mergeStoredTtsConfigIntoState();
   applyVoiceLibraryStatus(config.voice_library?.stable || {});
 
+  // Auth kicks off in the background (the SDK loads from a CDN); the account
+  // UI subscribes to auth-state changes and renders once init resolves.
+  initAuth(config.auth || {});
+  initAccountSettings();
+
   els.startButton.addEventListener('click', handleStartButton);
   els.imageFileInput.addEventListener('change', handleImageFileChange);
   els.cameraFileInput.addEventListener('change', handleImageFileChange);
@@ -150,6 +157,7 @@ async function init() {
   els.settingsVoiceLibraryNav.addEventListener('click', () => navigateSettingsPage('voice-library'));
   els.settingsImageRenderNav.addEventListener('click', () => navigateSettingsPage('image-render'));
   els.settingsAppearanceNav.addEventListener('click', () => navigateSettingsPage('appearance'));
+  els.settingsAccountNav.addEventListener('click', () => navigateSettingsPage('account'));
   bindImageRenderControls();
   bindAppearanceSettings();
   els.voiceLibraryControls.addEventListener('change', handleVoiceLibraryChange);

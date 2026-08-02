@@ -67,11 +67,11 @@
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600&display=swap">
   <link rel="stylesheet" href="css/tokens.css?v=20260728-warm-12">
   <link rel="stylesheet" href="css/themes/dark.css?v=20260728-dark-neutral-2">
-  <link rel="stylesheet" href="css/app.css?v=20260729-text-1">
+  <link rel="stylesheet" href="css/app.css?v=20260802-auth-1">
   <!-- Preload the ES module graph so first loads fetch in parallel instead
        of as a sequential waterfall (no build step). Keep in sync with the
        imports in app.js. -->
-  <link rel="modulepreload" href="app.js?v=20260801-review-fixes-2">
+  <link rel="modulepreload" href="app.js?v=20260802-auth-1">
   <link rel="modulepreload" href="../foundation/spa-foundation/index.js">
   <link rel="modulepreload" href="../foundation/spa-foundation/RouterCore.js">
   <link rel="modulepreload" href="../foundation/spa-foundation/ShellState.js">
@@ -84,6 +84,9 @@
   <link rel="modulepreload" href="src/shared/icons.js">
   <link rel="modulepreload" href="src/shared/languages.js">
   <link rel="modulepreload" href="src/shared/api.js">
+  <link rel="modulepreload" href="src/shared/auth-headers.js">
+  <link rel="modulepreload" href="src/shared/signin-card.js">
+  <link rel="modulepreload" href="src/auth.js">
   <link rel="modulepreload" href="src/views/voice/index.js">
   <link rel="modulepreload" href="src/views/voice/session.js">
   <link rel="modulepreload" href="src/views/text/index.js">
@@ -128,6 +131,6 @@
       }
     }());
   </script>
-  <script type="module" src="app.js?v=20260801-review-fixes-2"></script>
+  <script type="module" src="app.js?v=20260802-auth-1"></script>
 </body>
 </html>

@@ -1,7 +1,9 @@
 import { iconMarkup } from '../../shared/icons.js';
 import { populateLanguageSelect, recordLanguageMru } from '../../shared/languages.js';
-import { submitPdf, getPdfRequest, cancelPdf, pdfArtifactUrl } from '../../shared/api.js';
+import { submitPdf, getPdfRequest, cancelPdf, pdfArtifactUrl, getMe } from '../../shared/api.js';
 import { publishViewBusy } from '../../shared/view-activity.js';
+import { isEnabled as isAuthEnabled, onAuthChange, whenAuthReady } from '../../auth.js';
+import { createSignInCard } from '../../shared/signin-card.js';
 
 // PDF translation view, same stage model as the LLM Workbench: an empty state
 // (dropzone) swaps for a loaded state (original frame + translated frame) once
@@ -94,6 +96,42 @@ export function createPdfView() {
   let originalUrl = '';
   let runToken = 0;
   let pollTimer = 0;
+
+  // Anonymous gate: when the deployment has auth configured and the caller is
+  // not signed in, the sign-in card replaces the upload UI (the anonymous plan
+  // has PDF disabled). Re-evaluated on every auth-state change, so signing in
+  // swaps the upload UI back in. Not gated at all when auth is unconfigured —
+  // dev stays anonymous-only.
+  const gateCard = createSignInCard('PDF translation needs a free account — 12 pages per month included.');
+  gateCard.classList.add('pdf-gate');
+  gateCard.hidden = true;
+  container.appendChild(gateCard);
+
+  let gateToken = 0;
+
+  async function applyAuthGate() {
+    if (!isAuthEnabled()) return;
+    const token = ++gateToken;
+    // Wait for the SDK session restore so a signed-in user is not gated on a
+    // not-yet-restored (empty) bearer token.
+    await whenAuthReady();
+    if (token !== gateToken) return;
+    let principalKind = '';
+    try {
+      const me = await getMe();
+      principalKind = String(me?.principal?.kind || '');
+    } catch {
+      // A failed /api/me leaves the view usable rather than gating on a guess.
+      return;
+    }
+    if (token !== gateToken) return;
+    const gated = principalKind !== 'user';
+    container.classList.toggle('is-gated', gated);
+    gateCard.hidden = !gated;
+  }
+
+  applyAuthGate();
+  onAuthChange(() => { applyAuthGate(); });
 
   populateLanguageSelect(targetSelect, 'English');
   applyViewMode();

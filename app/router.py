@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 from app.asr_pc_export import live_pc_events_to_text
 from app.asr_pc_export import pc_export_filename
-from app.config import get_int, get_str, rooted_path
+from app.config import get_int, get_str, optional_str, rooted_path
 from app.image_translation_bridge import ImageTranslationError
 from app.image_translation_bridge import REQUEST_ID_HEADER
 from app.image_translation_bridge import rerender_image
@@ -88,6 +88,23 @@ async def config() -> dict[str, Any]:
         "voice_library": {
             "stable": stable_voice_library_status(),
         },
+        "auth": _auth_client_config(),
+    }
+
+
+def _auth_client_config() -> dict[str, Any]:
+    """What the browser needs to run the external auth flow. The publishable key is
+    public by design (guards nothing by itself). ``configured`` False keeps every
+    account control hidden — dev without a provider stays anonymous-only."""
+    issuer = optional_str("saas.auth.issuer")
+    supabase_url = optional_str("saas.auth.supabase_url")
+    if not supabase_url and issuer:
+        supabase_url = issuer.removesuffix("/auth/v1")
+    publishable_key = optional_str("saas.auth.publishable_key")
+    return {
+        "configured": bool(supabase_url and publishable_key),
+        "supabase_url": supabase_url or "",
+        "publishable_key": publishable_key or "",
     }
 
 

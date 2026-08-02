@@ -1,10 +1,14 @@
+import { authHeaders } from './shared/auth-headers.js';
+
+export { setAuthTokenProvider } from './shared/auth-headers.js';
+
 async function fetchJson(url, options = {}) {
   const response = await fetch(url, {
     ...options,
-    headers: {
+    headers: authHeaders({
       Accept: 'application/json',
       ...options.headers,
-    },
+    }),
   });
   if (!response.ok) {
     const detail = await errorDetailFromResponse(response);
@@ -18,6 +22,10 @@ export const api = {
     return fetchJson('/api/config');
   },
 
+  getMe() {
+    return fetchJson('/api/me');
+  },
+
   async translateImage(file, { source, target, renderOptions = {} }) {
     const form = new FormData();
     form.append('image', file);
@@ -26,7 +34,7 @@ export const api = {
     for (const [key, value] of Object.entries(renderOptions)) {
       if (value) form.append(key, String(value));
     }
-    const response = await fetch('/api/image-translation', { method: 'POST', body: form });
+    const response = await fetch('/api/image-translation', { method: 'POST', body: form, headers: authHeaders() });
     return imageTranslationPayload(response);
   },
 
@@ -34,7 +42,7 @@ export const api = {
     const form = new FormData();
     form.append('target_language', String(target || ''));
     const safeRequestId = encodeURIComponent(String(requestId || ''));
-    const response = await fetch(`/api/image-translation/${safeRequestId}/retranslate`, { method: 'POST', body: form });
+    const response = await fetch(`/api/image-translation/${safeRequestId}/retranslate`, { method: 'POST', body: form, headers: authHeaders() });
     return imageTranslationPayload(response);
   },
 
@@ -47,7 +55,7 @@ export const api = {
       if (value) form.append(key, String(value));
     }
     const safeRequestId = encodeURIComponent(String(requestId || ''));
-    const response = await fetch(`/api/image-translation/${safeRequestId}/rerender`, { method: 'POST', body: form });
+    const response = await fetch(`/api/image-translation/${safeRequestId}/rerender`, { method: 'POST', body: form, headers: authHeaders() });
     return imageTranslationPayload(response);
   },
 
@@ -94,7 +102,7 @@ export const api = {
 
   async getSessionPcExport(sessionId) {
     const response = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/transcript.pc`, {
-      headers: { Accept: 'text/plain' },
+      headers: authHeaders({ Accept: 'text/plain' }),
     });
     if (!response.ok) {
       throw new Error(await response.text() || `HTTP ${response.status}`);

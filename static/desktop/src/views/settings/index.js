@@ -1,5 +1,11 @@
 // Settings view — UI shell only. Lean user-facing groups (microphone, speech)
-// with placeholder controls; wiring and the real option set come later.
+// with placeholder controls; wiring and the real option set come later. The
+// Account group at the top is live: it is the desktop sign-in surface, and it
+// only exists when the deployment has an auth provider configured.
+
+import { isEnabled, onAuthChange, signOut } from '../../auth.js';
+import { getMe } from '../../shared/api.js';
+import { createSignInCard } from '../../shared/signin-card.js';
 
 export function createSettingsView() {
   const container = document.createElement('div');
@@ -36,5 +42,65 @@ export function createSettingsView() {
     </section>
     <p class="preview-note">UI preview — not wired to the backend yet.</p>
   `;
+
+  if (isEnabled()) {
+    const accountGroup = document.createElement('section');
+    accountGroup.className = 'settings-group';
+    accountGroup.setAttribute('aria-label', 'Account');
+    container.prepend(accountGroup);
+    initAccountGroup(accountGroup);
+  }
+
   return container;
+}
+
+// Signed out: the sign-in card. Signed in: email, plan label and a sign-out
+// button. Re-renders on every auth-state change.
+function initAccountGroup(accountGroup) {
+  let planFetchToken = 0;
+
+  onAuthChange((authState) => {
+    render(authState);
+  });
+
+  function render(authState) {
+    accountGroup.replaceChildren();
+    if (!authState.signedIn) {
+      accountGroup.appendChild(createSignInCard('Link your plan and usage to your account.'));
+      return;
+    }
+    const title = document.createElement('h3');
+    title.textContent = 'Account';
+    const emailRow = document.createElement('div');
+    emailRow.className = 'setting-row';
+    const emailText = document.createElement('span');
+    emailText.textContent = authState.email;
+    emailRow.appendChild(emailText);
+    const planRow = document.createElement('div');
+    planRow.className = 'setting-row';
+    const planCaption = document.createElement('span');
+    planCaption.textContent = 'Plan';
+    const planValue = document.createElement('span');
+    planRow.append(planCaption, planValue);
+    const signOutButton = document.createElement('button');
+    signOutButton.type = 'button';
+    signOutButton.className = 'link-btn';
+    signOutButton.textContent = 'Sign out';
+    signOutButton.addEventListener('click', () => { signOut(); });
+    accountGroup.append(title, emailRow, planRow, signOutButton);
+    fillPlanLabel(planValue);
+  }
+
+  // The plan comes from /api/me (called with the bearer token). The token
+  // guard drops a stale response that lands after sign-out.
+  async function fillPlanLabel(planValue) {
+    const token = ++planFetchToken;
+    try {
+      const me = await getMe();
+      if (token !== planFetchToken) return;
+      planValue.textContent = me?.principal?.plan === 'free' ? 'Free plan' : 'Anonymous';
+    } catch {
+      // A failed fetch leaves the plan blank rather than showing a wrong label.
+    }
+  }
 }

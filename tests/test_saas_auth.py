@@ -189,5 +189,34 @@ class BearerResolutionRouteTests(unittest.TestCase):
         self.assertEqual(response.json()["principal"]["kind"], "anonymous")
 
 
+class AuthClientConfigTests(unittest.TestCase):
+    def test_config_derives_the_project_url_from_the_issuer(self) -> None:
+        from app.router import _auth_client_config
+
+        values = {
+            "saas.auth.issuer": "https://ref.supabase.co/auth/v1",
+            "saas.auth.publishable_key": "sb_publishable_x",
+        }
+        with patch("app.router.optional_str", side_effect=lambda path: values.get(path)):
+            cfg = _auth_client_config()
+        self.assertEqual(
+            cfg,
+            {
+                "configured": True,
+                "supabase_url": "https://ref.supabase.co",
+                "publishable_key": "sb_publishable_x",
+            },
+        )
+
+    def test_config_reports_unconfigured_without_a_provider(self) -> None:
+        from app.router import _auth_client_config
+
+        with patch("app.router.optional_str", return_value=None):
+            cfg = _auth_client_config()
+        self.assertEqual(
+            cfg, {"configured": False, "supabase_url": "", "publishable_key": ""}
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

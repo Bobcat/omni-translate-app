@@ -889,6 +889,70 @@ body {
   accent-color: var(--primary);
 }
 
+/* === Sign-in card (settings Account group + pdf anonymous gate) ===
+   Heading, one-line reason, white Google button, redirect note. The button
+   stays white in the dark preset — that is the Google brand look. */
+
+.signin-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  text-align: center;
+}
+
+.signin-card-title {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.signin-card-reason,
+.signin-card-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.signin-card-note {
+  font-size: 0.78rem;
+}
+
+.google-signin-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 9px 18px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #ffffff;
+  color: #1f1f1f;
+  font-size: 0.9rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.google-signin-button svg {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+
+/* Pdf anonymous gate: the card stands alone in place of the upload UI. */
+.pdf-view.is-gated > *:not(.pdf-gate) {
+  display: none;
+}
+
+.pdf-gate {
+  margin: auto;
+  max-width: 420px;
+  padding: 28px 24px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+}
+
 @media (max-width: 720px) {
   .view {
     padding: 16px;
