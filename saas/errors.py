@@ -15,6 +15,8 @@ ENTITLEMENT_UNKNOWN = "ENTITLEMENT_UNKNOWN"
 PERIOD_QUOTA_EXCEEDED = "PERIOD_QUOTA_EXCEEDED"
 # An idempotency key was replayed with different reservation inputs.
 USAGE_IDEMPOTENCY_CONFLICT = "USAGE_IDEMPOTENCY_CONFLICT"
+# A caller-supplied operation id is absent or is not a random UUID.
+INVALID_OPERATION_ID = "INVALID_OPERATION_ID"
 # The upload cannot be parsed or fails basic validation.
 INVALID_UPLOAD = "INVALID_UPLOAD"
 # The upload exceeds the plan's per-job cap.

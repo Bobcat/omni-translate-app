@@ -38,6 +38,7 @@ def submit_pdf(
     filename: str,
     content_type: str,
     target_language: str,
+    operation_id: str,
 ) -> dict:
     """Submit ``document_bytes`` for translation and return the lifecycle envelope.
 
@@ -54,6 +55,7 @@ def submit_pdf(
         raise PdfTranslationError("target language is required", status_code=400)
     request_json = json.dumps(
         {
+            "request_id": str(operation_id),
             "task": "translate_pdf",
             "priority": "normal",
             "source_lang_code": "auto",
@@ -94,7 +96,9 @@ def get_pdf_artifact(request_id: str, artifact_name: str) -> tuple[bytes, str]:
             data = response.read()
             media_type = (response.headers.get("Content-Type") or "application/octet-stream").split(";")[0].strip()
     except HTTPError as exc:
-        raise PdfTranslationError(f"could not fetch artifact: HTTP {exc.code}") from exc
+        raise PdfTranslationError(
+            _http_error_detail(exc), status_code=int(exc.code)
+        ) from exc
     except URLError as exc:
         raise PdfTranslationError(f"translation-services unreachable: {exc.reason}") from exc
     if not data:
@@ -151,7 +155,9 @@ def _read_json(request: Request, *, timeout: float) -> dict:
         with urlopen(request, timeout=timeout) as response:
             raw = response.read()
     except HTTPError as exc:
-        raise PdfTranslationError(_http_error_detail(exc)) from exc
+        raise PdfTranslationError(
+            _http_error_detail(exc), status_code=int(exc.code)
+        ) from exc
     except URLError as exc:
         raise PdfTranslationError(f"translation-services unreachable: {exc.reason}") from exc
     try:
@@ -166,7 +172,11 @@ def _read_json(request: Request, *, timeout: float) -> dict:
 def _http_error_detail(exc: HTTPError) -> str:
     try:
         payload = json.loads(exc.read().decode("utf-8"))
-        detail = payload.get("detail") if isinstance(payload, dict) else None
+        detail = (
+            payload.get("detail") or payload.get("message") or payload.get("code")
+            if isinstance(payload, dict)
+            else None
+        )
         if isinstance(detail, dict):
             detail = detail.get("message") or detail.get("code")
         if detail:

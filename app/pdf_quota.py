@@ -4,9 +4,9 @@ expensive upstream translation job.
 Follows the free-PDF flow in plan/saas-foundation-entitlements.md §11: count
 pages at submit, enforce the per-job cap, reserve the pages BEFORE the
 upstream job starts, then consume on completion and release on failure or
-cancel — a failure on our side never costs the user quota. The reservation
-is linked to the upstream request id (known only after the submit) so the
-poll and cancel routes can settle it.
+cancel. The browser's operation id links the reservation to the upstream
+request before submit, so retries cannot reserve or queue twice. An uncertain
+submit keeps its hold because the upstream job may already exist.
 
 Partial-success deviation from plan §11 step 11: the service does not
 deliver partial artifacts today, so a failed run releases the whole
@@ -22,9 +22,11 @@ import uuid
 from fastapi import Request
 from pypdf import PdfReader
 
+from app.pdf_translation_bridge import PdfTranslationError
 from app.pdf_translation_bridge import submit_pdf
 from app.saas_setup import get_saas_context, resolve_request_context
 from saas.errors import (
+    INVALID_OPERATION_ID,
     INVALID_UPLOAD,
     PAGE_LIMIT_PER_JOB_EXCEEDED,
     RESOURCE_NOT_FOUND,
@@ -53,6 +55,25 @@ def count_pdf_pages(document_bytes: bytes) -> int:
         ) from exc
 
 
+def normalize_operation_id(value: str | None) -> str:
+    """Canonical random UUID supplied by the browser for one explicit action."""
+    try:
+        operation_id = uuid.UUID(str(value or "").strip())
+    except (ValueError, AttributeError) as exc:
+        raise SaasError(
+            INVALID_OPERATION_ID,
+            "Idempotency-Key must be a UUID",
+            status_code=400,
+        ) from exc
+    if operation_id.version != 4:
+        raise SaasError(
+            INVALID_OPERATION_ID,
+            "Idempotency-Key must be a random UUID",
+            status_code=400,
+        )
+    return str(operation_id)
+
+
 def submit_pdf_with_quota(
     request: Request,
     *,
@@ -60,16 +81,18 @@ def submit_pdf_with_quota(
     filename: str,
     content_type: str,
     target_language: str,
+    operation_id: str,
 ) -> tuple[dict, str | None]:
     """Gate, reserve and submit a PDF translation.
 
     Returns the upstream lifecycle envelope plus the identity-cookie token to
     attach to the route's response (None for bearer-auth users). Raises
-    SaasError (entitlement disabled, invalid upload, per-job page cap, period
-    quota) or PdfTranslationError (upstream failure — the reservation is
-    released first, so our failure never costs quota).
+    SaasError (invalid operation id, entitlement disabled, invalid upload,
+    per-job page cap, period quota) or PdfTranslationError. An uncertain
+    upstream submit keeps its reservation: the service may have accepted it.
     """
     ctx = get_saas_context()
+    operation_id = normalize_operation_id(operation_id)
     principal, entitlements, identity_token = resolve_request_context(request)
     entitlements.require_enabled("pdf_translation.enabled")
     page_count = count_pdf_pages(document_bytes)
@@ -81,30 +104,27 @@ def submit_pdf_with_quota(
             status_code=422,
             details={"pages": page_count, "max_pages_per_job": max_pages},
         )
-    reservation = ctx.quota_service.reserve(
+    ctx.quota_service.reserve(
         principal,
         metric=PAGES_METRIC,
         quantity=page_count,
         limit=entitlements.get_int("pdf_translation.pages_per_period"),
         period_kind=entitlements.get_str("pdf_translation.period", "month"),
-        idempotency_key=f"pdf-submit:{uuid.uuid4()}",
+        job_id=operation_id,
+        idempotency_key=f"pdf-submit:{operation_id}",
     )
-    try:
-        envelope = submit_pdf(
-            document_bytes=document_bytes,
-            filename=filename,
-            content_type=content_type,
-            target_language=target_language,
-        )
-    except Exception:
-        ctx.quota_service.release(reservation.id, "submit_failed")
-        raise
+    envelope = submit_pdf(
+        document_bytes=document_bytes,
+        filename=filename,
+        content_type=content_type,
+        target_language=target_language,
+        operation_id=operation_id,
+    )
     request_id = str(envelope.get("request_id") or "")
-    if request_id:
-        ctx.store.attach_job_to_usage_event(reservation.id, request_id)
-    else:
-        # Without the id the reservation can never be settled: do not hold it.
-        ctx.quota_service.release(reservation.id, "missing_request_id")
+    if request_id != operation_id:
+        # Acceptance is uncertain, so keep the reservation. Releasing it could
+        # make an already-started upstream job free.
+        raise PdfTranslationError("translation-services returned an unexpected request_id")
     return envelope, identity_token
 
 
