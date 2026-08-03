@@ -890,8 +890,7 @@ body {
 }
 
 /* === Sign-in card (settings Account group + pdf anonymous gate) ===
-   Heading, one-line reason, white Google button, redirect note. The button
-   stays white in the dark preset — that is the Google brand look. */
+   Heading, one-line reason and Google-rendered sign-in button. */
 
 .signin-card {
   display: flex;
@@ -915,10 +914,17 @@ body {
 
 .google-signin-holder {
   display: flex;
+  align-items: center;
   justify-content: center;
-  /* Reserve the button's height so the card does not jump when the
-     Google-rendered iframe lands. */
+  width: 280px;
+  height: 40px;
   min-height: 40px;
+  overflow: hidden;
+  border-radius: 999px;
+}
+
+.google-signin-holder > * {
+  flex: 0 0 auto;
 }
 
 /* Pdf anonymous gate: the card stands alone in place of the upload UI. */

@@ -1521,8 +1521,8 @@ button {
 }
 
 /* Account subpage sign-in card (DeepL-inspired): heading, one-line reason,
-   white Google button, redirect note. The button stays white in dark theme —
-   that is the Google brand look. */
+   Google-rendered button, redirect note. auth.js selects Google's light or
+   dark-compatible button theme. */
 .signin-card {
   text-align: center;
 }
@@ -1542,10 +1542,18 @@ button {
 
 .google-signin-holder {
   display: flex;
+  align-items: center;
   justify-content: center;
-  /* Reserve the button's height so the card does not jump when the
-     Google-rendered iframe lands. */
+  width: 280px;
+  height: 40px;
   min-height: 40px;
+  margin-inline: auto;
+  overflow: hidden;
+  border-radius: 999px;
+}
+
+.google-signin-holder > * {
+  flex: 0 0 auto;
 }
 
 .setting-group .range-row {

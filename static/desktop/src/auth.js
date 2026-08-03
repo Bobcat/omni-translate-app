@@ -24,6 +24,8 @@ let googleClientId = '';
 let accessToken = '';
 let current = { signedIn: false, email: '', userId: '' };
 const listeners = new Set();
+const googleButtonElements = new Set();
+let googleThemeObserver = null;
 
 // Kicks off SDK loading; resolves once the initial session state is known.
 // No-op when the deployment has no auth provider configured.
@@ -68,13 +70,17 @@ export function onAuthChange(callback) {
 // opens the account chooser in a popup. Safe to call before auth init has
 // settled (a view created during the first ticks of app boot, ahead of the
 // /api/config response): the render then waits for the first settled auth
-// state. No-op when a library fails to load or the element already holds a
-// button; the card then just shows no button.
+// state. The Google-owned iframe cannot inherit our CSS theme, so a theme
+// change re-renders it with Google's matching supported button theme.
 export async function renderGoogleButton(element) {
+  googleButtonElements.add(element);
+  observeGoogleButtonTheme();
   try {
     if (!initialized) await firstAuthState();
     const gis = await loadGis();
-    if (!gis || !client || !googleClientId || element.childElementCount) return;
+    if (!gis || !client || !googleClientId) return;
+    const theme = googleButtonTheme();
+    if (element.childElementCount && element.dataset.googleButtonTheme === theme) return;
     if (!gisInitialized) {
       gis.accounts.id.initialize({
         client_id: googleClientId,
@@ -82,17 +88,34 @@ export async function renderGoogleButton(element) {
       });
       gisInitialized = true;
     }
+    element.replaceChildren();
     gis.accounts.id.renderButton(element, {
       type: 'standard',
-      theme: 'outline',
+      theme,
       size: 'large',
       shape: 'pill',
       text: 'continue_with',
       width: GOOGLE_BUTTON_WIDTH,
     });
+    element.dataset.googleButtonTheme = theme;
   } catch (err) {
     console.warn('Google sign-in button failed:', err);
   }
+}
+
+function googleButtonTheme() {
+  return document.documentElement.dataset.theme === 'dark' ? 'outline_dark' : 'outline';
+}
+
+function observeGoogleButtonTheme() {
+  if (googleThemeObserver) return;
+  googleThemeObserver = new MutationObserver(() => {
+    for (const element of googleButtonElements) renderGoogleButton(element);
+  });
+  googleThemeObserver.observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: ['data-theme'],
+  });
 }
 
 export async function signOut() {
