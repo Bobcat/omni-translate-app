@@ -926,6 +926,12 @@ body {
   display: none;
 }
 
+/* Free-plan page balance above the dropzone; hidden until /api/usage lands. */
+.usage-line {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
 .pdf-gate {
   margin: auto;
   max-width: 420px;

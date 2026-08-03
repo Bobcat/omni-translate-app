@@ -18,11 +18,12 @@ from app.image_translation_bridge import translate_image
 from app.live_settings import default_live_settings
 from app.live_settings import merge_live_settings
 from app.live_settings import normalize_live_settings_delta
+from app.pdf_quota import finalize_pdf_reservation
+from app.pdf_quota import submit_pdf_with_quota
 from app.pdf_translation_bridge import PdfTranslationError
 from app.pdf_translation_bridge import cancel_pdf_request
 from app.pdf_translation_bridge import get_pdf_artifact
 from app.pdf_translation_bridge import get_pdf_request
-from app.pdf_translation_bridge import submit_pdf
 from app.protocol import PROTOCOL_VERSION
 from app.saas_setup import resolve_request_entitlements
 from app.sessions import SESSIONS
@@ -211,8 +212,13 @@ def post_image_rerender(
 # PDF translation: unlike images, the submit returns a lifecycle envelope immediately
 # and the desktop client polls it — a PDF can take minutes, so the route must not
 # hold the connection. Sync defs for the same threadpool reason as the image routes.
+# The caller's plan gates the feature and its pages are reserved before the
+# upstream job starts (app/pdf_quota.py); the poll and cancel routes settle
+# that reservation when the job reaches a terminal state.
 @api_router.post("/pdf-translation/requests")
 def post_pdf_translation_request(
+    request: Request,
+    response: Response,
     document_file: UploadFile = File(...),
     target_language: str = Form(...),
 ) -> dict[str, Any]:
@@ -229,7 +235,8 @@ def post_pdf_translation_request(
     if not content:
         raise HTTPException(status_code=400, detail="empty document upload")
     try:
-        return submit_pdf(
+        envelope, identity_token = submit_pdf_with_quota(
+            request,
             document_bytes=content,
             filename=document_file.filename or "document.pdf",
             content_type=document_file.content_type or "application/pdf",
@@ -237,14 +244,19 @@ def post_pdf_translation_request(
         )
     except PdfTranslationError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc))
+    if identity_token is not None:
+        set_identity_cookie(request, response, identity_token)
+    return envelope
 
 
 @api_router.get("/pdf-translation/requests/{request_id}")
 def get_pdf_translation_request(request_id: str) -> dict[str, Any]:
     try:
-        return get_pdf_request(request_id)
+        envelope = get_pdf_request(request_id)
     except PdfTranslationError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc))
+    finalize_pdf_reservation(envelope)
+    return envelope
 
 
 @api_router.get("/pdf-translation/requests/{request_id}/artifacts/{artifact_name}")
@@ -266,9 +278,11 @@ def get_pdf_translation_artifact(request_id: str, artifact_name: str) -> Respons
 @api_router.post("/pdf-translation/requests/{request_id}/cancel")
 def post_pdf_translation_cancel(request_id: str) -> dict[str, Any]:
     try:
-        return cancel_pdf_request(request_id)
+        envelope = cancel_pdf_request(request_id)
     except PdfTranslationError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc))
+    finalize_pdf_reservation(envelope)
+    return envelope
 
 
 # One-shot text translation (typed/pasted text — the classic translator workflow).

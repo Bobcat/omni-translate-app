@@ -196,6 +196,24 @@ class SaasStore:
                 "SELECT * FROM usage_events WHERE id = ?", (str(event_id),)
             ).fetchone()
 
+    def get_usage_event_by_job_id(self, tenant: str, job_id: str) -> sqlite3.Row | None:
+        """The usage event linked to a host job (e.g. an upstream request id)."""
+        with self.transaction() as conn:
+            return conn.execute(
+                "SELECT * FROM usage_events WHERE tenant = ? AND job_id = ?",
+                (tenant, str(job_id)),
+            ).fetchone()
+
+    def attach_job_to_usage_event(self, event_id: uuid.UUID, job_id: str) -> None:
+        """Link an event to the host job id, which some flows only learn after
+        the reservation exists (e.g. the upstream request id comes back from
+        the submit that had to be reserved first)."""
+        with self.transaction() as conn:
+            conn.execute(
+                "UPDATE usage_events SET job_id = ?, updated_at = ? WHERE id = ?",
+                (str(job_id), _utcnow(), str(event_id)),
+            )
+
     def sum_consumed(
         self, tenant: str, owner_kind: str, owner_id: uuid.UUID, metric: str, period_start: str
     ) -> int:

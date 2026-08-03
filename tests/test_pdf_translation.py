@@ -25,7 +25,7 @@ class PdfTranslationRouteTests(unittest.TestCase):
 
     def test_happy_path_returns_envelope(self) -> None:
         envelope = {"request_id": "req-1", "state": "queued", "queue_position": 1}
-        with patch("app.router.submit_pdf", return_value=envelope) as mock_submit:
+        with patch("app.router.submit_pdf_with_quota", return_value=(envelope, None)) as mock_submit:
             response = _post(self.client)
 
         self.assertEqual(response.status_code, 200)
@@ -45,8 +45,15 @@ class PdfTranslationRouteTests(unittest.TestCase):
         self.assertEqual(response.status_code, 413)
         self.assertIn("document too large", response.json()["detail"])
 
-    def test_unknown_target_language_is_400_not_500(self) -> None:
-        response = _post(self.client, target_language="Klingon")
+    def test_bridge_error_maps_to_its_status(self) -> None:
+        # E.g. an unsupported target language; validation lives in the bridge.
+        with patch(
+            "app.router.submit_pdf_with_quota",
+            side_effect=PdfTranslationError(
+                "unsupported translation language: Klingon", status_code=400
+            ),
+        ):
+            response = _post(self.client, target_language="Klingon")
         self.assertEqual(response.status_code, 400)
         self.assertIn("unsupported translation language", response.json()["detail"])
 

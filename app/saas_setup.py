@@ -18,7 +18,7 @@ from fastapi import APIRouter, Request
 from app.config import REPO_ROOT, get_setting, get_str, optional_str
 from saas.entitlements import EntitlementService, EntitlementSet
 from saas.fastapi_glue import create_saas_router, resolve_request_principal
-from saas.principals import generate_secret
+from saas.principals import Principal, generate_secret
 from saas.storage import SaasStore
 from saas.tokens import ExternalTokenVerifier
 from saas.usage import QuotaService
@@ -99,10 +99,10 @@ def build_saas_router() -> APIRouter:
     )
 
 
-def resolve_request_entitlements(request: Request) -> tuple[EntitlementSet, str | None]:
-    """The caller's resolved entitlements, plus the fresh identity token when an
-    anonymous identity was just provisioned (None for bearer-auth users and valid
-    cookies). The route attaches the token to ITS response via
+def resolve_request_context(request: Request) -> tuple[Principal, EntitlementSet, str | None]:
+    """The caller's principal and resolved entitlements, plus the fresh identity
+    token when an anonymous identity was just provisioned (None for bearer-auth
+    users and valid cookies). The route attaches the token to ITS response via
     ``set_identity_cookie`` (a raw-``Response`` route has no injected response
     param to set cookies on)."""
     ctx = get_saas_context()
@@ -114,4 +114,12 @@ def resolve_request_entitlements(request: Request) -> tuple[EntitlementSet, str 
         user_plan=ctx.user_plan,
         token_verifier=ctx.token_verifier,
     )
-    return ctx.entitlement_service.resolve(principal), token
+    return principal, ctx.entitlement_service.resolve(principal), token
+
+
+def resolve_request_entitlements(request: Request) -> tuple[EntitlementSet, str | None]:
+    """The caller's resolved entitlements plus identity token — the
+    ``resolve_request_context`` shape for routes that never touch the
+    principal itself (e.g. a per-job ceiling without quota accounting)."""
+    _, entitlements, token = resolve_request_context(request)
+    return entitlements, token

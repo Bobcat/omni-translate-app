@@ -21,6 +21,9 @@ async function errorDetail(response) {
     const detail = payload?.detail;
     if (typeof detail === 'string') return detail.slice(0, MAX_ERROR_DETAIL_LENGTH);
     if (typeof detail?.message === 'string') return detail.message.slice(0, MAX_ERROR_DETAIL_LENGTH);
+    // Control-layer errors (entitlements, quota) carry { error: {...} }.
+    const controlError = payload?.error;
+    if (typeof controlError?.message === 'string') return controlError.message.slice(0, MAX_ERROR_DETAIL_LENGTH);
   } catch {
     return text.slice(0, MAX_ERROR_DETAIL_LENGTH);
   }
@@ -35,6 +38,12 @@ export async function getConfig() {
 
 export async function getMe() {
   const response = await fetch('/api/me', { headers: authHeaders({ Accept: 'application/json' }) });
+  await ensureOk(response);
+  return response.json();
+}
+
+export async function getUsage() {
+  const response = await fetch('/api/usage', { headers: authHeaders({ Accept: 'application/json' }) });
   await ensureOk(response);
   return response.json();
 }

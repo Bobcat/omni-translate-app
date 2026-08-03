@@ -1,6 +1,6 @@
 import { iconMarkup } from '../../shared/icons.js';
 import { populateLanguageSelect, recordLanguageMru } from '../../shared/languages.js';
-import { submitPdf, getPdfRequest, cancelPdf, pdfArtifactUrl, getMe } from '../../shared/api.js';
+import { submitPdf, getPdfRequest, cancelPdf, pdfArtifactUrl, getMe, getUsage } from '../../shared/api.js';
 import { publishViewBusy } from '../../shared/view-activity.js';
 import { isEnabled as isAuthEnabled, onAuthChange, whenAuthReady } from '../../auth.js';
 import { createSignInCard } from '../../shared/signin-card.js';
@@ -47,6 +47,7 @@ export function createPdfView() {
         <button type="button" class="icon-square-btn" id="pdfReset" title="Choose another PDF" aria-label="Choose another PDF" hidden>${iconMarkup('x')}</button>
       </div>
     </div>
+    <div class="usage-line" id="pdfUsage" hidden></div>
     <div class="dropzone-card" id="pdfDropzone">
       <div class="dropzone-drop">
         ${iconMarkup('upload-cloud')}
@@ -102,7 +103,7 @@ export function createPdfView() {
   // has PDF disabled). Re-evaluated on every auth-state change, so signing in
   // swaps the upload UI back in. Not gated at all when auth is unconfigured —
   // dev stays anonymous-only.
-  const gateCard = createSignInCard('PDF translation needs a free account — 12 pages per month included.');
+  const gateCard = createSignInCard('PDF translation needs a free account.');
   gateCard.classList.add('pdf-gate');
   gateCard.hidden = true;
   container.appendChild(gateCard);
@@ -128,6 +129,34 @@ export function createPdfView() {
     const gated = principalKind !== 'user';
     container.classList.toggle('is-gated', gated);
     gateCard.hidden = !gated;
+    if (gated) usageEl.hidden = true;
+    else refreshUsage();
+  }
+
+  const usageEl = container.querySelector('#pdfUsage');
+  let usageFetchToken = 0;
+
+  // Free-plan page balance. Refreshed when the gate settles (signed-in user)
+  // and whenever a job reaches a terminal state — its reservation is then
+  // consumed or released server-side, so the balance has moved.
+  async function refreshUsage() {
+    const token = ++usageFetchToken;
+    if (!isAuthEnabled()) return;
+    await whenAuthReady();
+    if (token !== usageFetchToken) return;
+    try {
+      const data = await getUsage();
+      if (token !== usageFetchToken) return;
+      const pages = (data?.usage || []).find((entry) => entry.metric === 'pdf_translation.pages');
+      if (!pages || typeof pages.remaining !== 'number' || typeof pages.limit !== 'number') {
+        usageEl.hidden = true;
+        return;
+      }
+      usageEl.textContent = `PDF pages this month: ${pages.remaining} of ${pages.limit} left`;
+      usageEl.hidden = false;
+    } catch {
+      // A failed fetch leaves the previous balance in place.
+    }
   }
 
   applyAuthGate();
@@ -234,12 +263,14 @@ export function createPdfView() {
       if (state === 'completed') {
         showTranslated(envelope);
         setBusy(false);
+        refreshUsage();
         return;
       }
       if (TERMINAL_STATES.has(state)) {
         clearPending();
         setStatus(envelope?.error?.message || `Translation ${state}.`, true);
         setBusy(false);
+        refreshUsage();
         return;
       }
       setPending(pendingTextFor(envelope));
