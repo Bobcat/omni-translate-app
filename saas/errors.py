@@ -13,10 +13,14 @@ ENTITLEMENT_DISABLED = "ENTITLEMENT_DISABLED"
 ENTITLEMENT_UNKNOWN = "ENTITLEMENT_UNKNOWN"
 # The reservation would exceed the period allowance.
 PERIOD_QUOTA_EXCEEDED = "PERIOD_QUOTA_EXCEEDED"
+# An idempotency key was replayed with different reservation inputs.
+USAGE_IDEMPOTENCY_CONFLICT = "USAGE_IDEMPOTENCY_CONFLICT"
 # The upload cannot be parsed or fails basic validation.
 INVALID_UPLOAD = "INVALID_UPLOAD"
 # The upload exceeds the plan's per-job cap.
 PAGE_LIMIT_PER_JOB_EXCEEDED = "PAGE_LIMIT_PER_JOB_EXCEEDED"
+# An owned host resource is absent or deliberately hidden from this principal.
+RESOURCE_NOT_FOUND = "RESOURCE_NOT_FOUND"
 
 
 class SaasError(Exception):

@@ -22,7 +22,7 @@ let gisPromise = null;
 let gisInitialized = false;
 let googleClientId = '';
 let accessToken = '';
-let current = { signedIn: false, email: '' };
+let current = { signedIn: false, email: '', userId: '' };
 const listeners = new Set();
 
 // Kicks off SDK loading; resolves once the initial session state is known.
@@ -55,7 +55,7 @@ export function whenAuthReady() {
   return readyPromise || Promise.resolve();
 }
 
-// Fires with { signedIn, email } on init and on every SDK auth-state change.
+// Fires with { signedIn, email, userId } on init and on every SDK auth-state change.
 // A listener registered after init fires immediately with the current state.
 export function onAuthChange(callback) {
   listeners.add(callback);
@@ -166,6 +166,7 @@ function applySession(session) {
   current = {
     signedIn: Boolean(session?.user),
     email: session?.user?.email || '',
+    userId: session?.user?.id || '',
   };
 }
 

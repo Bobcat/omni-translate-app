@@ -24,7 +24,12 @@ from pypdf import PdfReader
 
 from app.pdf_translation_bridge import submit_pdf
 from app.saas_setup import get_saas_context, resolve_request_context
-from saas.errors import INVALID_UPLOAD, PAGE_LIMIT_PER_JOB_EXCEEDED, SaasError
+from saas.errors import (
+    INVALID_UPLOAD,
+    PAGE_LIMIT_PER_JOB_EXCEEDED,
+    RESOURCE_NOT_FOUND,
+    SaasError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +106,30 @@ def submit_pdf_with_quota(
         # Without the id the reservation can never be settled: do not hold it.
         ctx.quota_service.release(reservation.id, "missing_request_id")
     return envelope, identity_token
+
+
+def require_pdf_request_owner(request: Request, request_id: str) -> None:
+    """Hide every PDF request not owned by the resolved caller.
+
+    The usage event is the MVP's durable app-side link between a principal and
+    an upstream request. Status, cancel and artifact routes all pass through
+    this check before revealing whether the upstream id exists.
+    """
+    ctx = get_saas_context()
+    principal, _, _ = resolve_request_context(request)
+    event = ctx.store.get_usage_event_by_job_id(ctx.tenant, str(request_id))
+    owned = (
+        event is not None
+        and event["metric"] == PAGES_METRIC
+        and event["owner_kind"] == principal.kind
+        and event["owner_id"] == str(principal.id)
+    )
+    if not owned:
+        raise SaasError(
+            RESOURCE_NOT_FOUND,
+            "PDF request not found",
+            status_code=404,
+        )
 
 
 def finalize_pdf_reservation(envelope: dict) -> None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 import threading
 import unittest
 import uuid
@@ -7,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from saas.errors import PERIOD_QUOTA_EXCEEDED, SaasError
+from saas.errors import PERIOD_QUOTA_EXCEEDED, USAGE_IDEMPOTENCY_CONFLICT, SaasError
 from saas.principals import Principal
 from saas.storage import SaasStore
 from saas.usage import QuotaService
@@ -66,6 +67,37 @@ class QuotaServiceTests(unittest.TestCase):
         self.assertEqual(first.id, second.id)
         summary = self.quota.get_usage(self.principal, METRIC, "month", now=NOW)
         self.assertEqual(summary.reserved, 6)
+
+    def test_same_key_with_different_quantity_conflicts(self) -> None:
+        self._reserve(6, key="job-1:pages")
+        with self.assertRaises(SaasError) as ctx:
+            self._reserve(7, key="job-1:pages")
+        self.assertEqual(ctx.exception.code, USAGE_IDEMPOTENCY_CONFLICT)
+        self.assertEqual(ctx.exception.status_code, 409)
+
+    def test_same_key_is_isolated_per_principal_and_tenant(self) -> None:
+        self._reserve(6, key="shared-operation")
+        other_owner = _principal()
+        other_tenant = Principal(
+            tenant="other-tenant",
+            kind="anonymous",
+            id=uuid.uuid4(),
+            plan_code="free",
+        )
+        for principal in (other_owner, other_tenant):
+            reservation = self.quota.reserve(
+                principal,
+                metric=METRIC,
+                quantity=4,
+                limit=12,
+                period_kind="month",
+                job_id="job-other",
+                idempotency_key="shared-operation",
+                now=NOW,
+            )
+            self.assertEqual(reservation.quantity, 4)
+            summary = self.quota.get_usage(principal, METRIC, "month", now=NOW)
+            self.assertEqual(summary.reserved, 4)
 
     def test_consume_moves_reserved_to_consumed(self) -> None:
         reservation = self._reserve(10)
@@ -139,6 +171,50 @@ class QuotaServiceTests(unittest.TestCase):
         summary = self.quota.get_usage(self.principal, METRIC, "month", now=NOW)
         self.assertEqual(summary.reserved, 2 * len(successes))
         self.assertLessEqual(summary.reserved, 12)
+
+
+class SaasStoreMigrationTests(unittest.TestCase):
+    def test_global_idempotency_schema_is_migrated_without_losing_events(self) -> None:
+        owner_id = uuid.uuid4()
+        event_id = uuid.uuid4()
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "saas.db"
+            legacy = sqlite3.connect(path)
+            legacy.execute(
+                "CREATE TABLE usage_events (tenant TEXT NOT NULL, id TEXT PRIMARY KEY,"
+                " idempotency_key TEXT NOT NULL UNIQUE, owner_kind TEXT NOT NULL,"
+                " owner_id TEXT NOT NULL, job_id TEXT, metric TEXT NOT NULL,"
+                " quantity INTEGER NOT NULL, state TEXT NOT NULL, billable INTEGER NOT NULL,"
+                " period_kind TEXT, period_start TEXT, period_end TEXT, metadata TEXT,"
+                " created_at TEXT NOT NULL, updated_at TEXT NOT NULL)"
+            )
+            legacy.execute(
+                "INSERT INTO usage_events VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    "t", str(event_id), "shared-key", "anonymous", str(owner_id), "job-1",
+                    METRIC, 3, "consumed", 1, "month", "2026-07-01T00:00:00+00:00",
+                    "2026-08-01T00:00:00+00:00", "{}", "now", "now",
+                ),
+            )
+            legacy.commit()
+            legacy.close()
+
+            store = SaasStore(path)
+            carried = store.get_usage_event_by_key("t", "anonymous", owner_id, "shared-key")
+            other = _principal()
+            reservation = QuotaService(store).reserve(
+                other,
+                metric=METRIC,
+                quantity=4,
+                limit=12,
+                period_kind="month",
+                idempotency_key="shared-key",
+                now=NOW,
+            )
+            store.close()
+
+        self.assertEqual(carried["id"], str(event_id))
+        self.assertEqual(reservation.quantity, 4)
 
 
 if __name__ == "__main__":

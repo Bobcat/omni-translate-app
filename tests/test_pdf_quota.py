@@ -18,6 +18,7 @@ from app.pdf_quota import (
     PAGES_METRIC,
     count_pdf_pages,
     finalize_pdf_reservation,
+    require_pdf_request_owner,
     submit_pdf_with_quota,
 )
 from app.pdf_translation_bridge import PdfTranslationError
@@ -28,6 +29,7 @@ from saas.errors import (
     INVALID_UPLOAD,
     PAGE_LIMIT_PER_JOB_EXCEEDED,
     PERIOD_QUOTA_EXCEEDED,
+    RESOURCE_NOT_FOUND,
     SaasError,
 )
 from saas.principals import Principal
@@ -203,6 +205,22 @@ class PdfQuotaFlowTests(unittest.TestCase):
     def test_unknown_job_is_a_no_op(self) -> None:
         finalize_pdf_reservation({"request_id": "req-other", "state": "completed"})
         self.assertEqual(self._usage(), (0, 0))
+
+    def test_pdf_request_owner_is_accepted(self) -> None:
+        envelope = self._submit(5)
+        require_pdf_request_owner(None, envelope["request_id"])
+
+    def test_other_principal_cannot_access_pdf_request(self) -> None:
+        envelope = self._submit(5)
+        other = _principal()
+        with patch(
+            "app.pdf_quota.resolve_request_context",
+            return_value=(other, self.entitlements.resolve(other), None),
+        ):
+            with self.assertRaises(SaasError) as ctx:
+                require_pdf_request_owner(None, envelope["request_id"])
+        self.assertEqual(ctx.exception.code, RESOURCE_NOT_FOUND)
+        self.assertEqual(ctx.exception.status_code, 404)
 
 
 if __name__ == "__main__":

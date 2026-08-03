@@ -21,7 +21,30 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
-SCHEMA = """
+_USAGE_EVENTS_TABLE_SQL = """
+CREATE TABLE usage_events (
+    tenant TEXT NOT NULL,
+    id TEXT PRIMARY KEY,
+    idempotency_key TEXT NOT NULL,
+    owner_kind TEXT NOT NULL,
+    owner_id TEXT NOT NULL,
+    job_id TEXT,
+    metric TEXT NOT NULL,
+    quantity INTEGER NOT NULL CHECK (quantity >= 0),
+    state TEXT NOT NULL CHECK (state IN ('reserved', 'consumed', 'released', 'adjusted')),
+    billable INTEGER NOT NULL DEFAULT 1,
+    period_kind TEXT,
+    period_start TEXT,
+    period_end TEXT,
+    metadata TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE (tenant, owner_kind, owner_id, idempotency_key)
+);
+"""
+
+
+SCHEMA = f"""
 CREATE TABLE IF NOT EXISTS identities (
     tenant TEXT NOT NULL,
     id TEXT PRIMARY KEY,
@@ -36,24 +59,7 @@ CREATE TABLE IF NOT EXISTS identities (
 -- anonymous rows carry no subject and are exempt from the uniqueness rule.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_identities_external_subject
     ON identities (tenant, external_subject) WHERE external_subject IS NOT NULL;
-CREATE TABLE IF NOT EXISTS usage_events (
-    tenant TEXT NOT NULL,
-    id TEXT PRIMARY KEY,
-    idempotency_key TEXT NOT NULL UNIQUE,
-    owner_kind TEXT NOT NULL,
-    owner_id TEXT NOT NULL,
-    job_id TEXT,
-    metric TEXT NOT NULL,
-    quantity INTEGER NOT NULL CHECK (quantity >= 0),
-    state TEXT NOT NULL CHECK (state IN ('reserved', 'consumed', 'released', 'adjusted')),
-    billable INTEGER NOT NULL DEFAULT 1,
-    period_kind TEXT,
-    period_start TEXT,
-    period_end TEXT,
-    metadata TEXT,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-);
+{_USAGE_EVENTS_TABLE_SQL.replace("CREATE TABLE usage_events", "CREATE TABLE IF NOT EXISTS usage_events")}
 CREATE INDEX IF NOT EXISTS idx_usage_events_owner_metric_period
     ON usage_events (tenant, owner_kind, owner_id, metric, period_start, state);
 -- The guard row is the per-owner/metric/period serialization point for
@@ -91,6 +97,43 @@ def _migrate_identities(conn: sqlite3.Connection) -> None:
             conn.execute("ALTER TABLE identities ADD COLUMN external_subject TEXT")
 
 
+def _migrate_usage_event_idempotency(conn: sqlite3.Connection) -> None:
+    """Replace the original global idempotency-key constraint with an
+    owner-scoped one while preserving existing ledger rows."""
+    tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    if "usage_events" not in tables:
+        return
+    has_global_key_index = False
+    for index in conn.execute("PRAGMA index_list(usage_events)"):
+        if not int(index[2]):
+            continue
+        columns = [row[2] for row in conn.execute(f"PRAGMA index_info('{index[1]}')")]
+        if columns == ["idempotency_key"]:
+            has_global_key_index = True
+            break
+    if not has_global_key_index:
+        return
+
+    legacy_table = "usage_events_global_idempotency"
+    columns = (
+        "tenant, id, idempotency_key, owner_kind, owner_id, job_id, metric, quantity,"
+        " state, billable, period_kind, period_start, period_end, metadata, created_at, updated_at"
+    )
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.execute(f"ALTER TABLE usage_events RENAME TO {legacy_table}")
+        conn.execute(_USAGE_EVENTS_TABLE_SQL)
+        conn.execute(
+            f"INSERT INTO usage_events ({columns}) SELECT {columns} FROM {legacy_table}"
+        )
+        conn.execute(f"DROP TABLE {legacy_table}")
+    except Exception:
+        conn.rollback()
+        raise
+    else:
+        conn.commit()
+
+
 class SaasStore:
     def __init__(self, path: str | Path) -> None:
         self._path = str(path)
@@ -104,6 +147,7 @@ class SaasStore:
                 self._conn = sqlite3.connect(self._path, check_same_thread=False)
                 self._conn.row_factory = sqlite3.Row
                 _migrate_identities(self._conn)
+                _migrate_usage_event_idempotency(self._conn)
                 self._conn.executescript(SCHEMA)
             return self._conn
 
@@ -183,11 +227,18 @@ class SaasStore:
 
     # -- usage ledger -----------------------------------------------------------
 
-    def get_usage_event_by_key(self, idempotency_key: str) -> sqlite3.Row | None:
+    def get_usage_event_by_key(
+        self,
+        tenant: str,
+        owner_kind: str,
+        owner_id: uuid.UUID,
+        idempotency_key: str,
+    ) -> sqlite3.Row | None:
         with self.transaction() as conn:
             return conn.execute(
-                "SELECT * FROM usage_events WHERE idempotency_key = ?",
-                (str(idempotency_key),),
+                "SELECT * FROM usage_events WHERE tenant = ? AND owner_kind = ?"
+                " AND owner_id = ? AND idempotency_key = ?",
+                (tenant, owner_kind, str(owner_id), str(idempotency_key)),
             ).fetchone()
 
     def get_usage_event(self, event_id: uuid.UUID) -> sqlite3.Row | None:

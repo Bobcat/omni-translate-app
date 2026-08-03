@@ -11,13 +11,20 @@ the saas router uses, shared via one process-wide context.
 """
 from __future__ import annotations
 
+import os
+import uuid
 from dataclasses import dataclass
+from pathlib import Path
 
 from fastapi import APIRouter, Request
 
 from app.config import REPO_ROOT, get_setting, get_str, optional_str
 from saas.entitlements import EntitlementService, EntitlementSet
-from saas.fastapi_glue import create_saas_router, resolve_request_principal
+from saas.fastapi_glue import (
+    create_saas_router,
+    resolve_request_principal,
+    stage_identity_cookie,
+)
 from saas.principals import Principal, generate_secret
 from saas.storage import SaasStore
 from saas.tokens import ExternalTokenVerifier
@@ -56,10 +63,9 @@ def _build_context() -> SaasContext:
         str(code): EntitlementService.flatten(values)
         for code, values in dict(get_setting("saas.plans", {}) or {}).items()
     }
-    # Without a configured secret the tokens are per-process: fine for local
-    # dev (identities are throwaway), set saas.signing_secret in local.json
-    # for anything shared.
-    signing_secret = optional_str("saas.signing_secret") or generate_secret()
+    signing_secret = optional_str("saas.signing_secret") or _load_or_create_signing_secret(
+        REPO_ROOT / get_str("saas.signing_secret_path", "data/saas-signing.key")
+    )
     return SaasContext(
         store=store,
         entitlement_service=EntitlementService(plans),
@@ -69,6 +75,33 @@ def _build_context() -> SaasContext:
         token_verifier=_build_token_verifier(),
         user_plan=get_str("saas.auth.user_plan", "free"),
     )
+
+
+def _load_or_create_signing_secret(path: Path) -> str:
+    """Return one host-persistent secret, safe under concurrent first starts."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        secret = path.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        candidate = generate_secret()
+        temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                handle.write(candidate)
+                handle.flush()
+                os.fsync(handle.fileno())
+            try:
+                os.link(temporary, path)
+            except FileExistsError:
+                pass
+        finally:
+            temporary.unlink(missing_ok=True)
+        secret = path.read_text(encoding="utf-8").strip()
+    if not secret:
+        raise RuntimeError(f"empty SaaS signing secret: {path}")
+    path.chmod(0o600)
+    return secret
 
 
 def _build_token_verifier() -> ExternalTokenVerifier | None:
@@ -102,9 +135,8 @@ def build_saas_router() -> APIRouter:
 def resolve_request_context(request: Request) -> tuple[Principal, EntitlementSet, str | None]:
     """The caller's principal and resolved entitlements, plus the fresh identity
     token when an anonymous identity was just provisioned (None for bearer-auth
-    users and valid cookies). The route attaches the token to ITS response via
-    ``set_identity_cookie`` (a raw-``Response`` route has no injected response
-    param to set cookies on)."""
+    users and valid cookies). A fresh token is staged for the response middleware
+    so controlled errors receive the cookie too."""
     ctx = get_saas_context()
     principal, token = resolve_request_principal(
         request,
@@ -114,6 +146,8 @@ def resolve_request_context(request: Request) -> tuple[Principal, EntitlementSet
         user_plan=ctx.user_plan,
         token_verifier=ctx.token_verifier,
     )
+    if token is not None:
+        stage_identity_cookie(request, token)
     return principal, ctx.entitlement_service.resolve(principal), token
 
 

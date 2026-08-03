@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import unittest
 import uuid
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
+from app.saas_setup import _load_or_create_signing_secret
 from saas.principals import sign_identity, verify_identity_token
 
 SECRET = "test-secret"
@@ -33,6 +36,14 @@ class PrincipalTokenTests(unittest.TestCase):
     def test_garbage_rejected(self) -> None:
         for token in ("", "not-a-token", "abc.", ".def", str(uuid.uuid4())):
             self.assertIsNone(verify_identity_token(token, SECRET))
+
+    def test_generated_host_secret_survives_new_app_context(self) -> None:
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "saas-signing.key"
+            first = _load_or_create_signing_secret(path)
+            second = _load_or_create_signing_secret(path)
+        self.assertEqual(first, second)
+        self.assertGreaterEqual(len(first), 32)
 
 
 if __name__ == "__main__":

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 import unittest
 import uuid
 
+from app.config import SETTINGS_PATH
 from saas.entitlements import EntitlementService, EntitlementSet
 from saas.errors import ENTITLEMENT_DISABLED, ENTITLEMENT_UNKNOWN, SaasError
 from saas.principals import Principal
@@ -73,6 +75,10 @@ class EntitlementTests(unittest.TestCase):
     def test_flatten_produces_dotted_keys(self) -> None:
         flat = EntitlementService.flatten({"a": {"b": {"c": 1}, "d": "x"}, "e": True})
         self.assertEqual(flat, {"a.b.c": 1, "a.d": "x", "e": True})
+
+    def test_shipped_free_plan_does_not_promise_document_persistence(self) -> None:
+        settings = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
+        self.assertFalse(settings["saas"]["plans"]["free"]["document_persistence"]["enabled"])
 
 
 if __name__ == "__main__":

@@ -18,7 +18,7 @@ from fastapi.testclient import TestClient
 
 from saas.entitlements import EntitlementService
 from saas.errors import SaasError
-from saas.fastapi_glue import create_saas_router, saas_error_handler
+from saas.fastapi_glue import create_saas_router, identity_cookie_middleware, saas_error_handler
 from saas.storage import SaasStore
 from saas.tokens import ExternalTokenVerifier
 from saas.usage import QuotaService
@@ -71,6 +71,7 @@ def _make_app(db_path: Path, *, with_verifier: bool = True) -> FastAPI:
         )
     )
     app.add_exception_handler(SaasError, saas_error_handler)
+    app.middleware("http")(identity_cookie_middleware)
     return app
 
 

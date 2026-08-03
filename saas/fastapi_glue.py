@@ -4,9 +4,8 @@ Keeps the core framework-free so the package stays extractable. Sync ``def``
 routes on purpose (same threadpool pattern as the app's other routes): the
 store is sync sqlite.
 
-Resolution order (brief §7) is implemented for the anonymous branch only —
-the Supabase user branch slots in ahead of it in phase 5 without touching
-the routes.
+Resolution order (brief §7): a verified Supabase bearer resolves a user;
+otherwise the signed anonymous-cookie path applies.
 """
 from __future__ import annotations
 
@@ -32,6 +31,7 @@ def saas_error_handler(_request: Request, exc: SaasError) -> JSONResponse:
 
 DEFAULT_COOKIE_NAME = "ot_anon"
 DEFAULT_COOKIE_MAX_AGE_S = 180 * 24 * 3600
+_PENDING_IDENTITY_COOKIE = "saas_pending_identity_cookie"
 
 
 def _request_is_https(request: Request) -> bool:
@@ -51,9 +51,8 @@ def resolve_anonymous_identity(
     """Signed anonymous cookie → existing principal; otherwise create a fresh
     identity and return its token. The id never leaves the server unsigned.
 
-    The token is RETURNED, not set on a response: a route returning a raw
-    ``Response`` has no injected response param, so every caller attaches the
-    cookie to its own response via ``set_identity_cookie``."""
+    The token is returned so the host can stage it for response middleware;
+    this also puts the cookie on controlled error responses."""
     token = request.cookies.get(cookie_name, "")
     identity_id = verify_identity_token(token, signing_secret) if token else None
     if identity_id is not None:
@@ -128,6 +127,46 @@ def set_identity_cookie(
     )
 
 
+def stage_identity_cookie(
+    request: Request,
+    token: str,
+    *,
+    cookie_name: str = DEFAULT_COOKIE_NAME,
+    cookie_max_age_s: int = DEFAULT_COOKIE_MAX_AGE_S,
+) -> None:
+    """Remember a newly issued identity token until the final response exists.
+
+    Routes may fail after principal resolution. Staging the cookie on the
+    request lets the host middleware attach it to successful and controlled
+    error responses alike, so rejected first requests reuse one identity.
+    """
+    setattr(
+        request.state,
+        _PENDING_IDENTITY_COOKIE,
+        (str(token), str(cookie_name), int(cookie_max_age_s)),
+    )
+
+
+def apply_staged_identity_cookie(request: Request, response: Response) -> None:
+    pending = getattr(request.state, _PENDING_IDENTITY_COOKIE, None)
+    if pending is None:
+        return
+    token, cookie_name, cookie_max_age_s = pending
+    set_identity_cookie(
+        request,
+        response,
+        token,
+        cookie_name=cookie_name,
+        cookie_max_age_s=cookie_max_age_s,
+    )
+
+
+async def identity_cookie_middleware(request: Request, call_next) -> Response:
+    response = await call_next(request)
+    apply_staged_identity_cookie(request, response)
+    return response
+
+
 def create_saas_router(
     *,
     store: SaasStore,
@@ -144,7 +183,7 @@ def create_saas_router(
 ) -> APIRouter:
     router = APIRouter(prefix="/api")
 
-    def resolve_principal(request: Request, response: Response) -> Principal:
+    def resolve_principal(request: Request) -> Principal:
         principal, token = resolve_request_principal(
             request,
             store=store,
@@ -156,26 +195,29 @@ def create_saas_router(
             cookie_name=cookie_name,
         )
         if token is not None:
-            set_identity_cookie(
-                request, response, token, cookie_name=cookie_name, cookie_max_age_s=cookie_max_age_s
+            stage_identity_cookie(
+                request,
+                token,
+                cookie_name=cookie_name,
+                cookie_max_age_s=cookie_max_age_s,
             )
         return principal
 
     # Sync def: store is sync sqlite — let FastAPI use the threadpool.
     @router.get("/me")
-    def get_me(request: Request, response: Response) -> dict[str, Any]:
-        principal = resolve_principal(request, response)
+    def get_me(request: Request) -> dict[str, Any]:
+        principal = resolve_principal(request)
         return {"principal": {"kind": principal.kind, "plan": principal.plan_code}}
 
     @router.get("/entitlements")
-    def get_entitlements(request: Request, response: Response) -> dict[str, Any]:
-        principal = resolve_principal(request, response)
+    def get_entitlements(request: Request) -> dict[str, Any]:
+        principal = resolve_principal(request)
         entitlements = entitlement_service.resolve(principal)
         return {"plan": entitlements.plan_code, "entitlements": entitlements.snapshot()}
 
     @router.get("/usage")
-    def get_usage_endpoint(request: Request, response: Response) -> dict[str, Any]:
-        principal = resolve_principal(request, response)
+    def get_usage_endpoint(request: Request) -> dict[str, Any]:
+        principal = resolve_principal(request)
         entitlements = entitlement_service.resolve(principal)
         usage = []
         for spec in usage_metrics or []:

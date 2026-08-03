@@ -132,8 +132,12 @@ export async function cancelPdf(requestId) {
   return response.json();
 }
 
-export function pdfArtifactUrl(requestId, artifactName) {
+export async function getPdfArtifact(requestId, artifactName) {
   const safeId = encodeURIComponent(String(requestId || ''));
   const safeName = encodeURIComponent(String(artifactName || ''));
-  return `/api/pdf-translation/requests/${safeId}/artifacts/${safeName}`;
+  const response = await fetch(`/api/pdf-translation/requests/${safeId}/artifacts/${safeName}`, {
+    headers: authHeaders(),
+  });
+  await ensureOk(response);
+  return response.blob();
 }

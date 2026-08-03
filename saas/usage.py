@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
 
-from saas.errors import PERIOD_QUOTA_EXCEEDED, SaasError
+from saas.errors import PERIOD_QUOTA_EXCEEDED, USAGE_IDEMPOTENCY_CONFLICT, SaasError
 from saas.periods import UsagePeriodKind, period_bounds
 from saas.principals import Principal
 from saas.storage import SaasStore
@@ -51,6 +51,37 @@ def _reservation_from_row(row: sqlite3.Row) -> UsageReservation:
         state=row["state"],
         period_start=row["period_start"] or "",
         period_end=row["period_end"] or "",
+    )
+
+
+def _validate_idempotent_replay(
+    row: sqlite3.Row,
+    *,
+    idempotency_key: str,
+    metric: str,
+    quantity: int,
+    period_kind: str,
+    period_start: str,
+    period_end: str,
+    job_id: str | None,
+) -> None:
+    existing_job_id = str(row["job_id"] or "")
+    requested_job_id = str(job_id or "")
+    matches = (
+        row["metric"] == metric
+        and int(row["quantity"]) == quantity
+        and row["period_kind"] == period_kind
+        and row["period_start"] == period_start
+        and row["period_end"] == period_end
+        and (not existing_job_id or not requested_job_id or existing_job_id == requested_job_id)
+    )
+    if matches:
+        return
+    raise SaasError(
+        USAGE_IDEMPOTENCY_CONFLICT,
+        "idempotency key was already used for a different usage reservation",
+        status_code=409,
+        details={"idempotency_key": str(idempotency_key)},
     )
 
 
@@ -103,11 +134,23 @@ class QuotaService:
         quantity = int(quantity)
         if quantity < 0:
             raise ValueError("quantity must be >= 0")
-        existing = self._store.get_usage_event_by_key(idempotency_key)
-        if existing is not None:
-            return _reservation_from_row(existing)
         kind = UsagePeriodKind(period_kind)
         start, end = period_bounds(kind, now=now)
+        existing = self._store.get_usage_event_by_key(
+            principal.tenant, principal.kind, principal.id, idempotency_key
+        )
+        if existing is not None:
+            _validate_idempotent_replay(
+                existing,
+                idempotency_key=idempotency_key,
+                metric=metric,
+                quantity=quantity,
+                period_kind=kind.value,
+                period_start=start.isoformat(),
+                period_end=end.isoformat(),
+                job_id=job_id,
+            )
+            return _reservation_from_row(existing)
         event_id = uuid.uuid4()
         try:
             with self._store.transaction():
@@ -152,8 +195,20 @@ class QuotaService:
         except sqlite3.IntegrityError:
             # Lost the race on the same idempotency key: the other writer's
             # reservation is the answer.
-            existing = self._store.get_usage_event_by_key(idempotency_key)
+            existing = self._store.get_usage_event_by_key(
+                principal.tenant, principal.kind, principal.id, idempotency_key
+            )
             if existing is not None:
+                _validate_idempotent_replay(
+                    existing,
+                    idempotency_key=idempotency_key,
+                    metric=metric,
+                    quantity=quantity,
+                    period_kind=kind.value,
+                    period_start=start.isoformat(),
+                    period_end=end.isoformat(),
+                    job_id=job_id,
+                )
                 return _reservation_from_row(existing)
             raise
         return UsageReservation(

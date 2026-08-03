@@ -15,6 +15,7 @@ from app.image_translation_bridge import _terminal_error
 from app.image_translation_bridge import translate_image
 from app.main import app
 from saas.entitlements import EntitlementSet
+from saas.fastapi_glue import stage_identity_cookie
 
 
 def _png_bytes() -> bytes:
@@ -52,8 +53,12 @@ class ImageTranslationRouteTests(unittest.TestCase):
             captured.update(kwargs)
             return PNG_BYTES, "image/png", "req_1"
 
+        def resolve_with_new_identity(request):
+            stage_identity_cookie(request, "tok123")
+            return ENABLED, "tok123"
+
         with (
-            patch("app.router.resolve_request_entitlements", return_value=(ENABLED, "tok123")),
+            patch("app.router.resolve_request_entitlements", side_effect=resolve_with_new_identity),
             patch("app.router.translate_image", fake_translate_image),
         ):
             response = _post_image(self.client)

@@ -5,12 +5,18 @@ import uuid
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.testclient import TestClient
 
 from saas.entitlements import EntitlementService
 from saas.errors import SaasError
-from saas.fastapi_glue import create_saas_router, saas_error_handler
+from saas.fastapi_glue import (
+    create_saas_router,
+    identity_cookie_middleware,
+    resolve_anonymous_identity,
+    saas_error_handler,
+    stage_identity_cookie,
+)
 from saas.storage import SaasStore
 from saas.usage import QuotaService
 
@@ -41,6 +47,7 @@ def _make_app(db_path: Path) -> FastAPI:
         )
     )
     app.add_exception_handler(SaasError, saas_error_handler)
+    app.middleware("http")(identity_cookie_middleware)
     return app
 
 
@@ -92,6 +99,36 @@ class SaasRouteTests(unittest.TestCase):
         self.assertEqual(entry["period"], "month")
         self.assertEqual((entry["reserved"], entry["consumed"]), (0, 0))
         self.assertEqual((entry["limit"], entry["remaining"]), (12, 12))
+
+    def test_rejected_first_requests_reuse_one_anonymous_identity(self) -> None:
+        with TemporaryDirectory() as tmp:
+            store = SaasStore(Path(tmp) / "saas.db")
+            app = FastAPI()
+
+            @app.get("/denied")
+            def denied(request: Request) -> None:
+                _, token = resolve_anonymous_identity(
+                    request,
+                    store=store,
+                    signing_secret=SECRET,
+                    tenant="test",
+                )
+                if token is not None:
+                    stage_identity_cookie(request, token)
+                raise HTTPException(status_code=403, detail="denied")
+
+            app.middleware("http")(identity_cookie_middleware)
+            with TestClient(app) as client:
+                first = client.get("/denied")
+                second = client.get("/denied")
+            with store.transaction() as conn:
+                identity_count = conn.execute("SELECT COUNT(*) FROM identities").fetchone()[0]
+            store.close()
+
+        self.assertEqual((first.status_code, second.status_code), (403, 403))
+        self.assertIn("set-cookie", first.headers)
+        self.assertNotIn("set-cookie", second.headers)
+        self.assertEqual(identity_count, 1)
 
 
 if __name__ == "__main__":

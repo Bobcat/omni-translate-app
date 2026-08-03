@@ -19,6 +19,7 @@ from app.live_settings import default_live_settings
 from app.live_settings import merge_live_settings
 from app.live_settings import normalize_live_settings_delta
 from app.pdf_quota import finalize_pdf_reservation
+from app.pdf_quota import require_pdf_request_owner
 from app.pdf_quota import submit_pdf_with_quota
 from app.pdf_translation_bridge import PdfTranslationError
 from app.pdf_translation_bridge import cancel_pdf_request
@@ -39,9 +40,6 @@ from app.voice_library import stable_voice_library_status
 
 from realtime_translation_engine.types import LiveDispatchRequest
 from realtime_translation_engine.types import TranslationOpportunity
-
-from saas.fastapi_glue import set_identity_cookie
-
 
 api_router = APIRouter(prefix="/api")
 
@@ -131,7 +129,7 @@ def post_image_translation(
     # The caller's plan gates the feature and sets the source-text ceiling the
     # service enforces after OCR (before any translation call). A just-created
     # anonymous identity rides back as a cookie on the image response.
-    entitlements, identity_token = resolve_request_entitlements(request)
+    entitlements, _ = resolve_request_entitlements(request)
     entitlements.require_enabled("image_translation.enabled")
     max_characters = entitlements.get_int("image_translation.max_characters_per_job")
     try:
@@ -152,10 +150,7 @@ def post_image_translation(
         )
     except ImageTranslationError as exc:
         raise HTTPException(status_code=exc.status_code, detail=_image_error_detail(exc))
-    response = Response(content=data, media_type=media_type, headers={REQUEST_ID_HEADER: request_id})
-    if identity_token is not None:
-        set_identity_cookie(request, response, identity_token)
-    return response
+    return Response(content=data, media_type=media_type, headers={REQUEST_ID_HEADER: request_id})
 
 
 def _image_error_detail(exc: ImageTranslationError) -> Any:
@@ -218,7 +213,6 @@ def post_image_rerender(
 @api_router.post("/pdf-translation/requests")
 def post_pdf_translation_request(
     request: Request,
-    response: Response,
     document_file: UploadFile = File(...),
     target_language: str = Form(...),
 ) -> dict[str, Any]:
@@ -235,7 +229,7 @@ def post_pdf_translation_request(
     if not content:
         raise HTTPException(status_code=400, detail="empty document upload")
     try:
-        envelope, identity_token = submit_pdf_with_quota(
+        envelope, _ = submit_pdf_with_quota(
             request,
             document_bytes=content,
             filename=document_file.filename or "document.pdf",
@@ -244,13 +238,12 @@ def post_pdf_translation_request(
         )
     except PdfTranslationError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc))
-    if identity_token is not None:
-        set_identity_cookie(request, response, identity_token)
     return envelope
 
 
 @api_router.get("/pdf-translation/requests/{request_id}")
-def get_pdf_translation_request(request_id: str) -> dict[str, Any]:
+def get_pdf_translation_request(request: Request, request_id: str) -> dict[str, Any]:
+    require_pdf_request_owner(request, request_id)
     try:
         envelope = get_pdf_request(request_id)
     except PdfTranslationError as exc:
@@ -260,7 +253,8 @@ def get_pdf_translation_request(request_id: str) -> dict[str, Any]:
 
 
 @api_router.get("/pdf-translation/requests/{request_id}/artifacts/{artifact_name}")
-def get_pdf_translation_artifact(request_id: str, artifact_name: str) -> Response:
+def get_pdf_translation_artifact(request: Request, request_id: str, artifact_name: str) -> Response:
+    require_pdf_request_owner(request, request_id)
     try:
         data, media_type = get_pdf_artifact(request_id, artifact_name)
     except PdfTranslationError as exc:
@@ -268,15 +262,15 @@ def get_pdf_translation_artifact(request_id: str, artifact_name: str) -> Respons
     return Response(
         content=data,
         media_type=media_type,
-        # A completed run's artifact is immutable per (request_id, name), so
-        # let the browser cache it: iframe reloads (view re-attach, reopen)
-        # then skip the upstream re-download.
-        headers={"Cache-Control": "private, max-age=86400, immutable"},
+        # Do not let one browser account reuse another account's authenticated
+        # artifact response from its private HTTP cache after an account switch.
+        headers={"Cache-Control": "private, no-store"},
     )
 
 
 @api_router.post("/pdf-translation/requests/{request_id}/cancel")
-def post_pdf_translation_cancel(request_id: str) -> dict[str, Any]:
+def post_pdf_translation_cancel(request: Request, request_id: str) -> dict[str, Any]:
+    require_pdf_request_owner(request, request_id)
     try:
         envelope = cancel_pdf_request(request_id)
     except PdfTranslationError as exc:

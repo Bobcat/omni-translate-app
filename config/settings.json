@@ -5,6 +5,7 @@
   "saas": {
     "tenant": "omni-translate",
     "database_path": "data/saas.db",
+    "signing_secret_path": "data/saas-signing.key",
     "auth": {
       "issuer": "",
       "audience": "authenticated",
@@ -23,7 +24,7 @@
       "free": {
         "image_translation": { "enabled": true, "max_characters_per_job": 1500 },
         "pdf_translation": { "enabled": true, "pages_per_period": 50, "period": "month", "max_pages_per_job": 25 },
-        "document_persistence": { "enabled": true },
+        "document_persistence": { "enabled": false },
         "translation_editing": { "enabled": true },
         "rerender": { "enabled": true, "consumes_translation_quota": false },
         "download": { "enabled": true }
