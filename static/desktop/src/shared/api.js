@@ -10,7 +10,9 @@ const MAX_ERROR_DETAIL_LENGTH = 240;
 async function ensureOk(response) {
   if (response.ok) return;
   const detail = await errorDetail(response);
-  throw new Error(detail || `HTTP ${response.status}`);
+  const error = new Error(detail || `HTTP ${response.status}`);
+  error.status = response.status;
+  throw error;
 }
 
 async function errorDetail(response) {
