@@ -6,6 +6,7 @@ import { isEnabled as isAuthEnabled, onAuthChange, whenAuthReady } from '../../a
 import { createSignInCard } from '../../shared/signin-card.js';
 import { createAccountChangeGuard } from './account-state.js';
 import { waitForCancellationSettlement } from './cancellation.js';
+import { createPdfOperationRecovery } from './operation-recovery.js';
 
 // PDF translation view, same stage model as the LLM Workbench: an empty state
 // (dropzone) swaps for a loaded state (original frame + translated frame) once
@@ -20,7 +21,9 @@ import { waitForCancellationSettlement } from './cancellation.js';
 // The shell keeps views alive across navigation, so the poll keeps running
 // while the view is detached — both the sidebar busy indicator and the stage
 // have to be right while you are elsewhere, and one small GET per interval
-// beats being wrong. Work in flight marks the sidebar entry via view-busy.
+// beats being wrong. A pending operation is also stored by account, so a full
+// reload resumes status polling without retaining or re-uploading the PDF.
+// Work in flight marks the sidebar entry via view-busy.
 
 const POLL_INTERVAL_MS = 1000;
 const TERMINAL_STATES = new Set(['completed', 'failed', 'cancelled']);
@@ -80,6 +83,7 @@ export function createPdfView() {
 
   const targetSelect = container.querySelector('#pdfTarget');
   const showOriginalToggle = container.querySelector('#pdfShowOriginal');
+  const showOriginalField = showOriginalToggle.closest('.switch-field');
   const downloadLink = container.querySelector('#pdfDownload');
   const resetBtn = container.querySelector('#pdfReset');
   const dropzone = container.querySelector('#pdfDropzone');
@@ -94,13 +98,23 @@ export function createPdfView() {
   const statusEl = container.querySelector('#pdfStatus');
 
   let currentFile = null;
+  let sourceFileName = '';
+  let pendingOperationId = '';
   let requestId = '';
   let requestState = '';
   let originalUrl = '';
   let translatedUrl = '';
   let runToken = 0;
   let pollTimer = 0;
+  let activeUserId = '';
+  let showOriginalPreference = showOriginalToggle.checked;
   const cancellationSettlements = new Map();
+  let operationStorage = null;
+  try { operationStorage = window.localStorage; } catch {}
+  const operationRecovery = createPdfOperationRecovery({
+    storage: operationStorage,
+    getRequest: getPdfRequest,
+  });
 
   // Anonymous gate: when the deployment has auth configured and the caller is
   // not signed in, the sign-in card replaces the upload UI (the anonymous plan
@@ -163,15 +177,19 @@ export function createPdfView() {
     }
   }
 
+  populateLanguageSelect(targetSelect, 'English');
+  applyViewMode();
+
   const applyAccountChange = createAccountChangeGuard(discardAccountState);
   applyAuthGate();
   onAuthChange((authState) => {
+    const nextUserId = authState?.signedIn ? String(authState.userId || '') : '';
+    const accountChanged = nextUserId !== activeUserId;
     applyAccountChange(authState);
+    activeUserId = nextUserId;
     applyAuthGate();
+    if (accountChanged && activeUserId) recoverPendingOperation(activeUserId);
   });
-
-  populateLanguageSelect(targetSelect, 'English');
-  applyViewMode();
 
   function setBusy(busy) {
     publishViewBusy('pdf', busy);
@@ -201,6 +219,13 @@ export function createPdfView() {
 
   function applyViewMode() {
     stage.classList.toggle('is-single', !showOriginalToggle.checked);
+  }
+
+  function setOriginalAvailable(available) {
+    showOriginalField.hidden = !available;
+    if (!available) showOriginalToggle.checked = false;
+    else showOriginalToggle.checked = showOriginalPreference;
+    applyViewMode();
   }
 
   function setStageLoaded(loaded) {
@@ -257,11 +282,47 @@ export function createPdfView() {
     clearPending();
     translatedFrame.src = translatedUrl;
     translatedFrame.hidden = false;
-    const stem = (currentFile?.name || 'document').replace(/\.[^.]+$/, '');
+    const stem = (sourceFileName || 'document').replace(/\.[^.]+$/, '');
     downloadLink.href = translatedUrl;
     downloadLink.download = `${stem}_${targetSelect.value.toLowerCase()}.pdf`;
     downloadLink.hidden = false;
     setStatus('');
+  }
+
+  function forgetPendingOperation(operationId = pendingOperationId || requestId) {
+    operationRecovery.forget(activeUserId, operationId);
+    if (!operationId || pendingOperationId === operationId) pendingOperationId = '';
+  }
+
+  async function applyEnvelope(token, envelope) {
+    if (String(envelope?.request_id || '') !== requestId) {
+      throw new Error('The service returned a different PDF operation.');
+    }
+    const state = String(envelope?.state || '').toLowerCase();
+    requestState = state;
+    if (state === 'completed') {
+      refreshUsage();
+      try {
+        await showTranslated(envelope);
+      } catch (err) {
+        if (err?.status === 404 || err?.status === 410) forgetPendingOperation(requestId);
+        throw err;
+      }
+      if (token !== runToken) return true;
+      forgetPendingOperation(requestId);
+      setBusy(false);
+      return true;
+    }
+    if (TERMINAL_STATES.has(state)) {
+      forgetPendingOperation(requestId);
+      clearPending();
+      setStatus(envelope?.error?.message || `Translation ${state}.`, true);
+      setBusy(false);
+      refreshUsage();
+      return true;
+    }
+    setPending(pendingTextFor(envelope));
+    return false;
   }
 
   async function poll(token) {
@@ -270,27 +331,56 @@ export function createPdfView() {
     try {
       const envelope = await getPdfRequest(requestId);
       if (token !== runToken) return;
-      const state = String(envelope?.state || '').toLowerCase();
-      requestState = state;
-      if (state === 'completed') {
-        refreshUsage();
-        await showTranslated(envelope);
-        if (token !== runToken) return;
-        setBusy(false);
-        return;
-      }
-      if (TERMINAL_STATES.has(state)) {
-        clearPending();
-        setStatus(envelope?.error?.message || `Translation ${state}.`, true);
-        setBusy(false);
-        refreshUsage();
-        return;
-      }
-      setPending(pendingTextFor(envelope));
+      if (await applyEnvelope(token, envelope)) return;
     } catch (err) {
       if (token !== runToken) return;
       clearPending();
       setStatus(err.message || 'Could not fetch the translation status.', true);
+      setBusy(false);
+      return;
+    }
+    pollTimer = window.setTimeout(() => poll(token), POLL_INTERVAL_MS);
+  }
+
+  async function recoverPendingOperation(userId) {
+    const saved = operationRecovery.load(userId);
+    if (!saved) return;
+    const token = ++runToken;
+    stopPolling();
+    currentFile = null;
+    sourceFileName = saved.fileName;
+    pendingOperationId = saved.operationId;
+    requestId = saved.operationId;
+    requestState = '';
+    populateLanguageSelect(targetSelect, saved.targetLanguage);
+    setOriginalAvailable(false);
+    setStageLoaded(true);
+    setPending('Restoring translation…');
+    setStatus('');
+    setBusy(true);
+
+    const result = await operationRecovery.recover(userId);
+    if (token !== runToken || userId !== activeUserId) return;
+    if (result.error) {
+      clearPending();
+      setBusy(false);
+      if (result.unavailable) {
+        clearLocalPdfState();
+        setStatus(
+          'The previous translation is no longer available. Any open quota reservation will be reconciled by the server.',
+          true,
+        );
+      } else {
+        setStatus('Could not restore the previous translation. Reload to try again, or remove it with ×.', true);
+      }
+      return;
+    }
+    try {
+      if (await applyEnvelope(token, result.envelope)) return;
+    } catch (err) {
+      if (token !== runToken) return;
+      clearPending();
+      setStatus(err.message || 'Could not restore the previous translation.', true);
       setBusy(false);
       return;
     }
@@ -318,6 +408,8 @@ export function createPdfView() {
       if (token !== runToken) return;
     }
     currentFile = file;
+    sourceFileName = file.name || 'document.pdf';
+    pendingOperationId = '';
     requestId = '';
     requestState = '';
     downloadLink.hidden = true;
@@ -330,12 +422,20 @@ export function createPdfView() {
     originalUrl = URL.createObjectURL(file);
     originalFrame.src = originalUrl;
     translatedFrame.removeAttribute('src');
+    setOriginalAvailable(true);
     setStageLoaded(true);
     setPending('Uploading…');
     setStatus('');
     setBusy(true);
+    const operationId = globalThis.crypto.randomUUID();
+    pendingOperationId = operationId;
+    operationRecovery.remember(activeUserId, {
+      operationId,
+      fileName: sourceFileName,
+      targetLanguage: targetSelect.value,
+      startedAt: new Date().toISOString(),
+    });
     try {
-      const operationId = globalThis.crypto.randomUUID();
       const envelope = await submitPdf(file, {
         target: targetSelect.value,
         operationId,
@@ -357,6 +457,9 @@ export function createPdfView() {
       poll(token);
     } catch (err) {
       if (token !== runToken) return;
+      if (err?.status && err.status !== 408 && err.status < 500) {
+        forgetPendingOperation(operationId);
+      }
       clearPending();
       setStatus(err.message || 'Could not submit the PDF.', true);
       setBusy(false);
@@ -370,12 +473,14 @@ export function createPdfView() {
 
   function cancelAndSettle(id) {
     if (cancellationSettlements.has(id)) return cancellationSettlements.get(id);
+    const ownerId = activeUserId;
     const settlement = cancelPdf(id)
       .then((envelope) => waitForCancellationSettlement(envelope, {
         getRequest: getPdfRequest,
         wait: waitForNextPoll,
       }))
       .then((envelope) => {
+        operationRecovery.forget(ownerId, id);
         refreshUsage();
         return envelope;
       })
@@ -403,6 +508,8 @@ export function createPdfView() {
   function clearLocalPdfState() {
     setBusy(false);
     currentFile = null;
+    sourceFileName = '';
+    pendingOperationId = '';
     requestId = '';
     requestState = '';
     downloadLink.hidden = true;
@@ -414,6 +521,7 @@ export function createPdfView() {
     if (translatedUrl) URL.revokeObjectURL(translatedUrl);
     originalUrl = '';
     translatedUrl = '';
+    setOriginalAvailable(true);
     clearPending();
     setStatus('');
     setStageLoaded(false);
@@ -422,7 +530,9 @@ export function createPdfView() {
   function resetView() {
     ++runToken;
     stopPolling();
+    const operationId = pendingOperationId || requestId;
     const settlement = cancelRequest();
+    operationRecovery.forget(activeUserId, operationId);
     clearLocalPdfState();
     settlement?.catch(() => {});
   }
@@ -430,6 +540,7 @@ export function createPdfView() {
   function discardAccountState() {
     ++runToken;
     stopPolling();
+    operationRecovery.forget(activeUserId);
     clearLocalPdfState();
   }
 
@@ -439,7 +550,10 @@ export function createPdfView() {
     if (currentFile) translate(currentFile);
   });
 
-  showOriginalToggle.addEventListener('change', applyViewMode);
+  showOriginalToggle.addEventListener('change', () => {
+    showOriginalPreference = showOriginalToggle.checked;
+    applyViewMode();
+  });
   cancelBtn.addEventListener('click', () => { resetView(); });
   resetBtn.addEventListener('click', () => { resetView(); });
 

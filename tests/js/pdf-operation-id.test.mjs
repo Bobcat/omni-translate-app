@@ -58,7 +58,7 @@ test('a certain PDF submit rejection is not retried', async () => {
         target: 'English',
         operationId: '123e4567-e89b-42d3-a456-426614174000',
       }),
-      /conflict/,
+      (error) => error.status === 409 && /conflict/.test(error.message),
     );
     assert.equal(calls, 1);
   } finally {
