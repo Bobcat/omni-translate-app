@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
@@ -19,6 +19,7 @@ from app.live_settings import default_live_settings
 from app.live_settings import merge_live_settings
 from app.live_settings import normalize_live_settings_delta
 from app.pdf_quota import finalize_pdf_reservation
+from app.pdf_quota import normalize_operation_id
 from app.pdf_quota import require_pdf_request_owner
 from app.pdf_quota import submit_pdf_with_quota
 from app.pdf_translation_bridge import PdfTranslationError
@@ -215,7 +216,9 @@ def post_pdf_translation_request(
     request: Request,
     document_file: UploadFile = File(...),
     target_language: str = Form(...),
+    operation_id: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> dict[str, Any]:
+    operation_id = normalize_operation_id(operation_id)
     # Bounded read: never hold more than the limit in memory, and reject
     # oversized uploads without relying on a reverse-proxy limit. Same
     # config pattern as text_translation.max_chars.
@@ -235,6 +238,7 @@ def post_pdf_translation_request(
             filename=document_file.filename or "document.pdf",
             content_type=document_file.content_type or "application/pdf",
             target_language=target_language,
+            operation_id=operation_id,
         )
     except PdfTranslationError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc))

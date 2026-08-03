@@ -26,10 +26,12 @@ from app.saas_setup import SaasContext
 from saas.entitlements import EntitlementService
 from saas.errors import (
     ENTITLEMENT_DISABLED,
+    INVALID_OPERATION_ID,
     INVALID_UPLOAD,
     PAGE_LIMIT_PER_JOB_EXCEEDED,
     PERIOD_QUOTA_EXCEEDED,
     RESOURCE_NOT_FOUND,
+    USAGE_IDEMPOTENCY_CONFLICT,
     SaasError,
 )
 from saas.principals import Principal
@@ -110,17 +112,20 @@ class PdfQuotaFlowTests(unittest.TestCase):
         summary = self.ctx.quota_service.get_usage(self.principal, PAGES_METRIC, "month")
         return summary.reserved, summary.consumed
 
-    def _submit(self, pages: int = 5) -> dict:
-        envelope = {"request_id": f"req-{uuid.uuid4().hex[:8]}", "state": "queued"}
-        with patch("app.pdf_quota.submit_pdf", return_value=envelope):
+    def _submit(self, pages: int = 5, *, operation_id: str | None = None) -> dict:
+        operation_id = operation_id or str(uuid.uuid4())
+        envelope = {"request_id": operation_id, "state": "queued"}
+        with patch("app.pdf_quota.submit_pdf", return_value=envelope) as mock_submit:
             result, token = submit_pdf_with_quota(
                 None,
                 document_bytes=make_pdf(pages),
                 filename="doc.pdf",
                 content_type="application/pdf",
                 target_language="English",
+                operation_id=operation_id,
             )
         self.assertIsNone(token)
+        self.assertEqual(mock_submit.call_args.kwargs["operation_id"], operation_id)
         return result
 
     def test_submit_reserves_pages_and_links_the_job(self) -> None:
@@ -129,6 +134,35 @@ class PdfQuotaFlowTests(unittest.TestCase):
         event = self.store.get_usage_event_by_job_id(TENANT, envelope["request_id"])
         self.assertIsNotNone(event)
         self.assertEqual(event["state"], "reserved")
+        self.assertEqual(event["idempotency_key"], f"pdf-submit:{envelope['request_id']}")
+
+    def test_same_operation_does_not_reserve_or_submit_under_a_second_id(self) -> None:
+        operation_id = str(uuid.uuid4())
+        first = self._submit(5, operation_id=operation_id)
+        second = self._submit(5, operation_id=operation_id)
+        self.assertEqual(first["request_id"], second["request_id"])
+        self.assertEqual(self._usage(), (5, 0))
+
+    def test_same_operation_with_different_page_count_conflicts(self) -> None:
+        operation_id = str(uuid.uuid4())
+        self._submit(5, operation_id=operation_id)
+        with self.assertRaises(SaasError) as ctx:
+            self._submit(6, operation_id=operation_id)
+        self.assertEqual(ctx.exception.code, USAGE_IDEMPOTENCY_CONFLICT)
+        self.assertEqual(ctx.exception.status_code, 409)
+
+    def test_invalid_operation_id_is_rejected_before_reserving(self) -> None:
+        with self.assertRaises(SaasError) as ctx:
+            submit_pdf_with_quota(
+                None,
+                document_bytes=make_pdf(1),
+                filename="doc.pdf",
+                content_type="application/pdf",
+                target_language="English",
+                operation_id="not-a-uuid",
+            )
+        self.assertEqual(ctx.exception.code, INVALID_OPERATION_ID)
+        self.assertEqual(self._usage(), (0, 0))
 
     def test_per_job_page_cap_rejects_before_reserving(self) -> None:
         with self.assertRaises(SaasError) as ctx:
@@ -152,7 +186,8 @@ class PdfQuotaFlowTests(unittest.TestCase):
         self.assertEqual(ctx.exception.code, PERIOD_QUOTA_EXCEEDED)
         self.assertEqual(ctx.exception.status_code, 429)
 
-    def test_upstream_failure_releases_the_reservation(self) -> None:
+    def test_uncertain_upstream_failure_keeps_the_reservation(self) -> None:
+        operation_id = str(uuid.uuid4())
         with patch("app.pdf_quota.submit_pdf", side_effect=PdfTranslationError("boom")):
             with self.assertRaises(PdfTranslationError):
                 submit_pdf_with_quota(
@@ -161,8 +196,30 @@ class PdfQuotaFlowTests(unittest.TestCase):
                     filename="doc.pdf",
                     content_type="application/pdf",
                     target_language="English",
+                    operation_id=operation_id,
                 )
-        self.assertEqual(self._usage(), (0, 0))
+        self.assertEqual(self._usage(), (5, 0))
+        event = self.store.get_usage_event_by_job_id(TENANT, operation_id)
+        self.assertIsNotNone(event)
+        self.assertEqual(event["state"], "reserved")
+
+    def test_unexpected_upstream_request_id_keeps_the_reservation(self) -> None:
+        operation_id = str(uuid.uuid4())
+        with patch(
+            "app.pdf_quota.submit_pdf",
+            return_value={"request_id": str(uuid.uuid4()), "state": "queued"},
+        ):
+            with self.assertRaises(PdfTranslationError):
+                submit_pdf_with_quota(
+                    None,
+                    document_bytes=make_pdf(5),
+                    filename="doc.pdf",
+                    content_type="application/pdf",
+                    target_language="English",
+                    operation_id=operation_id,
+                )
+        self.assertEqual(self._usage(), (5, 0))
+        self.assertIsNotNone(self.store.get_usage_event_by_job_id(TENANT, operation_id))
 
     def test_disabled_entitlement_rejects(self) -> None:
         anonymous = _principal("anonymous")

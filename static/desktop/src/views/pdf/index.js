@@ -335,7 +335,11 @@ export function createPdfView() {
     setStatus('');
     setBusy(true);
     try {
-      const envelope = await submitPdf(file, { target: targetSelect.value });
+      const operationId = globalThis.crypto.randomUUID();
+      const envelope = await submitPdf(file, {
+        target: targetSelect.value,
+        operationId,
+      });
       if (token !== runToken) {
         cancelStaleSubmit(envelope);
         return;

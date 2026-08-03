@@ -104,22 +104,53 @@ async function imagePayload(response) {
   return { blob: await response.blob(), requestId };
 }
 
-export async function submitPdf(file, { target }) {
+async function submitPdfOnce(file, { target, headers }) {
   const form = new FormData();
   form.append('document_file', file);
   form.append('target_language', String(target || ''));
-  const response = await fetch('/api/pdf-translation/requests', { method: 'POST', body: form, headers: authHeaders() });
+  return fetch('/api/pdf-translation/requests', {
+    method: 'POST',
+    body: form,
+    headers,
+  });
+}
+
+export async function submitPdf(file, { target, operationId }) {
+  if (!operationId) throw new Error('PDF operation id missing');
+  // One operation belongs to the account that started it. Pin its bearer
+  // header so an account switch cannot move a retry or status lookup.
+  const headers = authHeaders({ 'Idempotency-Key': String(operationId) });
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    let response;
+    try {
+      response = await submitPdfOnce(file, { target, headers });
+    } catch (err) {
+      // The request may have reached the app before the connection failed. One
+      // replay with the same operation id is safe across quota and GPU work.
+      if (attempt === 0) continue;
+      return getPdfRequestWithHeaders(operationId, headers);
+    }
+    if (response.status === 408 || response.status >= 500) {
+      if (attempt === 0) continue;
+      return getPdfRequestWithHeaders(operationId, headers);
+    }
+    await ensureOk(response);
+    return response.json();
+  }
+  throw new Error('PDF submit retry failed');
+}
+
+async function getPdfRequestWithHeaders(requestId, headers) {
+  const safeId = encodeURIComponent(String(requestId || ''));
+  const response = await fetch(`/api/pdf-translation/requests/${safeId}`, {
+    headers: { Accept: 'application/json', ...headers },
+  });
   await ensureOk(response);
   return response.json();
 }
 
 export async function getPdfRequest(requestId) {
-  const safeId = encodeURIComponent(String(requestId || ''));
-  const response = await fetch(`/api/pdf-translation/requests/${safeId}`, {
-    headers: authHeaders({ Accept: 'application/json' }),
-  });
-  await ensureOk(response);
-  return response.json();
+  return getPdfRequestWithHeaders(requestId, authHeaders());
 }
 
 export async function cancelPdf(requestId) {
