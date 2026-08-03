@@ -1455,6 +1455,14 @@ button {
   display: none;
 }
 
+/* display:flex/grid above would otherwise beat the UA [hidden] rule: the
+   Account row hides when auth is unconfigured, and the account page swaps
+   its signed-out/signed-in groups via the hidden attribute. */
+.settings-nav-row[hidden],
+.setting-group[hidden] {
+  display: none;
+}
+
 .settings-back {
   width: 32px;
   height: 32px;
@@ -1510,6 +1518,34 @@ button {
   font-size: 0.78rem;
   font-weight: 500;
   white-space: nowrap;
+}
+
+/* Account subpage sign-in card (DeepL-inspired): heading, one-line reason,
+   white Google button, redirect note. The button stays white in dark theme —
+   that is the Google brand look. */
+.signin-card {
+  text-align: center;
+}
+
+.signin-card-title {
+  color: var(--text-strong);
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.signin-card-reason {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.google-signin-holder {
+  display: flex;
+  justify-content: center;
+  /* Reserve the button's height so the card does not jump when the
+     Google-rendered iframe lands. */
+  min-height: 40px;
 }
 
 .setting-group .range-row {

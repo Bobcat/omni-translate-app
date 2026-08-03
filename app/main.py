@@ -13,6 +13,9 @@ from app.config import get_str
 from app.router import api_router
 from app.routes import websocket_endpoint
 from app.runtime import warm_asr_vad
+from app.saas_setup import build_saas_router
+from saas.errors import SaasError
+from saas.fastapi_glue import identity_cookie_middleware, saas_error_handler
 
 
 base_dir = Path(__file__).parent.parent
@@ -54,6 +57,9 @@ app = FastAPI(
 )
 
 app.include_router(api_router)
+app.include_router(build_saas_router())
+app.add_exception_handler(SaasError, saas_error_handler)
+app.middleware("http")(identity_cookie_middleware)
 
 
 @app.websocket("/ws/sessions/{session_id}")

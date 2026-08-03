@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 from app.asr_pc_export import live_pc_events_to_text
 from app.asr_pc_export import pc_export_filename
-from app.config import get_int, get_str, rooted_path
+from app.config import get_int, get_str, optional_str, rooted_path
 from app.image_translation_bridge import ImageTranslationError
 from app.image_translation_bridge import REQUEST_ID_HEADER
 from app.image_translation_bridge import rerender_image
@@ -18,12 +18,15 @@ from app.image_translation_bridge import translate_image
 from app.live_settings import default_live_settings
 from app.live_settings import merge_live_settings
 from app.live_settings import normalize_live_settings_delta
+from app.pdf_quota import finalize_pdf_reservation
+from app.pdf_quota import require_pdf_request_owner
+from app.pdf_quota import submit_pdf_with_quota
 from app.pdf_translation_bridge import PdfTranslationError
 from app.pdf_translation_bridge import cancel_pdf_request
 from app.pdf_translation_bridge import get_pdf_artifact
 from app.pdf_translation_bridge import get_pdf_request
-from app.pdf_translation_bridge import submit_pdf
 from app.protocol import PROTOCOL_VERSION
+from app.saas_setup import resolve_request_entitlements
 from app.sessions import SESSIONS
 from app.translation_bridge import TranslationBridge
 from app.translation_bridge import translation_language_code
@@ -37,7 +40,6 @@ from app.voice_library import stable_voice_library_status
 
 from realtime_translation_engine.types import LiveDispatchRequest
 from realtime_translation_engine.types import TranslationOpportunity
-
 
 api_router = APIRouter(prefix="/api")
 
@@ -85,6 +87,25 @@ async def config() -> dict[str, Any]:
         "voice_library": {
             "stable": stable_voice_library_status(),
         },
+        "auth": _auth_client_config(),
+    }
+
+
+def _auth_client_config() -> dict[str, Any]:
+    """What the browser needs to run the external auth flow. The publishable key is
+    public by design (guards nothing by itself). ``configured`` False keeps every
+    account control hidden — dev without a provider stays anonymous-only."""
+    issuer = optional_str("saas.auth.issuer")
+    supabase_url = optional_str("saas.auth.supabase_url")
+    if not supabase_url and issuer:
+        supabase_url = issuer.removesuffix("/auth/v1")
+    publishable_key = optional_str("saas.auth.publishable_key")
+    google_client_id = optional_str("saas.auth.google_client_id")
+    return {
+        "configured": bool(supabase_url and publishable_key and google_client_id),
+        "supabase_url": supabase_url or "",
+        "publishable_key": publishable_key or "",
+        "google_client_id": google_client_id or "",
     }
 
 
@@ -92,6 +113,7 @@ async def config() -> dict[str, Any]:
 # threadpool and the bridge's blocking poll never stalls the event loop.
 @api_router.post("/image-translation")
 def post_image_translation(
+    request: Request,
     image: UploadFile = File(...),
     source_language: str = Form(...),
     target_language: str = Form(...),
@@ -104,6 +126,12 @@ def post_image_translation(
     content = image.file.read()
     if not content:
         raise HTTPException(status_code=400, detail="empty image upload")
+    # The caller's plan gates the feature and sets the source-text ceiling the
+    # service enforces after OCR (before any translation call). A just-created
+    # anonymous identity rides back as a cookie on the image response.
+    entitlements, _ = resolve_request_entitlements(request)
+    entitlements.require_enabled("image_translation.enabled")
+    max_characters = entitlements.get_int("image_translation.max_characters_per_job")
     try:
         data, media_type, request_id = translate_image(
             image_bytes=content,
@@ -118,10 +146,20 @@ def post_image_translation(
                 "size_metric_mode": size_metric_mode,
                 "size_cohort_mode": size_cohort_mode,
             },
+            max_source_characters=max_characters,
         )
     except ImageTranslationError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=str(exc))
+        raise HTTPException(status_code=exc.status_code, detail=_image_error_detail(exc))
     return Response(content=data, media_type=media_type, headers={REQUEST_ID_HEADER: request_id})
+
+
+def _image_error_detail(exc: ImageTranslationError) -> Any:
+    """Structured detail when the bridge carries a machine-readable rejection code,
+    the plain message otherwise (both frontends read ``detail.message`` or the
+    string form)."""
+    if not exc.code:
+        return str(exc)
+    return {"code": exc.code, "message": str(exc), "details": exc.details}
 
 
 @api_router.post("/image-translation/{source_request_id}/retranslate")
@@ -169,8 +207,12 @@ def post_image_rerender(
 # PDF translation: unlike images, the submit returns a lifecycle envelope immediately
 # and the desktop client polls it — a PDF can take minutes, so the route must not
 # hold the connection. Sync defs for the same threadpool reason as the image routes.
+# The caller's plan gates the feature and its pages are reserved before the
+# upstream job starts (app/pdf_quota.py); the poll and cancel routes settle
+# that reservation when the job reaches a terminal state.
 @api_router.post("/pdf-translation/requests")
 def post_pdf_translation_request(
+    request: Request,
     document_file: UploadFile = File(...),
     target_language: str = Form(...),
 ) -> dict[str, Any]:
@@ -187,7 +229,8 @@ def post_pdf_translation_request(
     if not content:
         raise HTTPException(status_code=400, detail="empty document upload")
     try:
-        return submit_pdf(
+        envelope, _ = submit_pdf_with_quota(
+            request,
             document_bytes=content,
             filename=document_file.filename or "document.pdf",
             content_type=document_file.content_type or "application/pdf",
@@ -195,18 +238,23 @@ def post_pdf_translation_request(
         )
     except PdfTranslationError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc))
+    return envelope
 
 
 @api_router.get("/pdf-translation/requests/{request_id}")
-def get_pdf_translation_request(request_id: str) -> dict[str, Any]:
+def get_pdf_translation_request(request: Request, request_id: str) -> dict[str, Any]:
+    require_pdf_request_owner(request, request_id)
     try:
-        return get_pdf_request(request_id)
+        envelope = get_pdf_request(request_id)
     except PdfTranslationError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc))
+    finalize_pdf_reservation(envelope)
+    return envelope
 
 
 @api_router.get("/pdf-translation/requests/{request_id}/artifacts/{artifact_name}")
-def get_pdf_translation_artifact(request_id: str, artifact_name: str) -> Response:
+def get_pdf_translation_artifact(request: Request, request_id: str, artifact_name: str) -> Response:
+    require_pdf_request_owner(request, request_id)
     try:
         data, media_type = get_pdf_artifact(request_id, artifact_name)
     except PdfTranslationError as exc:
@@ -214,19 +262,21 @@ def get_pdf_translation_artifact(request_id: str, artifact_name: str) -> Respons
     return Response(
         content=data,
         media_type=media_type,
-        # A completed run's artifact is immutable per (request_id, name), so
-        # let the browser cache it: iframe reloads (view re-attach, reopen)
-        # then skip the upstream re-download.
-        headers={"Cache-Control": "private, max-age=86400, immutable"},
+        # Do not let one browser account reuse another account's authenticated
+        # artifact response from its private HTTP cache after an account switch.
+        headers={"Cache-Control": "private, no-store"},
     )
 
 
 @api_router.post("/pdf-translation/requests/{request_id}/cancel")
-def post_pdf_translation_cancel(request_id: str) -> dict[str, Any]:
+def post_pdf_translation_cancel(request: Request, request_id: str) -> dict[str, Any]:
+    require_pdf_request_owner(request, request_id)
     try:
-        return cancel_pdf_request(request_id)
+        envelope = cancel_pdf_request(request_id)
     except PdfTranslationError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc))
+    finalize_pdf_reservation(envelope)
+    return envelope
 
 
 # One-shot text translation (typed/pasted text — the classic translator workflow).

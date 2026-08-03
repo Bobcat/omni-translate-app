@@ -12,7 +12,9 @@ dependencies = [
   "fastapi>=0.110",
   "uvicorn>=0.30",
   "websockets>=12",
+  "PyJWT[crypto]>=2.8",
+  "pypdf>=4",
 ]
 
 [tool.setuptools.packages.find]
-include = ["app*"]
+include = ["app*", "saas*"]

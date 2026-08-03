@@ -35,11 +35,22 @@ _RENDERED_ARTIFACT = "rendered"
 
 class ImageTranslationError(RuntimeError):
     """A failure to obtain a translated image; ``status_code`` is the HTTP status
-    the API route should surface to the client."""
+    the API route should surface to the client. ``code``/``details`` carry a
+    machine-readable rejection (e.g. the service's source-character ceiling) so
+    the route can return a structured detail the frontend can present."""
 
-    def __init__(self, message: str, *, status_code: int = 502) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int = 502,
+        code: str = "",
+        details: dict | None = None,
+    ) -> None:
         super().__init__(message)
         self.status_code = status_code
+        self.code = code
+        self.details = dict(details or {})
 
 
 def translate_image(
@@ -50,14 +61,18 @@ def translate_image(
     source_language: str,
     target_language: str,
     render_options: dict | None = None,
+    max_source_characters: int | None = None,
 ) -> tuple[bytes, str, str]:
     """Translate ``image_bytes`` and return ``(rendered_png_bytes, media_type, request_id)``.
 
     ``source_language``/``target_language`` are language names or ISO codes; they
     are normalised to the ISO codes the service expects. ``render_options`` carries
     the render flags for the first render; empty/unknown values are dropped so the
-    service uses its own defaults for them. Raises ``ImageTranslationError`` on an
-    unsupported type, a service failure, or a timeout.
+    service uses its own defaults for them. ``max_source_characters`` is the
+    caller's per-image source-text ceiling, enforced by the service after OCR —
+    over it the request fails with code ``SOURCE_CHARACTER_LIMIT_EXCEEDED``.
+    Raises ``ImageTranslationError`` on an unsupported type, a service failure,
+    or a timeout.
     """
     mime = (content_type or "").split(";")[0].strip().lower()
     if mime not in SUPPORTED_IMAGE_MIME:
@@ -79,6 +94,8 @@ def translate_image(
         "source_lang_code": source_code,
         "target_lang_code": target_code,
     }
+    if max_source_characters is not None:
+        request["max_source_characters"] = int(max_source_characters)
     for key in RENDER_OPTION_KEYS:
         value = str((render_options or {}).get(key) or "").strip()
         if value:
@@ -170,7 +187,7 @@ def _submit(request_json: str, image_bytes: bytes, filename: str, mime: str) -> 
         raise ImageTranslationError("translation-services did not return a request_id")
     state = str(payload.get("state") or "")
     if state in _TERMINAL_BAD:
-        raise ImageTranslationError(_error_message(payload) or f"request {state}")
+        raise _terminal_error(payload, state)
     return request_id
 
 
@@ -191,7 +208,7 @@ def _submit_reentry(source_request_id: str, subpath: str, payload: dict) -> str:
         raise ImageTranslationError("translation-services did not return a request_id")
     state = str(response.get("state") or "")
     if state in _TERMINAL_BAD:
-        raise ImageTranslationError(_error_message(response) or f"request {state}")
+        raise _terminal_error(response, state)
     return request_id
 
 
@@ -205,7 +222,7 @@ def _await_completion(request_id: str) -> None:
         if state == _TERMINAL_OK:
             return
         if state in _TERMINAL_BAD:
-            raise ImageTranslationError(_error_message(payload) or f"request {state}")
+            raise _terminal_error(payload, state)
         if time.monotonic() >= deadline:
             raise ImageTranslationError("image translation timed out", status_code=504)
         time.sleep(interval)
@@ -267,11 +284,27 @@ def _read_json(request: Request) -> dict:
     return payload
 
 
-def _error_message(payload: dict) -> str:
+def _terminal_error(payload: dict, state: str) -> ImageTranslationError:
+    """The failure a terminal lifecycle record carries, mapped onto the route-facing
+    error. A rejection with a stable code keeps that code + details; the source-
+    character ceiling additionally gets a presentable message (the service's own
+    message names raw field values, not a user-facing phrasing)."""
     error = payload.get("error")
-    if isinstance(error, dict):
-        return str(error.get("message") or error.get("code") or "")
-    return ""
+    if not isinstance(error, dict):
+        return ImageTranslationError(f"request {state}")
+    code = str(error.get("code") or "")
+    message = str(error.get("message") or code or f"request {state}")
+    if code == "SOURCE_CHARACTER_LIMIT_EXCEEDED":
+        details = error.get("details") if isinstance(error.get("details"), dict) else {}
+        count = int(details.get("source_character_count") or 0)
+        limit = int(details.get("max_source_characters") or 0)
+        if count > 0 and limit > 0:
+            message = (
+                f"This image contains about {count:,} characters of text — "
+                f"the per-image limit is {limit:,}."
+            )
+        return ImageTranslationError(message, status_code=422, code=code, details=details)
+    return ImageTranslationError(message)
 
 
 def _http_error_detail(exc: HTTPError) -> str:

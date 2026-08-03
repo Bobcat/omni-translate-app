@@ -12,6 +12,8 @@ import {
 } from '../foundation/spa-foundation/index.js';
 import { iconMarkup } from './src/shared/icons.js';
 import { VIEW_BUSY_EVENT } from './src/shared/view-activity.js';
+import { getConfig } from './src/shared/api.js';
+import { initAuth } from './src/auth.js';
 import { createVoiceView } from './src/views/voice/index.js';
 import { createTextView } from './src/views/text/index.js';
 import { createImageView } from './src/views/image/index.js';
@@ -195,6 +197,14 @@ function init() {
   router.bindPopState({
     parseHash: ({ hash }) => (router.has(hash) ? { view: hash, data: null } : null),
   });
+
+  // Kick auth off before the first view mounts: the pdf view gates anonymous
+  // callers on /api/me with the bearer token, so the SDK session restore
+  // should already be underway. Fire and forget — first paint must not wait
+  // on the CDN-loaded SDK.
+  getConfig()
+    .then((config) => initAuth(config?.auth || {}))
+    .catch(() => {});
 
   // Voice is the app's main flow: land there when the hash is empty or unknown.
   const hash = window.location.hash.replace(/^#/, '');

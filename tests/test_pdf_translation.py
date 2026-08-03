@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from app.main import app
 from app.pdf_translation_bridge import PdfTranslationError
 from app.pdf_translation_bridge import submit_pdf
+from saas.errors import RESOURCE_NOT_FOUND, SaasError
 
 
 def _post(client: TestClient, *, content: bytes = b"%PDF-1.4 fake", target_language: str = "English"):
@@ -18,6 +19,10 @@ def _post(client: TestClient, *, content: bytes = b"%PDF-1.4 fake", target_langu
     )
 
 
+def _not_owned() -> SaasError:
+    return SaasError(RESOURCE_NOT_FOUND, "PDF request not found", status_code=404)
+
+
 class PdfTranslationRouteTests(unittest.TestCase):
     def setUp(self) -> None:
         # No context manager on purpose: lifespan (ASR warmup) must not run.
@@ -25,7 +30,7 @@ class PdfTranslationRouteTests(unittest.TestCase):
 
     def test_happy_path_returns_envelope(self) -> None:
         envelope = {"request_id": "req-1", "state": "queued", "queue_position": 1}
-        with patch("app.router.submit_pdf", return_value=envelope) as mock_submit:
+        with patch("app.router.submit_pdf_with_quota", return_value=(envelope, None)) as mock_submit:
             response = _post(self.client)
 
         self.assertEqual(response.status_code, 200)
@@ -45,10 +50,50 @@ class PdfTranslationRouteTests(unittest.TestCase):
         self.assertEqual(response.status_code, 413)
         self.assertIn("document too large", response.json()["detail"])
 
-    def test_unknown_target_language_is_400_not_500(self) -> None:
-        response = _post(self.client, target_language="Klingon")
+    def test_bridge_error_maps_to_its_status(self) -> None:
+        # E.g. an unsupported target language; validation lives in the bridge.
+        with patch(
+            "app.router.submit_pdf_with_quota",
+            side_effect=PdfTranslationError(
+                "unsupported translation language: Klingon", status_code=400
+            ),
+        ):
+            response = _post(self.client, target_language="Klingon")
         self.assertEqual(response.status_code, 400)
         self.assertIn("unsupported translation language", response.json()["detail"])
+
+    def test_status_does_not_reveal_an_unowned_request(self) -> None:
+        with (
+            patch("app.router.require_pdf_request_owner", side_effect=_not_owned()),
+            patch("app.router.get_pdf_request") as mock_get,
+        ):
+            response = self.client.get("/api/pdf-translation/requests/req-other")
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["error"]["code"], RESOURCE_NOT_FOUND)
+        mock_get.assert_not_called()
+
+    def test_cancel_does_not_touch_an_unowned_request(self) -> None:
+        with (
+            patch("app.router.require_pdf_request_owner", side_effect=_not_owned()),
+            patch("app.router.cancel_pdf_request") as mock_cancel,
+        ):
+            response = self.client.post("/api/pdf-translation/requests/req-other/cancel")
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["error"]["code"], RESOURCE_NOT_FOUND)
+        mock_cancel.assert_not_called()
+
+    def test_artifact_does_not_fetch_an_unowned_request(self) -> None:
+        with (
+            patch("app.router.require_pdf_request_owner", side_effect=_not_owned()),
+            patch("app.router.get_pdf_artifact") as mock_get,
+        ):
+            response = self.client.get("/api/pdf-translation/requests/req-other/artifacts/input")
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["error"]["code"], RESOURCE_NOT_FOUND)
+        mock_get.assert_not_called()
 
 
 class SubmitPdfTests(unittest.TestCase):

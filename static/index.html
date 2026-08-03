@@ -43,7 +43,7 @@
     <link rel="stylesheet" href="/themes/light.css?v=20260730-appearance-1">
     <link rel="stylesheet" href="/themes/dark.css?v=20260730-appearance-1">
     <link rel="stylesheet" href="/themes/warm.css?v=20260730-appearance-1">
-    <link rel="stylesheet" href="/styles.css?v=20260730-appearance-1">
+    <link rel="stylesheet" href="/styles.css?v=20260802-auth-6">
   </head>
   <body>
     <main class="app is-setup">
@@ -243,6 +243,12 @@
           </header>
           <div class="settings-views">
             <div class="settings-page" id="settingsHomePage">
+              <button class="settings-nav-row" id="settingsAccountNav" type="button" hidden>
+                <span>
+                  <strong>Account</strong>
+                  <small>Sign in and plan</small>
+                </span>
+              </button>
               <button class="settings-nav-row" id="settingsAppearanceNav" type="button">
                 <span>
                   <strong>Appearance</strong>
@@ -289,6 +295,24 @@
                   <small id="installAppHint">Add to home screen</small>
                 </span>
               </button>
+            </div>
+
+            <div class="settings-page" id="settingsAccountPage" hidden>
+              <section class="setting-group signin-card" id="accountSignedOut" aria-label="Sign in">
+                <p class="signin-card-reason">You are currently not signed in.</p>
+                <div class="signin-card-title">Sign in or create an account</div>
+                <div class="google-signin-holder" id="googleSignInHolder"></div>
+              </section>
+              <section class="setting-group" id="accountSignedIn" aria-label="Account" hidden>
+                <div class="setting-title-row">
+                  <span id="accountEmail"></span>
+                </div>
+                <div class="setting-title-row">
+                  <span>Plan</span>
+                  <span class="setting-value" id="accountPlan"></span>
+                </div>
+                <button class="link-row" id="accountSignOutButton" type="button">Sign out</button>
+              </section>
             </div>
 
             <div class="settings-page" id="settingsAppearancePage" hidden>
@@ -508,6 +532,6 @@
       </div>
 
     </main>
-    <script type="module" src="/src/app.js?v=20260801-review-fixes-1"></script>
+    <script type="module" src="/src/app.js?v=20260803-pr8-review-fixes-1"></script>
   </body>
 </html>

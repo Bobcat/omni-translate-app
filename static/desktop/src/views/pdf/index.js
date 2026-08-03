@@ -1,7 +1,11 @@
 import { iconMarkup } from '../../shared/icons.js';
 import { populateLanguageSelect, recordLanguageMru } from '../../shared/languages.js';
-import { submitPdf, getPdfRequest, cancelPdf, pdfArtifactUrl } from '../../shared/api.js';
+import { submitPdf, getPdfRequest, cancelPdf, getPdfArtifact, getMe, getUsage } from '../../shared/api.js';
 import { publishViewBusy } from '../../shared/view-activity.js';
+import { isEnabled as isAuthEnabled, onAuthChange, whenAuthReady } from '../../auth.js';
+import { createSignInCard } from '../../shared/signin-card.js';
+import { createAccountChangeGuard } from './account-state.js';
+import { waitForCancellationSettlement } from './cancellation.js';
 
 // PDF translation view, same stage model as the LLM Workbench: an empty state
 // (dropzone) swaps for a loaded state (original frame + translated frame) once
@@ -45,6 +49,7 @@ export function createPdfView() {
         <button type="button" class="icon-square-btn" id="pdfReset" title="Choose another PDF" aria-label="Choose another PDF" hidden>${iconMarkup('x')}</button>
       </div>
     </div>
+    <div class="usage-line" id="pdfUsage" hidden></div>
     <div class="dropzone-card" id="pdfDropzone">
       <div class="dropzone-drop">
         ${iconMarkup('upload-cloud')}
@@ -92,8 +97,78 @@ export function createPdfView() {
   let requestId = '';
   let requestState = '';
   let originalUrl = '';
+  let translatedUrl = '';
   let runToken = 0;
   let pollTimer = 0;
+  const cancellationSettlements = new Map();
+
+  // Anonymous gate: when the deployment has auth configured and the caller is
+  // not signed in, the sign-in card replaces the upload UI (the anonymous plan
+  // has PDF disabled). Re-evaluated on every auth-state change, so signing in
+  // swaps the upload UI back in. Not gated at all when auth is unconfigured —
+  // dev stays anonymous-only.
+  const gateCard = createSignInCard('PDF translation needs a free account.');
+  gateCard.classList.add('pdf-gate');
+  gateCard.hidden = true;
+  container.appendChild(gateCard);
+
+  let gateToken = 0;
+
+  async function applyAuthGate() {
+    if (!isAuthEnabled()) return;
+    const token = ++gateToken;
+    // Wait for the SDK session restore so a signed-in user is not gated on a
+    // not-yet-restored (empty) bearer token.
+    await whenAuthReady();
+    if (token !== gateToken) return;
+    let principalKind = '';
+    try {
+      const me = await getMe();
+      principalKind = String(me?.principal?.kind || '');
+    } catch {
+      // A failed /api/me leaves the view usable rather than gating on a guess.
+      return;
+    }
+    if (token !== gateToken) return;
+    const gated = principalKind !== 'user';
+    container.classList.toggle('is-gated', gated);
+    gateCard.hidden = !gated;
+    if (gated) usageEl.hidden = true;
+    else refreshUsage();
+  }
+
+  const usageEl = container.querySelector('#pdfUsage');
+  let usageFetchToken = 0;
+
+  // Free-plan page balance. Refreshed when the gate settles (signed-in user)
+  // and whenever a job reaches a terminal state — its reservation is then
+  // consumed or released server-side, so the balance has moved.
+  async function refreshUsage() {
+    const token = ++usageFetchToken;
+    if (!isAuthEnabled()) return;
+    await whenAuthReady();
+    if (token !== usageFetchToken) return;
+    try {
+      const data = await getUsage();
+      if (token !== usageFetchToken) return;
+      const pages = (data?.usage || []).find((entry) => entry.metric === 'pdf_translation.pages');
+      if (!pages || typeof pages.remaining !== 'number' || typeof pages.limit !== 'number') {
+        usageEl.hidden = true;
+        return;
+      }
+      usageEl.textContent = `PDF pages this month: ${pages.remaining} of ${pages.limit} left`;
+      usageEl.hidden = false;
+    } catch {
+      // A failed fetch leaves the previous balance in place.
+    }
+  }
+
+  const applyAccountChange = createAccountChangeGuard(discardAccountState);
+  applyAuthGate();
+  onAuthChange((authState) => {
+    applyAccountChange(authState);
+    applyAuthGate();
+  });
 
   populateLanguageSelect(targetSelect, 'English');
   applyViewMode();
@@ -167,19 +242,23 @@ export function createPdfView() {
     return progressText(envelope);
   }
 
-  function showTranslated(envelope) {
+  async function showTranslated(envelope) {
     const name = translatedArtifactName(envelope);
     if (!name) {
       clearPending();
       setStatus('Translation finished but no PDF was returned.', true);
       return;
     }
-    const url = pdfArtifactUrl(requestId, name);
+    const artifactRequestId = requestId;
+    const blob = await getPdfArtifact(artifactRequestId, name);
+    if (artifactRequestId !== requestId) return;
+    if (translatedUrl) URL.revokeObjectURL(translatedUrl);
+    translatedUrl = URL.createObjectURL(blob);
     clearPending();
-    translatedFrame.src = url;
+    translatedFrame.src = translatedUrl;
     translatedFrame.hidden = false;
     const stem = (currentFile?.name || 'document').replace(/\.[^.]+$/, '');
-    downloadLink.href = url;
+    downloadLink.href = translatedUrl;
     downloadLink.download = `${stem}_${targetSelect.value.toLowerCase()}.pdf`;
     downloadLink.hidden = false;
     setStatus('');
@@ -194,7 +273,9 @@ export function createPdfView() {
       const state = String(envelope?.state || '').toLowerCase();
       requestState = state;
       if (state === 'completed') {
-        showTranslated(envelope);
+        refreshUsage();
+        await showTranslated(envelope);
+        if (token !== runToken) return;
         setBusy(false);
         return;
       }
@@ -202,6 +283,7 @@ export function createPdfView() {
         clearPending();
         setStatus(envelope?.error?.message || `Translation ${state}.`, true);
         setBusy(false);
+        refreshUsage();
         return;
       }
       setPending(pendingTextFor(envelope));
@@ -218,16 +300,32 @@ export function createPdfView() {
   async function translate(file) {
     const token = ++runToken;
     stopPolling();
-    // Cancel the request this one replaces (e.g. a target-language change
-    // mid-run) so it stops occupying the shared service queue. Fire and
-    // forget, same tolerance as resetView: a slow or failed cancel must not
-    // delay the replacement. Reads the current requestId synchronously, so
-    // it must run before the reset below.
-    cancelRequest();
+    // A replacement must wait until the old reservation is settled. Otherwise
+    // a target-language change can reserve the same pages twice and strand the
+    // old hold after the regular poll has been invalidated.
+    if (requestId && !TERMINAL_STATES.has(requestState)) {
+      const previousRequestId = requestId;
+      setPending('Cancelling previous translation…');
+      try {
+        await cancelAndSettle(previousRequestId);
+      } catch (err) {
+        if (token !== runToken) return;
+        setStatus(err.message || 'Could not cancel the previous translation.', true);
+        setPending('Translating…');
+        poll(token);
+        return;
+      }
+      if (token !== runToken) return;
+    }
     currentFile = file;
     requestId = '';
     requestState = '';
     downloadLink.hidden = true;
+    downloadLink.removeAttribute('href');
+    if (translatedUrl) {
+      URL.revokeObjectURL(translatedUrl);
+      translatedUrl = '';
+    }
     if (originalUrl) URL.revokeObjectURL(originalUrl);
     originalUrl = URL.createObjectURL(file);
     originalFrame.src = originalUrl;
@@ -244,6 +342,7 @@ export function createPdfView() {
       }
       requestId = String(envelope?.request_id || '');
       requestState = String(envelope?.state || '').toLowerCase();
+      refreshUsage();
       if (!requestId) {
         clearPending();
         setStatus('The service did not return a request id.', true);
@@ -257,47 +356,77 @@ export function createPdfView() {
       clearPending();
       setStatus(err.message || 'Could not submit the PDF.', true);
       setBusy(false);
+      refreshUsage();
     }
   }
 
-  async function cancelRequest() {
-    if (!requestId || TERMINAL_STATES.has(requestState)) return;
-    try {
-      await cancelPdf(requestId);
-    } catch {
-      // A failed cancel must not trap the user on the stage; the reset proceeds.
-    }
+  function waitForNextPoll() {
+    return new Promise((resolve) => window.setTimeout(resolve, POLL_INTERVAL_MS));
+  }
+
+  function cancelAndSettle(id) {
+    if (cancellationSettlements.has(id)) return cancellationSettlements.get(id);
+    const settlement = cancelPdf(id)
+      .then((envelope) => waitForCancellationSettlement(envelope, {
+        getRequest: getPdfRequest,
+        wait: waitForNextPoll,
+      }))
+      .then((envelope) => {
+        refreshUsage();
+        return envelope;
+      })
+      .finally(() => { cancellationSettlements.delete(id); });
+    cancellationSettlements.set(id, settlement);
+    return settlement;
+  }
+
+  function cancelRequest() {
+    if (!requestId || TERMINAL_STATES.has(requestState)) return null;
+    return cancelAndSettle(requestId);
   }
 
   // A submit abandoned while still in flight (language change, reset, a newer
   // file — requestId was not known yet, so cancelRequest could not reach it)
   // still creates a job server-side. Cancel the id from the stale envelope
   // instead of dropping it, or the orphaned job keeps occupying the shared
-  // queue. Fire and forget, same tolerance as cancelRequest.
+  // queue. This settlement continues in the background.
   function cancelStaleSubmit(envelope) {
     const id = String(envelope?.request_id || '');
     if (!id) return;
-    cancelPdf(id).catch(() => {});
+    cancelAndSettle(id).catch(() => {});
   }
 
-  async function resetView() {
-    ++runToken;
-    stopPolling();
-    await cancelRequest();
+  function clearLocalPdfState() {
     setBusy(false);
     currentFile = null;
     requestId = '';
     requestState = '';
     downloadLink.hidden = true;
+    downloadLink.removeAttribute('href');
+    downloadLink.removeAttribute('download');
     originalFrame.removeAttribute('src');
     translatedFrame.removeAttribute('src');
-    if (originalUrl) {
-      URL.revokeObjectURL(originalUrl);
-      originalUrl = '';
-    }
+    if (originalUrl) URL.revokeObjectURL(originalUrl);
+    if (translatedUrl) URL.revokeObjectURL(translatedUrl);
+    originalUrl = '';
+    translatedUrl = '';
     clearPending();
     setStatus('');
     setStageLoaded(false);
+  }
+
+  function resetView() {
+    ++runToken;
+    stopPolling();
+    const settlement = cancelRequest();
+    clearLocalPdfState();
+    settlement?.catch(() => {});
+  }
+
+  function discardAccountState() {
+    ++runToken;
+    stopPolling();
+    clearLocalPdfState();
   }
 
   targetSelect.addEventListener('change', () => {

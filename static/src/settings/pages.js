@@ -10,8 +10,9 @@ import { renderVoiceLibraryPage, voiceLibraryOnExit } from './voice-library.js';
 import { renderDevToolsSettings } from './dev-tools.js';
 import { renderImageRenderControls } from './image-render.js';
 import { renderAppearanceSettings } from './appearance.js';
+import { renderAccountSettings } from './account.js';
 
-const PAGES = ['appearance', 'microphone', 'audio', 'history', 'dev-tools', 'tuning', 'voice-library', 'image-render'];
+const PAGES = ['account', 'appearance', 'microphone', 'audio', 'history', 'dev-tools', 'tuning', 'voice-library', 'image-render'];
 
 export function setSettingsPage(page) {
   const previous = state.settingsPage;
@@ -31,12 +32,14 @@ export function setSettingsPage(page) {
   if (state.settingsPage === 'voice-library') renderVoiceLibraryPage();
   if (state.settingsPage === 'image-render') renderImageRenderControls();
   if (state.settingsPage === 'appearance') renderAppearanceSettings();
+  if (state.settingsPage === 'account') renderAccountSettings();
 }
 
 export function renderSettingsPage() {
   const page = state.settingsPage;
   const home = page === 'home';
   els.settingsHomePage.hidden = page !== 'home';
+  els.settingsAccountPage.hidden = page !== 'account';
   els.settingsAppearancePage.hidden = page !== 'appearance';
   els.settingsMicrophonePage.hidden = page !== 'microphone';
   els.settingsAudioPage.hidden = page !== 'audio';
@@ -51,6 +54,8 @@ export function renderSettingsPage() {
   els.settingsBackButton.title = home ? 'Close settings' : 'Back';
   if (page === 'microphone') {
     els.settingsSheetTitle.textContent = 'Microphone';
+  } else if (page === 'account') {
+    els.settingsSheetTitle.textContent = 'Account';
   } else if (page === 'appearance') {
     els.settingsSheetTitle.textContent = 'Appearance';
   } else if (page === 'audio') {
