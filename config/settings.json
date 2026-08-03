@@ -47,6 +47,11 @@
     "request_timeout_s": 120,
     "poll_interval_s": 0.5
   },
+  "pdf_translation": {
+    "base_url": "http://127.0.0.1:8030",
+    "reconciliation_interval_s": 60,
+    "reconciliation_missing_grace_s": 86400
+  },
   "live": {
     "session_ttl_s": 900,
     "audio": {

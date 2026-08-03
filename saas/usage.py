@@ -221,11 +221,22 @@ class QuotaService:
             period_end=end.isoformat(),
         )
 
-    def consume(self, reservation_id: uuid.UUID, actual_quantity: int | None = None) -> None:
+    def consume(
+        self,
+        reservation_id: uuid.UUID,
+        actual_quantity: int | None = None,
+        *,
+        metadata: dict | None = None,
+    ) -> None:
         """Mark a held reservation consumed (optionally at a corrected
         quantity). Terminal-state events are ignored, so lifecycle callbacks
         may fire twice safely."""
-        self._finalize(reservation_id, target="consumed", actual_quantity=actual_quantity)
+        self._finalize(
+            reservation_id,
+            target="consumed",
+            actual_quantity=actual_quantity,
+            metadata=metadata,
+        )
 
     def release(self, reservation_id: uuid.UUID, reason: str) -> None:
         """Release a held reservation (service-side failure must not cost
