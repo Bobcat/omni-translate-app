@@ -10,6 +10,9 @@ from pydantic import BaseModel
 from app.asr_pc_export import live_pc_events_to_text
 from app.asr_pc_export import pc_export_filename
 from app.config import get_int, get_str, optional_str, rooted_path
+from app.image_admission import admit_image_operation
+from app.image_admission import read_image_upload
+from app.image_admission import validate_image_upload
 from app.image_translation_bridge import ImageTranslationError
 from app.image_translation_bridge import REQUEST_ID_HEADER
 from app.image_translation_bridge import rerender_image
@@ -27,7 +30,7 @@ from app.pdf_translation_bridge import cancel_pdf_request
 from app.pdf_translation_bridge import get_pdf_artifact
 from app.pdf_translation_bridge import get_pdf_request
 from app.protocol import PROTOCOL_VERSION
-from app.saas_setup import resolve_request_entitlements
+from app.saas_setup import resolve_request_context
 from app.sessions import SESSIONS
 from app.translation_bridge import TranslationBridge
 from app.translation_bridge import translation_language_code
@@ -124,31 +127,34 @@ def post_image_translation(
     size_metric_mode: str = Form(""),
     size_cohort_mode: str = Form(""),
 ) -> Response:
-    content = image.file.read()
-    if not content:
-        raise HTTPException(status_code=400, detail="empty image upload")
-    # The caller's plan gates the feature and sets the source-text ceiling the
-    # service enforces after OCR (before any translation call). A just-created
-    # anonymous identity rides back as a cookie on the image response.
-    entitlements, _ = resolve_request_entitlements(request)
+    # Resolve before validation so a rejected first anonymous request receives
+    # a durable identity cookie and cannot reset its rate window on every try.
+    principal, entitlements, _ = resolve_request_context(request)
     entitlements.require_enabled("image_translation.enabled")
+    content, mime = read_image_upload(
+        image.file,
+        content_type=image.content_type or "",
+        entitlements=entitlements,
+    )
     max_characters = entitlements.get_int("image_translation.max_characters_per_job")
     try:
-        data, media_type, request_id = translate_image(
-            image_bytes=content,
-            filename=image.filename or "image",
-            content_type=image.content_type or "",
-            source_language=source_language,
-            target_language=target_language,
-            render_options={
-                "render_size_mode": render_size_mode,
-                "erase_fill_mode": erase_fill_mode,
-                "width_fit_mode": width_fit_mode,
-                "size_metric_mode": size_metric_mode,
-                "size_cohort_mode": size_cohort_mode,
-            },
-            max_source_characters=max_characters,
-        )
+        with admit_image_operation(principal, entitlements):
+            validate_image_upload(content, declared_mime=mime, entitlements=entitlements)
+            data, media_type, request_id = translate_image(
+                image_bytes=content,
+                filename=image.filename or "image",
+                content_type=mime,
+                source_language=source_language,
+                target_language=target_language,
+                render_options={
+                    "render_size_mode": render_size_mode,
+                    "erase_fill_mode": erase_fill_mode,
+                    "width_fit_mode": width_fit_mode,
+                    "size_metric_mode": size_metric_mode,
+                    "size_cohort_mode": size_cohort_mode,
+                },
+                max_source_characters=max_characters,
+            )
     except ImageTranslationError as exc:
         raise HTTPException(status_code=exc.status_code, detail=_image_error_detail(exc))
     return Response(content=data, media_type=media_type, headers={REQUEST_ID_HEADER: request_id})
@@ -165,14 +171,18 @@ def _image_error_detail(exc: ImageTranslationError) -> Any:
 
 @api_router.post("/image-translation/{source_request_id}/retranslate")
 def post_image_retranslation(
+    request: Request,
     source_request_id: str,
     target_language: str = Form(...),
 ) -> Response:
+    principal, entitlements, _ = resolve_request_context(request)
+    entitlements.require_enabled("image_translation.enabled")
     try:
-        data, media_type, request_id = retranslate_image(
-            source_request_id=source_request_id,
-            target_language=target_language,
-        )
+        with admit_image_operation(principal, entitlements):
+            data, media_type, request_id = retranslate_image(
+                source_request_id=source_request_id,
+                target_language=target_language,
+            )
     except ImageTranslationError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc))
     return Response(content=data, media_type=media_type, headers={REQUEST_ID_HEADER: request_id})
@@ -182,6 +192,7 @@ def post_image_retranslation(
 # the cached translations). Sync def for the same threadpool reason as the other image routes.
 @api_router.post("/image-translation/{source_request_id}/rerender")
 def post_image_rerender(
+    request: Request,
     source_request_id: str,
     render_size_mode: str = Form(""),
     erase_fill_mode: str = Form(""),
@@ -189,17 +200,20 @@ def post_image_rerender(
     size_metric_mode: str = Form(""),
     size_cohort_mode: str = Form(""),
 ) -> Response:
+    principal, entitlements, _ = resolve_request_context(request)
+    entitlements.require_enabled("image_translation.enabled")
     try:
-        data, media_type, request_id = rerender_image(
-            source_request_id=source_request_id,
-            render_options={
-                "render_size_mode": render_size_mode,
-                "erase_fill_mode": erase_fill_mode,
-                "width_fit_mode": width_fit_mode,
-                "size_metric_mode": size_metric_mode,
-                "size_cohort_mode": size_cohort_mode,
-            },
-        )
+        with admit_image_operation(principal, entitlements):
+            data, media_type, request_id = rerender_image(
+                source_request_id=source_request_id,
+                render_options={
+                    "render_size_mode": render_size_mode,
+                    "erase_fill_mode": erase_fill_mode,
+                    "width_fit_mode": width_fit_mode,
+                    "size_metric_mode": size_metric_mode,
+                    "size_cohort_mode": size_cohort_mode,
+                },
+            )
     except ImageTranslationError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc))
     return Response(content=data, media_type=media_type, headers={REQUEST_ID_HEADER: request_id})
