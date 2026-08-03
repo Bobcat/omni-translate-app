@@ -255,6 +255,24 @@ class SaasStore:
                 (tenant, str(job_id)),
             ).fetchone()
 
+    def list_usage_events(
+        self,
+        tenant: str,
+        *,
+        metric: str,
+        state: str,
+        limit: int = 100,
+    ) -> list[sqlite3.Row]:
+        """Oldest usage events matching one metric and lifecycle state."""
+        with self.transaction() as conn:
+            return list(
+                conn.execute(
+                    "SELECT * FROM usage_events WHERE tenant = ? AND metric = ? AND state = ?"
+                    " ORDER BY created_at, id LIMIT ?",
+                    (tenant, str(metric), str(state), max(1, int(limit))),
+                ).fetchall()
+            )
+
     def attach_job_to_usage_event(self, event_id: uuid.UUID, job_id: str) -> None:
         """Link an event to the host job id, which some flows only learn after
         the reservation exists (e.g. the upstream request id comes back from

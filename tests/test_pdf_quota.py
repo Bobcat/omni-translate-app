@@ -237,15 +237,37 @@ class PdfQuotaFlowTests(unittest.TestCase):
         finalize_pdf_reservation({**envelope, "state": "completed"})
         self.assertEqual(self._usage(), (0, 5))
 
-    def test_failed_job_releases_the_reservation(self) -> None:
+    def test_confirmed_technical_failure_releases_the_reservation(self) -> None:
         envelope = self._submit(5)
-        finalize_pdf_reservation({**envelope, "state": "failed"})
+        finalize_pdf_reservation(
+            {
+                **envelope,
+                "state": "failed",
+                "error": {"code": "REQUEST_FAILED", "message": "pipeline crashed"},
+            }
+        )
         self.assertEqual(self._usage(), (0, 0))
 
-    def test_cancelled_job_releases_the_reservation(self) -> None:
+    def test_unclassified_failure_consumes_the_reservation(self) -> None:
+        envelope = self._submit(5)
+        finalize_pdf_reservation({**envelope, "state": "failed"})
+        self.assertEqual(self._usage(), (0, 5))
+
+    def test_caller_actionable_failure_consumes_the_reservation(self) -> None:
+        envelope = self._submit(5)
+        finalize_pdf_reservation(
+            {
+                **envelope,
+                "state": "failed",
+                "error": {"code": "SOURCE_CHARACTER_LIMIT_EXCEEDED"},
+            }
+        )
+        self.assertEqual(self._usage(), (0, 5))
+
+    def test_cancelled_job_consumes_the_reservation(self) -> None:
         envelope = self._submit(5)
         finalize_pdf_reservation({**envelope, "state": "cancelled"})
-        self.assertEqual(self._usage(), (0, 0))
+        self.assertEqual(self._usage(), (0, 5))
 
     def test_non_terminal_state_keeps_the_hold(self) -> None:
         envelope = self._submit(5)
