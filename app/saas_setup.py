@@ -5,9 +5,9 @@ here and in ``config/settings.json`` — the package itself stays reusable.
 Plans are config-backed for now; the entitlement/quota interfaces are the
 stable seam for the later Postgres/Supabase storage.
 
-Non-saas routes (e.g. image translation) resolve the caller's entitlements
-through ``resolve_request_entitlements`` — the same anonymous-identity seam
-the saas router uses, shared via one process-wide context.
+Non-saas routes resolve the caller through ``resolve_request_context`` (or its
+entitlement-only wrapper) — the same anonymous-identity seam the saas router
+uses, shared via one process-wide context.
 """
 from __future__ import annotations
 

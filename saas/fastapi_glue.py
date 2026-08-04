@@ -9,6 +9,7 @@ otherwise the signed anonymous-cookie path applies.
 """
 from __future__ import annotations
 
+import math
 from typing import Any, Mapping
 
 from fastapi import APIRouter, Request, Response
@@ -23,9 +24,14 @@ from saas.usage import QuotaService
 
 
 def saas_error_handler(_request: Request, exc: SaasError) -> JSONResponse:
+    headers = None
+    retry_after = exc.details.get("retry_after_s")
+    if exc.status_code == 429 and isinstance(retry_after, (int, float)):
+        headers = {"Retry-After": str(max(1, math.ceil(retry_after)))}
     return JSONResponse(
         status_code=exc.status_code,
         content={"error": {"code": exc.code, "message": exc.message, "details": exc.details}},
+        headers=headers,
     )
 
 

@@ -1,10 +1,10 @@
-"""Phase 4 image quota wiring: the route resolves the caller's entitlements and
-forwards the plan's per-image source-character ceiling to translation-services;
-the bridge maps the service's rejection onto a structured, presentable error."""
+"""Image entitlement, admission, and source-character ceiling wiring."""
 from __future__ import annotations
 
 import json
 import unittest
+import uuid
+from contextlib import nullcontext
 from io import BytesIO
 from unittest.mock import patch
 
@@ -16,6 +16,8 @@ from app.image_translation_bridge import translate_image
 from app.main import app
 from saas.entitlements import EntitlementSet
 from saas.fastapi_glue import stage_identity_cookie
+from saas.errors import RATE_LIMIT_EXCEEDED, SaasError
+from saas.principals import Principal
 
 
 def _png_bytes() -> bytes:
@@ -29,15 +31,31 @@ def _png_bytes() -> bytes:
 PNG_BYTES = _png_bytes()
 ENABLED = EntitlementSet(
     "anonymous",
-    {"image_translation.enabled": True, "image_translation.max_characters_per_job": 1500},
+    {
+        "image_translation.enabled": True,
+        "image_translation.max_characters_per_job": 1500,
+        "image_translation.max_upload_bytes": 1024 * 1024,
+        "image_translation.max_image_width": 100,
+        "image_translation.max_image_height": 100,
+        "image_translation.max_image_pixels": 10_000,
+        "image_translation.max_concurrent_jobs": 1,
+        "image_translation.max_jobs_per_minute": 3,
+        "image_translation.max_jobs_per_hour": 12,
+    },
 )
+PRINCIPAL = Principal(tenant="test", kind="anonymous", id=uuid.uuid4(), plan_code="anonymous")
 
 
-def _post_image(client: TestClient):
+def _post_image(
+    client: TestClient,
+    *,
+    content: bytes = PNG_BYTES,
+    content_type: str = "image/png",
+):
     return client.post(
         "/api/image-translation",
         data={"source_language": "auto", "target_language": "English"},
-        files={"image": ("photo.png", PNG_BYTES, "image/png")},
+        files={"image": ("photo.png", content, content_type)},
     )
 
 
@@ -45,6 +63,14 @@ class ImageTranslationRouteTests(unittest.TestCase):
     def setUp(self) -> None:
         # No context manager on purpose: lifespan (ASR warmup) must not run.
         self.client = TestClient(app)
+        self._admission_patch = patch(
+            "app.router.admit_image_operation",
+            return_value=nullcontext(),
+        )
+        self.admit = self._admission_patch.start()
+
+    def tearDown(self) -> None:
+        self._admission_patch.stop()
 
     def test_plan_ceiling_is_forwarded_and_identity_cookie_issued(self) -> None:
         captured: dict[str, object] = {}
@@ -55,10 +81,10 @@ class ImageTranslationRouteTests(unittest.TestCase):
 
         def resolve_with_new_identity(request):
             stage_identity_cookie(request, "tok123")
-            return ENABLED, "tok123"
+            return PRINCIPAL, ENABLED, "tok123"
 
         with (
-            patch("app.router.resolve_request_entitlements", side_effect=resolve_with_new_identity),
+            patch("app.router.resolve_request_context", side_effect=resolve_with_new_identity),
             patch("app.router.translate_image", fake_translate_image),
         ):
             response = _post_image(self.client)
@@ -73,7 +99,7 @@ class ImageTranslationRouteTests(unittest.TestCase):
             return PNG_BYTES, "image/png", "req_1"
 
         with (
-            patch("app.router.resolve_request_entitlements", return_value=(ENABLED, None)),
+            patch("app.router.resolve_request_context", return_value=(PRINCIPAL, ENABLED, None)),
             patch("app.router.translate_image", fake_translate_image),
         ):
             response = _post_image(self.client)
@@ -83,7 +109,10 @@ class ImageTranslationRouteTests(unittest.TestCase):
 
     def test_disabled_plan_fails_closed(self) -> None:
         disabled = EntitlementSet("anonymous", {})
-        with patch("app.router.resolve_request_entitlements", return_value=(disabled, None)):
+        with patch(
+            "app.router.resolve_request_context",
+            return_value=(PRINCIPAL, disabled, None),
+        ):
             response = _post_image(self.client)
 
         self.assertEqual(response.status_code, 403)
@@ -99,7 +128,7 @@ class ImageTranslationRouteTests(unittest.TestCase):
             )
 
         with (
-            patch("app.router.resolve_request_entitlements", return_value=(ENABLED, None)),
+            patch("app.router.resolve_request_context", return_value=(PRINCIPAL, ENABLED, None)),
             patch("app.router.translate_image", fake_translate_image),
         ):
             response = _post_image(self.client)
@@ -111,6 +140,74 @@ class ImageTranslationRouteTests(unittest.TestCase):
         self.assertEqual(
             detail["details"], {"source_character_count": 2300, "max_source_characters": 1500}
         )
+
+    def test_rate_limit_returns_retry_after_without_service_call(self) -> None:
+        def reject(*_args, **_kwargs):
+            raise SaasError(
+                RATE_LIMIT_EXCEEDED,
+                "too many image operations",
+                status_code=429,
+                details={"retry_after_s": 17},
+            )
+
+        self.admit.side_effect = reject
+        with (
+            patch("app.router.resolve_request_context", return_value=(PRINCIPAL, ENABLED, None)),
+            patch("app.router.translate_image") as translate,
+        ):
+            response = _post_image(self.client)
+
+        self.assertEqual(response.status_code, 429)
+        self.assertEqual(response.headers["retry-after"], "17")
+        self.assertEqual(response.json()["error"]["code"], RATE_LIMIT_EXCEEDED)
+        translate.assert_not_called()
+
+    def test_unsupported_media_type_is_rejected_before_admission(self) -> None:
+        with (
+            patch("app.router.resolve_request_context", return_value=(PRINCIPAL, ENABLED, None)),
+            patch("app.router.translate_image") as translate,
+        ):
+            response = _post_image(self.client, content_type="image/gif")
+
+        self.assertEqual(response.status_code, 415)
+        self.admit.assert_not_called()
+        translate.assert_not_called()
+
+    def test_dimension_rejection_uses_one_admission_attempt(self) -> None:
+        from PIL import Image
+
+        output = BytesIO()
+        Image.new("RGB", (101, 1), "white").save(output, format="PNG")
+        with (
+            patch("app.router.resolve_request_context", return_value=(PRINCIPAL, ENABLED, None)),
+            patch("app.router.translate_image") as translate,
+        ):
+            response = _post_image(self.client, content=output.getvalue())
+
+        self.assertEqual(response.status_code, 422)
+        self.admit.assert_called_once_with(PRINCIPAL, ENABLED)
+        translate.assert_not_called()
+
+    def test_retranslate_is_admitted_for_the_resolved_principal(self) -> None:
+        with (
+            patch("app.router.resolve_request_context", return_value=(PRINCIPAL, ENABLED, None)),
+            patch("app.router.retranslate_image", return_value=(PNG_BYTES, "image/png", "req_2")),
+        ):
+            response = self.client.post(
+                "/api/image-translation/req_1/retranslate",
+                data={"target_language": "German"},
+            )
+        self.assertEqual(response.status_code, 200)
+        self.admit.assert_called_with(PRINCIPAL, ENABLED)
+
+    def test_rerender_is_admitted_for_the_resolved_principal(self) -> None:
+        with (
+            patch("app.router.resolve_request_context", return_value=(PRINCIPAL, ENABLED, None)),
+            patch("app.router.rerender_image", return_value=(PNG_BYTES, "image/png", "req_2")),
+        ):
+            response = self.client.post("/api/image-translation/req_1/rerender")
+        self.assertEqual(response.status_code, 200)
+        self.admit.assert_called_with(PRINCIPAL, ENABLED)
 
 
 class BridgeCeilingTests(unittest.TestCase):
