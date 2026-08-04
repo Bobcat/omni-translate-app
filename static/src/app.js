@@ -52,7 +52,8 @@ import {
 import { bindImageRenderControls, renderImageRenderControls } from './settings/image-render.js';
 import { bindAppearanceSettings, renderAppearanceSettings } from './settings/appearance.js';
 import { initAccountSettings } from './settings/account.js';
-import { initAuth } from './auth.js';
+import { initAuth, onAuthChange } from './auth.js';
+import { createAccountChangeGuard } from './shared/account-state.js';
 import { initAppearance } from './domain/appearance.js';
 import {
   setStatus,
@@ -122,6 +123,7 @@ async function init() {
   // UI subscribes to auth-state changes and renders once init resolves.
   initAuth(config.auth || {});
   initAccountSettings();
+  onAuthChange(createAccountChangeGuard(() => { finishImageTranslation(); }));
 
   els.startButton.addEventListener('click', handleStartButton);
   els.imageFileInput.addEventListener('change', handleImageFileChange);

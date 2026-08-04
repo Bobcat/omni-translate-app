@@ -16,7 +16,7 @@ from app.image_translation_bridge import translate_image
 from app.main import app
 from saas.entitlements import EntitlementSet
 from saas.fastapi_glue import stage_identity_cookie
-from saas.errors import RATE_LIMIT_EXCEEDED, SaasError
+from saas.errors import RATE_LIMIT_EXCEEDED, RESOURCE_NOT_FOUND, SaasError
 from saas.principals import Principal
 
 
@@ -68,8 +68,14 @@ class ImageTranslationRouteTests(unittest.TestCase):
             return_value=nullcontext(),
         )
         self.admit = self._admission_patch.start()
+        self._record_owner_patch = patch("app.router.record_image_request_owner")
+        self.record_owner = self._record_owner_patch.start()
+        self._require_owner_patch = patch("app.router.require_image_request_owner")
+        self.require_owner = self._require_owner_patch.start()
 
     def tearDown(self) -> None:
+        self._require_owner_patch.stop()
+        self._record_owner_patch.stop()
         self._admission_patch.stop()
 
     def test_plan_ceiling_is_forwarded_and_identity_cookie_issued(self) -> None:
@@ -93,6 +99,7 @@ class ImageTranslationRouteTests(unittest.TestCase):
         self.assertEqual(response.headers.get("x-image-translation-request-id"), "req_1")
         self.assertEqual(captured.get("max_source_characters"), 1500)
         self.assertIn("ot_anon=tok123", response.headers.get("set-cookie") or "")
+        self.record_owner.assert_called_once_with(PRINCIPAL, "req_1")
 
     def test_valid_identity_issues_no_new_cookie(self) -> None:
         def fake_translate_image(**kwargs: object):
@@ -198,6 +205,8 @@ class ImageTranslationRouteTests(unittest.TestCase):
                 data={"target_language": "German"},
             )
         self.assertEqual(response.status_code, 200)
+        self.require_owner.assert_called_once_with(PRINCIPAL, "req_1")
+        self.record_owner.assert_called_once_with(PRINCIPAL, "req_2")
         self.admit.assert_called_with(PRINCIPAL, ENABLED)
 
     def test_rerender_is_admitted_for_the_resolved_principal(self) -> None:
@@ -207,7 +216,27 @@ class ImageTranslationRouteTests(unittest.TestCase):
         ):
             response = self.client.post("/api/image-translation/req_1/rerender")
         self.assertEqual(response.status_code, 200)
+        self.require_owner.assert_called_once_with(PRINCIPAL, "req_1")
+        self.record_owner.assert_called_once_with(PRINCIPAL, "req_2")
         self.admit.assert_called_with(PRINCIPAL, ENABLED)
+
+    def test_other_owner_cannot_retranslate(self) -> None:
+        self.require_owner.side_effect = SaasError(
+            RESOURCE_NOT_FOUND,
+            "image request not found",
+            status_code=404,
+        )
+        with (
+            patch("app.router.resolve_request_context", return_value=(PRINCIPAL, ENABLED, None)),
+            patch("app.router.retranslate_image") as retranslate,
+        ):
+            response = self.client.post(
+                "/api/image-translation/req_other/retranslate",
+                data={"target_language": "German"},
+            )
+        self.assertEqual(response.status_code, 404)
+        self.admit.assert_not_called()
+        retranslate.assert_not_called()
 
 
 class BridgeCeilingTests(unittest.TestCase):

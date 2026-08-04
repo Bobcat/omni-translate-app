@@ -74,6 +74,15 @@ CREATE TABLE IF NOT EXISTS usage_guard (
     reserved INTEGER NOT NULL DEFAULT 0 CHECK (reserved >= 0),
     PRIMARY KEY (tenant, owner_kind, owner_id, metric, period_start)
 );
+CREATE TABLE IF NOT EXISTS resource_owners (
+    tenant TEXT NOT NULL,
+    resource_kind TEXT NOT NULL,
+    resource_id TEXT NOT NULL,
+    owner_kind TEXT NOT NULL,
+    owner_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (tenant, resource_kind, resource_id)
+);
 """
 
 
@@ -224,6 +233,58 @@ class SaasStore:
                 (tenant, str(identity_id), str(subject), now, now),
             )
             return identity_id
+
+    # -- resource ownership ---------------------------------------------------
+
+    def claim_resource_owner(
+        self,
+        tenant: str,
+        resource_kind: str,
+        resource_id: str,
+        owner_kind: str,
+        owner_id: uuid.UUID,
+    ) -> bool:
+        """Claim a host resource once; return whether this owner holds it."""
+        with self.transaction() as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO resource_owners"
+                " (tenant, resource_kind, resource_id, owner_kind, owner_id, created_at)"
+                " VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    tenant,
+                    str(resource_kind),
+                    str(resource_id),
+                    owner_kind,
+                    str(owner_id),
+                    _utcnow(),
+                ),
+            )
+            row = conn.execute(
+                "SELECT owner_kind, owner_id FROM resource_owners"
+                " WHERE tenant = ? AND resource_kind = ? AND resource_id = ?",
+                (tenant, str(resource_kind), str(resource_id)),
+            ).fetchone()
+        return bool(
+            row is not None
+            and row["owner_kind"] == owner_kind
+            and row["owner_id"] == str(owner_id)
+        )
+
+    def resource_is_owned_by(
+        self,
+        tenant: str,
+        resource_kind: str,
+        resource_id: str,
+        owner_kind: str,
+        owner_id: uuid.UUID,
+    ) -> bool:
+        with self.transaction() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM resource_owners WHERE tenant = ? AND resource_kind = ?"
+                " AND resource_id = ? AND owner_kind = ? AND owner_id = ?",
+                (tenant, str(resource_kind), str(resource_id), owner_kind, str(owner_id)),
+            ).fetchone()
+        return row is not None
 
     # -- usage ledger -----------------------------------------------------------
 

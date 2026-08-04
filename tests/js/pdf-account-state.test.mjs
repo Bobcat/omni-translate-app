@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { getPdfArtifact, setAuthTokenProvider } from '../../static/desktop/src/shared/api.js';
-import { createAccountChangeGuard } from '../../static/desktop/src/views/pdf/account-state.js';
+import { createAccountChangeGuard } from '../../static/desktop/src/shared/account-state.js';
+import { createAccountChangeGuard as createMobileAccountChangeGuard } from '../../static/src/shared/account-state.js';
 import { waitForCancellationSettlement } from '../../static/desktop/src/views/pdf/cancellation.js';
 
 test('PDF account state is cleared on sign-out and not on token refresh', () => {
@@ -21,6 +22,16 @@ test('PDF account state is cleared on a direct account switch', () => {
   apply({ signedIn: true, userId: 'user-a' });
   apply({ signedIn: true, userId: 'user-b' });
   assert.equal(clears, 1);
+});
+
+test('anonymous image state is cleared when the user signs in', () => {
+  for (const createGuard of [createAccountChangeGuard, createMobileAccountChangeGuard]) {
+    let clears = 0;
+    const apply = createGuard(() => { clears += 1; });
+    apply({ signedIn: false, userId: '' });
+    apply({ signedIn: true, userId: 'user-a' });
+    assert.equal(clears, 1);
+  }
 });
 
 test('cancel_requested is followed until backend settlement reaches cancelled', async () => {

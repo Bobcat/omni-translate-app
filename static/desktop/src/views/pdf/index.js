@@ -4,7 +4,7 @@ import { submitPdf, getPdfRequest, cancelPdf, getPdfArtifact, getMe, getUsage } 
 import { publishViewBusy } from '../../shared/view-activity.js';
 import { isEnabled as isAuthEnabled, onAuthChange, whenAuthReady } from '../../auth.js';
 import { createSignInCard } from '../../shared/signin-card.js';
-import { createAccountChangeGuard } from './account-state.js';
+import { createAccountChangeGuard } from '../../shared/account-state.js';
 import { waitForCancellationSettlement } from './cancellation.js';
 import { createPdfOperationRecovery } from './operation-recovery.js';
 

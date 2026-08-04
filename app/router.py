@@ -13,6 +13,8 @@ from app.config import get_int, get_str, optional_str, rooted_path
 from app.image_admission import admit_image_operation
 from app.image_admission import read_image_upload
 from app.image_admission import validate_image_upload
+from app.image_ownership import record_image_request_owner
+from app.image_ownership import require_image_request_owner
 from app.image_translation_bridge import ImageTranslationError
 from app.image_translation_bridge import REQUEST_ID_HEADER
 from app.image_translation_bridge import rerender_image
@@ -155,6 +157,7 @@ def post_image_translation(
                 },
                 max_source_characters=max_characters,
             )
+            record_image_request_owner(principal, request_id)
     except ImageTranslationError as exc:
         raise HTTPException(status_code=exc.status_code, detail=_image_error_detail(exc))
     return Response(content=data, media_type=media_type, headers={REQUEST_ID_HEADER: request_id})
@@ -177,12 +180,14 @@ def post_image_retranslation(
 ) -> Response:
     principal, entitlements, _ = resolve_request_context(request)
     entitlements.require_enabled("image_translation.enabled")
+    require_image_request_owner(principal, source_request_id)
     try:
         with admit_image_operation(principal, entitlements):
             data, media_type, request_id = retranslate_image(
                 source_request_id=source_request_id,
                 target_language=target_language,
             )
+            record_image_request_owner(principal, request_id)
     except ImageTranslationError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc))
     return Response(content=data, media_type=media_type, headers={REQUEST_ID_HEADER: request_id})
@@ -202,6 +207,7 @@ def post_image_rerender(
 ) -> Response:
     principal, entitlements, _ = resolve_request_context(request)
     entitlements.require_enabled("image_translation.enabled")
+    require_image_request_owner(principal, source_request_id)
     try:
         with admit_image_operation(principal, entitlements):
             data, media_type, request_id = rerender_image(
@@ -214,6 +220,7 @@ def post_image_rerender(
                     "size_cohort_mode": size_cohort_mode,
                 },
             )
+            record_image_request_owner(principal, request_id)
     except ImageTranslationError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc))
     return Response(content=data, media_type=media_type, headers={REQUEST_ID_HEADER: request_id})

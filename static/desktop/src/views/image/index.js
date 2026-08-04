@@ -1,7 +1,9 @@
 import { iconMarkup } from '../../shared/icons.js';
 import { populateLanguageSelect, recordLanguageMru } from '../../shared/languages.js';
 import { translateImage, retranslateImage } from '../../shared/api.js';
+import { createAccountChangeGuard } from '../../shared/account-state.js';
 import { publishViewBusy } from '../../shared/view-activity.js';
+import { onAuthChange } from '../../auth.js';
 
 // Image translation view, same stage model as the PDF view: an empty state
 // (dropzone) swaps for a loaded state (original frame + translated frame) once
@@ -96,6 +98,7 @@ export function createImageView() {
 
   populateLanguageSelect(targetSelect, 'English');
   applyViewMode();
+  onAuthChange(createAccountChangeGuard(resetView));
 
   function setBusy(busy) {
     publishViewBusy('image', busy);
