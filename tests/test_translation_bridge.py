@@ -80,7 +80,7 @@ class TranslationBridgeTests(unittest.TestCase):
             )
 
         self.assertIs(bridge.translator, translator)
-        self.assertEqual(translator.max_length, 6144)
+        self.assertEqual(translator.max_length, 4096)
         build.assert_called_once_with(
             "llm-responses",
             service_model="gemma-4-26b",

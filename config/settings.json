@@ -90,7 +90,7 @@
     "model": "gemma-4-26b-a4b-it-nvidia-nvfp4-vllm-serve",
     "request_format": "instructions",
     "second_pass_model": "",
-    "max_output_tokens": 6144,
+    "max_output_tokens": 4096,
     "success_cache_ttl_s": 30,
     "success_cache_max_entries": 512,
     "prompt": "You are a translation engine. Translate the user's text from {{source_lang}} into {{target_lang}}. Return only the translation."
