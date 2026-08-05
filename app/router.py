@@ -34,6 +34,9 @@ from app.pdf_translation_bridge import get_pdf_request
 from app.protocol import PROTOCOL_VERSION
 from app.saas_setup import resolve_request_context
 from app.sessions import SESSIONS
+from app.text_translation_policy import admit_text_translation
+from app.text_translation_policy import success_cache as text_translation_success_cache
+from app.text_translation_policy import text_translation_payload_hash
 from app.translation_bridge import TranslationBridge
 from app.translation_bridge import translation_language_code
 from app.tts_bridge import artifact_path
@@ -310,25 +313,33 @@ def post_pdf_translation_cancel(request: Request, request_id: str) -> dict[str, 
 # Sync def for the same threadpool reason as the image routes: an LLM call takes
 # seconds and must not hold the event loop.
 @api_router.post("/text-translation")
-def post_text_translation(payload: TextTranslationRequest) -> dict[str, Any]:
+def post_text_translation(request: Request, payload: TextTranslationRequest) -> dict[str, Any]:
     text = str(payload.text or "")
     if not text.strip():
         raise HTTPException(status_code=400, detail="empty text")
-    max_chars = get_int("text_translation.max_chars", 5000)
-    if len(text) > max_chars:
-        raise HTTPException(status_code=400, detail=f"text too long (max {max_chars} characters)")
     try:
         translation_language_code(payload.source_language)
         translation_language_code(payload.target_language)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    bridge = TranslationBridge(
+    principal, entitlements, _ = resolve_request_context(request)
+    entitlements.require_enabled("text_translation.enabled")
+    max_chars = entitlements.get_int("text_translation.max_characters_per_job")
+    if len(text) > max_chars:
+        raise HTTPException(status_code=400, detail=f"text too long (max {max_chars} characters)")
+    payload_hash = text_translation_payload_hash(
         source_language=payload.source_language,
         target_language=payload.target_language,
+        text=text,
+        final=payload.final,
     )
+    cached = text_translation_success_cache.get(principal, payload_hash)
+    if cached is not None:
+        return cached
+
     # Same invocation shape as the live voice flow (runtime.py): the bridge only
     # reads the opportunity. commits_target gates the optional second pass.
-    request = LiveDispatchRequest(
+    dispatch_request = LiveDispatchRequest(
         request_id=1,
         committed_target_base_revision=0,
         opportunity=TranslationOpportunity(
@@ -338,11 +349,25 @@ def post_text_translation(payload: TextTranslationRequest) -> dict[str, Any]:
             commits_target=bool(payload.final),
         ),
     )
-    try:
-        result = bridge.run(request)
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"translation failed: {exc}")
-    return {"translated_text": result.text, "model": result.model}
+    with admit_text_translation(principal, entitlements):
+        bridge = TranslationBridge(
+            source_language=payload.source_language,
+            target_language=payload.target_language,
+            config_namespace="text_translation",
+        )
+        try:
+            result = bridge.run(dispatch_request)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"translation failed: {exc}")
+        response = {"translated_text": result.text, "model": result.model}
+        text_translation_success_cache.put(
+            principal,
+            payload_hash,
+            response,
+            ttl_s=get_int("text_translation.success_cache_ttl_s"),
+            max_entries=get_int("text_translation.success_cache_max_entries"),
+        )
+    return response
 
 
 @api_router.post("/voice-library/stable")
