@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 from unittest.mock import patch
+from unittest.mock import Mock
 
 from realtime_translation_engine import TranslationResult
 
@@ -55,6 +56,40 @@ class TranslationBridgeTests(unittest.TestCase):
             bridge = TranslationBridge(source_language="Dutch", target_language="English")
 
         self.assertIsInstance(bridge.translator, TranslateGemmaLlmPoolTranslator)
+
+    def test_bridge_reads_an_explicit_config_namespace(self) -> None:
+        values = {
+            "text_translation.model": "gemma-4-26b",
+            "text_translation.second_pass_model": "",
+            "text_translation.prompt": "Translate {{source_lang}} to {{target_lang}}.",
+            "text_translation.request_format": "instructions",
+        }
+
+        def fake_get_str(path: str, default: str = "") -> str:
+            return values.get(path, default)
+
+        translator = Mock()
+        with (
+            patch("app.translation_bridge.get_str", side_effect=fake_get_str),
+            patch("app.translation_bridge.build_translator", return_value=translator) as build,
+        ):
+            bridge = TranslationBridge(
+                source_language="Dutch",
+                target_language="English",
+                config_namespace="text_translation",
+            )
+
+        self.assertIs(bridge.translator, translator)
+        self.assertEqual(translator.max_length, 6144)
+        build.assert_called_once_with(
+            "llm-responses",
+            service_model="gemma-4-26b",
+            second_pass_model="",
+            first_pass_prompt="Translate {{source_lang}} to {{target_lang}}.",
+            first_pass_input_template="{{source_window}}",
+            source_language="Dutch",
+            target_language="English",
+        )
 
     def test_translation_language_code_rejects_unknown_language_name(self) -> None:
         with self.assertRaisesRegex(ValueError, "unsupported translation language"):

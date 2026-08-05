@@ -15,6 +15,13 @@
     },
     "plans": {
       "anonymous": {
+        "text_translation": {
+          "enabled": true,
+          "max_characters_per_job": 5000,
+          "max_concurrent_jobs": 1,
+          "max_jobs_per_minute": 40,
+          "max_jobs_per_hour": 600
+        },
         "image_translation": {
           "enabled": true,
           "max_characters_per_job": 1500,
@@ -32,6 +39,13 @@
         "rerender": { "enabled": true, "consumes_translation_quota": false }
       },
       "free": {
+        "text_translation": {
+          "enabled": true,
+          "max_characters_per_job": 5000,
+          "max_concurrent_jobs": 1,
+          "max_jobs_per_minute": 60,
+          "max_jobs_per_hour": 1200
+        },
         "image_translation": {
           "enabled": true,
           "max_characters_per_job": 1500,
@@ -71,6 +85,15 @@
     "base_url": "http://127.0.0.1:8030",
     "reconciliation_interval_s": 60,
     "reconciliation_missing_grace_s": 86400
+  },
+  "text_translation": {
+    "model": "gemma-4-26b-a4b-it-nvidia-nvfp4-vllm-serve",
+    "request_format": "instructions",
+    "second_pass_model": "",
+    "max_output_tokens": 6144,
+    "success_cache_ttl_s": 30,
+    "success_cache_max_entries": 512,
+    "prompt": "You are a translation engine. Translate the user's text from {{source_lang}} into {{target_lang}}. Return only the translation."
   },
   "live": {
     "session_ttl_s": 900,

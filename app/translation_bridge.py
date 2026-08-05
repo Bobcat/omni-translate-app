@@ -9,7 +9,7 @@ from realtime_translation_engine.types import LiveDispatchRequest
 from realtime_translation_engine.translators import LlmResponsesTranslator
 from realtime_translation_engine.translators import build_translator
 
-from app.config import get_str
+from app.config import get_int, get_str
 
 
 _TRANSLATION_LANGUAGE_CODES = {
@@ -95,7 +95,13 @@ class TranslateGemmaLlmPoolTranslator(LlmResponsesTranslator):
 
 
 class TranslationBridge:
-    def __init__(self, *, source_language: str, target_language: str) -> None:
+    def __init__(
+        self,
+        *,
+        source_language: str,
+        target_language: str,
+        config_namespace: str = "translation",
+    ) -> None:
         self.source_language = str(source_language or "Dutch")
         self.target_language = str(target_language or "English")
         # Same-language pair: skip the LLM entirely and echo the source text
@@ -106,10 +112,14 @@ class TranslationBridge:
             self.source_language.strip().casefold()
             == self.target_language.strip().casefold()
         )
-        self.model = get_str("translation.model", "")
-        self.second_pass_model = get_str("translation.second_pass_model", "")
-        self.prompt = get_str("translation.prompt", "")
-        request_format = get_str("translation.request_format", "instructions").strip().lower()
+        namespace = str(config_namespace or "").strip().strip(".")
+        if not namespace:
+            raise ValueError("translation config namespace is required")
+        self.model = get_str(f"{namespace}.model", "")
+        self.second_pass_model = get_str(f"{namespace}.second_pass_model", "")
+        self.prompt = get_str(f"{namespace}.prompt", "")
+        max_output_tokens = get_int(f"{namespace}.max_output_tokens", 256, min_value=1)
+        request_format = get_str(f"{namespace}.request_format", "instructions").strip().lower()
         if self._echo_mode:
             self.translator = None
         elif request_format == "translategemma_template":
@@ -130,6 +140,8 @@ class TranslationBridge:
                 source_language=self.source_language,
                 target_language=self.target_language,
             )
+        if self.translator is not None:
+            self.translator.max_length = max_output_tokens
 
     def run(self, request: LiveDispatchRequest) -> TranslationRunResult:
         started = time.perf_counter()
