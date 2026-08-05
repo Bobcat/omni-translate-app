@@ -63,12 +63,18 @@ def _build_context() -> SaasContext:
         str(code): EntitlementService.flatten(values)
         for code, values in dict(get_setting("saas.plans", {}) or {}).items()
     }
+    plan_assignments = {
+        str(principal_id): str(plan_code)
+        for principal_id, plan_code in dict(
+            get_setting("saas.plan_assignments", {}) or {}
+        ).items()
+    }
     signing_secret = optional_str("saas.signing_secret") or _load_or_create_signing_secret(
         REPO_ROOT / get_str("saas.signing_secret_path", "data/saas-signing.key")
     )
     return SaasContext(
         store=store,
-        entitlement_service=EntitlementService(plans),
+        entitlement_service=EntitlementService(plans, plan_assignments),
         quota_service=QuotaService(store),
         signing_secret=signing_secret,
         tenant=tenant,

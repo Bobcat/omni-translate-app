@@ -66,6 +66,18 @@ class EntitlementTests(unittest.TestCase):
         with self.assertRaises(SaasError):
             entitlements.require_enabled("image_translation.enabled")
 
+    def test_configured_principal_plan_assignment_overrides_default_plan(self) -> None:
+        principal = _principal("anonymous")
+        service = EntitlementService(
+            PLANS,
+            plan_assignments={str(principal.id): "free"},
+        )
+
+        entitlements = service.resolve(principal)
+
+        self.assertEqual(entitlements.plan_code, "free")
+        self.assertEqual(entitlements.get_int("pdf_translation.pages_per_period"), 12)
+
     def test_snapshot_is_a_stable_copy(self) -> None:
         entitlements = self.service.resolve(_principal("anonymous"))
         snapshot = entitlements.snapshot()

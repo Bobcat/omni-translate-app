@@ -61,12 +61,21 @@ class EntitlementSet:
 class EntitlementService:
     """Resolves principals to entitlement sets."""
 
-    def __init__(self, plans: Mapping[str, Mapping[str, Any]]) -> None:
+    def __init__(
+        self,
+        plans: Mapping[str, Mapping[str, Any]],
+        plan_assignments: Mapping[str, str] | None = None,
+    ) -> None:
         self._plans = {str(code): dict(values) for code, values in plans.items()}
+        self._plan_assignments = {
+            str(principal_id): str(plan_code)
+            for principal_id, plan_code in (plan_assignments or {}).items()
+        }
 
     def resolve(self, principal: Principal) -> EntitlementSet:
         # Unknown plan → empty set: everything fails closed.
-        return EntitlementSet(principal.plan_code, self._plans.get(principal.plan_code, {}))
+        plan_code = self._plan_assignments.get(str(principal.id), principal.plan_code)
+        return EntitlementSet(plan_code, self._plans.get(plan_code, {}))
 
     @staticmethod
     def flatten(config: Mapping[str, Any], *, prefix: str = "") -> dict[str, Any]:
