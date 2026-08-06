@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 import shutil
 import time
@@ -11,7 +10,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
-from fastapi import WebSocket, status
+from fastapi import WebSocket
 from realtime_asr_engine import ASRResult
 from realtime_asr_engine import AudioFormat
 from realtime_asr_engine import LiveASRRunner
@@ -43,6 +42,8 @@ from app.tts_bridge import get_tts_bridge
 from app.tts_bridge import tts_settings_enabled
 from app.tts_bridge import tts_settings_snapshot
 from app.tts_bridge import tts_uses_asr_reference_wav
+from app.voice.session_lifecycle import ConversationLifecycle
+from app.voice.tasks import cancel_task
 
 
 LOGGER = logging.getLogger("asr_translate_tts.runtime")
@@ -212,94 +213,10 @@ class ConversationRuntime:
         self.turn_counter = 1
         self.current_turn = self._new_turn(lane_id="a_to_b")
         self.closed_turns: list[ConversationTurn] = []
-        self.asr_ready: asyncio.Event | None = None
-        self.loop: asyncio.AbstractEventLoop | None = None
-        self.send_lock = asyncio.Lock()
-        self.listening = False
-        self.closed = False
+        self.lifecycle = ConversationLifecycle(self)
 
     async def run(self) -> None:
-        await self.websocket.accept()
-        self.loop = asyncio.get_running_loop()
-        self.asr_ready = asyncio.Event()
-        try:
-            for lane in self.lanes.values():
-                lane.asr_runner.ensure_vad_ready()
-        except Exception as exc:
-            await self._send(event("error", self.session_id, code="vad_init_failed", message=str(exc), fatal=True))
-            await self.websocket.close(code=status.WS_1011_INTERNAL_ERROR, reason="vad_init_failed")
-            await self._cleanup()
-            return
-
-        self.asr_bridge.start_completion_stream(on_terminal_event=self._notify_asr_ready)
-        await self._send(
-            event(
-                "ready",
-                self.session_id,
-                audio_input={
-                    "format": "pcm16le",
-                    "sample_rate_hz": self.sample_rate_hz,
-                    "channels": self.channels,
-                },
-                side_a_language=self.side_a_language,
-                side_b_language=self.side_b_language,
-                live_settings=deepcopy(self.live_settings),
-                lanes={lane_id: self._lane_payload(lane) for lane_id, lane in self.lanes.items()},
-                current_turn=self._turn_payload(self.current_turn),
-            )
-        )
-        try:
-            while not self.closed:
-                kind, incoming = await self._wait_for_input()
-                if kind == "asr":
-                    await self._process_asr(force=False)
-                    continue
-                if incoming is None:
-                    continue
-                if incoming.get("type") == "websocket.disconnect":
-                    break
-                raw_bytes = incoming.get("bytes")
-                if raw_bytes is not None:
-                    await self._handle_audio(raw_bytes)
-                    continue
-                raw_text = incoming.get("text")
-                if raw_text is not None:
-                    keep_open = await self._handle_control(raw_text)
-                    if not keep_open:
-                        break
-        finally:
-            await self._cleanup()
-
-    def _notify_asr_ready(self) -> None:
-        loop = self.loop
-        ready = self.asr_ready
-        if loop is None or ready is None:
-            return
-        with contextlib.suppress(RuntimeError):
-            loop.call_soon_threadsafe(ready.set)
-
-    async def _wait_for_input(self) -> tuple[str, dict[str, Any] | None]:
-        ready = self.asr_ready
-        if ready is not None and ready.is_set():
-            ready.clear()
-            return "asr", None
-
-        receive_task = asyncio.create_task(self.websocket.receive())
-        tasks: set[asyncio.Task[Any]] = {receive_task}
-        ready_task: asyncio.Task[Any] | None = None
-        if ready is not None:
-            ready_task = asyncio.create_task(ready.wait())
-            tasks.add(ready_task)
-        done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-
-        if receive_task in done:
-            await _cancel_task(ready_task)
-            return "websocket", receive_task.result()
-
-        if ready is not None:
-            ready.clear()
-        await _cancel_task(receive_task)
-        return "asr", None
+        await self.lifecycle.run()
 
     async def _handle_control(self, raw_text: str) -> bool:
         import json
@@ -307,16 +224,16 @@ class ConversationRuntime:
         try:
             payload = json.loads(raw_text)
         except Exception:
-            await self._send(event("error", self.session_id, code="invalid_json", message="Invalid control message."))
+            await self.lifecycle.send(event("error", self.session_id, code="invalid_json", message="Invalid control message."))
             return True
         msg_type = str(payload.get("type") or "").strip().lower()
         if msg_type == "start_listening":
-            self.listening = True
+            self.lifecycle.listening = True
             SESSIONS.update(self.session_id, state="listening")
-            await self._send(event("state", self.session_id, state="listening"))
+            await self.lifecycle.send(event("state", self.session_id, state="listening"))
             return True
         if msg_type == "pause_listening":
-            await self._pause_listening()
+            await self.lifecycle.pause_listening()
             return False
         if msg_type == "next_turn":
             await self._next_turn(lane_id=payload.get("lane_id"))
@@ -345,13 +262,13 @@ class ConversationRuntime:
         if msg_type == "tts_playback_complete":
             await self._tts_playback_complete(payload)
             return True
-        await self._send(event("error", self.session_id, code="unsupported_control", message=msg_type))
+        await self.lifecycle.send(event("error", self.session_id, code="unsupported_control", message=msg_type))
         return True
 
     async def _update_live_settings(self, payload: dict[str, Any]) -> None:
         delta, errors = normalize_live_settings_delta(payload.get("settings"), live_update=True)
         if errors:
-            await self._send(
+            await self.lifecycle.send(
                 event(
                     "error",
                     self.session_id,
@@ -361,17 +278,17 @@ class ConversationRuntime:
             )
             return
         if not delta:
-            await self._send(event("live_settings", self.session_id, live_settings=deepcopy(self.live_settings)))
+            await self.lifecycle.send(event("live_settings", self.session_id, live_settings=deepcopy(self.live_settings)))
             return
         self.live_settings = merge_live_settings(self.live_settings, delta)
         self.asr_bridge.live_settings = self.live_settings
         self._apply_live_runner_settings()
-        await self._send(event("live_settings", self.session_id, live_settings=deepcopy(self.live_settings)))
+        await self.lifecycle.send(event("live_settings", self.session_id, live_settings=deepcopy(self.live_settings)))
 
     async def _update_tts_settings(self, payload: dict[str, Any]) -> None:
         settings, errors = tts_settings_snapshot(payload.get("settings"))
         if errors:
-            await self._send(
+            await self.lifecycle.send(
                 event(
                     "error",
                     self.session_id,
@@ -382,10 +299,10 @@ class ConversationRuntime:
             return
         self.tts_settings = settings
         SESSIONS.update(self.session_id, tts_settings=deepcopy(settings))
-        await self._send(event("tts_settings", self.session_id))
+        await self.lifecycle.send(event("tts_settings", self.session_id))
 
     async def _handle_audio(self, raw_bytes: bytes) -> None:
-        if not self.listening:
+        if not self.lifecycle.listening:
             return
         raw = bytes(raw_bytes or b"")
         remainder = len(raw) % self.sample_width_bytes
@@ -512,7 +429,7 @@ class ConversationRuntime:
                     error=result.error,
                 )
             )
-            await self._send(
+            await self.lifecycle.send(
                 event(
                     "error",
                     self.session_id,
@@ -527,7 +444,7 @@ class ConversationRuntime:
     async def _enqueue_asr(self, lane: ConversationLane, *, force: bool) -> None:
         if lane.asr_inflight is not None:
             return
-        if not self.listening and not force:
+        if not self.lifecycle.listening and not force:
             return
         _vad_t0 = time.monotonic()
         decision = lane.asr_runner.maybe_dispatch_work(now_mono=_vad_t0, force=force)
@@ -544,7 +461,7 @@ class ConversationRuntime:
         )
         await self._send_vad_state(lane, decision)
         if decision.error:
-            await self._send(
+            await self.lifecycle.send(
                 event(
                     "error",
                     self.session_id,
@@ -574,7 +491,7 @@ class ConversationRuntime:
             )
         except Exception as exc:
             lane.asr_runner.rollback_inflight_work(sequence_id=work.sequence_id)
-            await self._send(
+            await self.lifecycle.send(
                 event(
                     "error",
                     self.session_id,
@@ -600,7 +517,7 @@ class ConversationRuntime:
             audio_ms=int(work.t1_ms - work.t0_ms),
             submit_ms=round((time.monotonic() - _submit_t0) * 1000.0, 2),
         )
-        await self._send(
+        await self.lifecycle.send(
             event(
                 "asr_status",
                 self.session_id,
@@ -617,7 +534,7 @@ class ConversationRuntime:
         speech_detected = bool(getattr(observation, "speech_hit", False))
         default_reason = "speech" if speech_detected else "silence"
         gate = getattr(decision, "speech_gate_decision", None)
-        await self._send(
+        await self.lifecycle.send(
             event(
                 "vad_state",
                 self.session_id,
@@ -657,7 +574,7 @@ class ConversationRuntime:
     async def _next_turn(self, *, lane_id: Any) -> None:
         next_lane_id = str(lane_id or "").strip()
         if next_lane_id not in self.lanes:
-            await self._send(
+            await self.lifecycle.send(
                 event(
                     "error",
                     self.session_id,
@@ -694,7 +611,7 @@ class ConversationRuntime:
         lane = self._current_lane()
         turn = self.current_turn
         if turn.state == TurnState.OPEN_SPEAKING or lane.tts_task is not None:
-            await self._send(
+            await self.lifecycle.send(
                 event(
                     "tts_status",
                     self.session_id,
@@ -707,7 +624,7 @@ class ConversationRuntime:
             )
             return
         if not speaking_part_ids:
-            await self._send(
+            await self.lifecycle.send(
                 event(
                     "tts_status",
                     self.session_id,
@@ -720,7 +637,7 @@ class ConversationRuntime:
             )
             return
         if not tts_settings_enabled(self.tts_settings):
-            await self._send(
+            await self.lifecycle.send(
                 event(
                     "tts_status",
                     self.session_id,
@@ -840,7 +757,7 @@ class ConversationRuntime:
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            await self._send(
+            await self.lifecycle.send(
                 event(
                     "error",
                     self.session_id,
@@ -850,7 +767,7 @@ class ConversationRuntime:
                 )
             )
             return
-        await self._send(
+        await self.lifecycle.send(
             event(
                 "tts_replay_ready",
                 self.session_id,
@@ -907,7 +824,7 @@ class ConversationRuntime:
                         part.speech_state = "pending"
                 self._refresh_turn_state()
                 await self._send_turn_update(reason="tts_failed")
-            await self._send(
+            await self.lifecycle.send(
                 event(
                     "error",
                     self.session_id,
@@ -933,7 +850,7 @@ class ConversationRuntime:
                 "part_ids": list(speaking_part_ids),
                 "tts": dict(tts_payload),
             }
-        await self._send(
+        await self.lifecycle.send(
             event(
                 "tts_clip_ready",
                 self.session_id,
@@ -1052,13 +969,13 @@ class ConversationRuntime:
 
     async def _retire_translation_work(self, lane: ConversationLane) -> None:
         lane.translation_generation += 1
-        await _cancel_task(lane.translation_task)
+        await cancel_task(lane.translation_task)
         lane.translation_task = None
         lane.translation_runner.retire_inflight()
 
     async def _send_translation_status(self, *, state: str, reason: str, message: str) -> None:
         lane = self._current_lane()
-        await self._send(
+        await self.lifecycle.send(
             event(
                 "translation_status",
                 self.session_id,
@@ -1132,7 +1049,7 @@ class ConversationRuntime:
                 ok=False,
                 err=str(exc)[:200],
             )
-            await self._send(
+            await self.lifecycle.send(
                 event(
                     "error",
                     self.session_id,
@@ -1189,8 +1106,8 @@ class ConversationRuntime:
             return turn
         lane = self.lanes[turn.lane_id]
         self._close_asr_scope_for_turn(lane)
-        await _cancel_task(lane.translation_task)
-        await _cancel_task(lane.tts_task)
+        await cancel_task(lane.translation_task)
+        await cancel_task(lane.tts_task)
         lane.translation_task = None
         lane.tts_task = None
         lane.pending_tts.clear()
@@ -1365,7 +1282,7 @@ class ConversationRuntime:
             payload["previous_turn"] = self._turn_payload(previous_turn)
         if translation is not None:
             payload["translation"] = translation
-        await self._send(payload)
+        await self.lifecycle.send(payload)
 
     def _discard_inflight(self) -> None:
         # Frontend sends this when the user stops the mic so the server
@@ -1411,43 +1328,6 @@ class ConversationRuntime:
                 lane.translation_runner.target_state.target_committed_text = part.target_committed_text
                 lane.translation_runner.target_state.target_preview_text = ""
                 lane.last_target_committed = part.target_committed_text
-
-    async def _pause_listening(self) -> None:
-        self.listening = False
-        await self._discard_runtime_work()
-        SESSIONS.update(self.session_id, state="completed")
-        await self._send(event("ended", self.session_id, reason="pause_listening"))
-        with contextlib.suppress(Exception):
-            await self.websocket.close(code=status.WS_1000_NORMAL_CLOSURE)
-        self.closed = True
-
-    async def _discard_runtime_work(self) -> None:
-        for lane in self.lanes.values():
-            inflight = lane.asr_inflight
-            if inflight is not None:
-                sequence_id = self._sequence_from_request(inflight.job.request_id)
-                lane.asr_runner.clear_inflight_work(sequence_id=sequence_id)
-                self.asr_bridge.discard_request(inflight.job.request_id)
-                lane.asr_inflight = None
-            await _cancel_task(lane.translation_task)
-            await _cancel_task(lane.tts_task)
-            lane.translation_task = None
-            lane.tts_task = None
-            lane.pending_tts.clear()
-
-    async def _cleanup(self) -> None:
-        self.closed = True
-        for lane in self.lanes.values():
-            await _cancel_task(lane.translation_task)
-            await _cancel_task(lane.tts_task)
-            lane.translation_task = None
-            lane.tts_task = None
-        self.asr_bridge.close()
-        SESSIONS.close(self.session_id, reason="closed")
-
-    async def _send(self, payload: dict[str, Any]) -> None:
-        async with self.send_lock:
-            await self.websocket.send_json(payload)
 
     def _current_lane(self) -> ConversationLane:
         return self.lanes[self.current_turn.lane_id]
@@ -1528,14 +1408,6 @@ class ConversationRuntime:
             "target_language": lane.target_language,
             "asr_language": lane.asr_language,
         }
-
-
-async def _cancel_task(task: asyncio.Task[Any] | None) -> None:
-    if task is None or task.done():
-        return
-    task.cancel()
-    with contextlib.suppress(asyncio.CancelledError):
-        await task
 
 
 def _asr_language_for(language: str) -> str | None:
