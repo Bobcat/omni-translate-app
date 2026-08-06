@@ -140,6 +140,10 @@ class LiveASRPoolBridge:
         if thread is not None:
             thread.join(timeout=1.0)
 
+    def close(self) -> None:
+        self.stop_completion_stream()
+        self._client.close()
+
     def enqueue_pcm16(
         self,
         *,

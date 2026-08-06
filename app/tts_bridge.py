@@ -12,10 +12,8 @@ import uuid
 import wave
 from pathlib import Path
 from typing import Any
-from urllib.error import HTTPError
-from urllib.error import URLError
-from urllib.request import Request
-from urllib.request import urlopen
+
+import httpx
 
 from app.config import REPO_ROOT
 from app.config import get_bool
@@ -23,6 +21,7 @@ from app.config import get_float
 from app.config import get_setting
 from app.config import get_str
 from app.config import rooted_path
+from app.upstreams.http import get_upstream_http_client
 
 
 TTS_ROOT = (REPO_ROOT / "data" / "tts").resolve()
@@ -656,60 +655,60 @@ def _copy_wav_tail_to_bytes(source_path: Path, *, max_duration_s: float) -> tupl
 
 def _post_json(url: str, payload: dict[str, Any], *, timeout_s: float) -> dict[str, Any]:
     data = json.dumps(payload, ensure_ascii=True).encode("utf-8")
-    request = Request(
-        url,
-        data=data,
-        headers={
-            "accept": "application/json",
-            "content-type": "application/json",
-        },
-        method="POST",
-    )
     try:
-        with urlopen(request, timeout=timeout_s) as response:
-            response_bytes = response.read()
-    except HTTPError as exc:
-        detail = _http_error_detail(exc)
-        raise RuntimeError(f"tts_pool_http_{exc.code}: {detail}") from exc
-    except URLError as exc:
-        raise RuntimeError(f"tts_pool_unreachable: {exc.reason}") from exc
-    payload = json.loads(response_bytes.decode("utf-8"))
+        response = get_upstream_http_client().post(
+            url,
+            content=data,
+            headers={
+                "accept": "application/json",
+                "content-type": "application/json",
+            },
+            timeout=timeout_s,
+        )
+    except httpx.RequestError as exc:
+        raise RuntimeError(f"tts_pool_unreachable: {exc}") from exc
+    if response.is_error:
+        detail = _http_error_detail(response)
+        raise RuntimeError(f"tts_pool_http_{response.status_code}: {detail}")
+    payload = response.json()
     if not isinstance(payload, dict):
         raise ValueError("tts_pool_response_must_be_object")
     return payload
 
 
 def _get_json(url: str, *, timeout_s: float) -> dict[str, Any]:
-    request = Request(url, headers={"accept": "application/json"}, method="GET")
     try:
-        with urlopen(request, timeout=timeout_s) as response:
-            response_bytes = response.read()
-    except HTTPError as exc:
-        detail = _http_error_detail(exc)
-        raise RuntimeError(f"tts_pool_http_{exc.code}: {detail}") from exc
-    except URLError as exc:
-        raise RuntimeError(f"tts_pool_unreachable: {exc.reason}") from exc
-    payload = json.loads(response_bytes.decode("utf-8"))
+        response = get_upstream_http_client().get(
+            url,
+            headers={"accept": "application/json"},
+            timeout=timeout_s,
+        )
+    except httpx.RequestError as exc:
+        raise RuntimeError(f"tts_pool_unreachable: {exc}") from exc
+    if response.is_error:
+        detail = _http_error_detail(response)
+        raise RuntimeError(f"tts_pool_http_{response.status_code}: {detail}")
+    payload = response.json()
     if not isinstance(payload, dict):
         raise ValueError("tts_pool_response_must_be_object")
     return payload
 
 
-def _http_error_detail(exc: HTTPError) -> str:
+def _http_error_detail(response: httpx.Response) -> str:
     try:
-        body = exc.read().decode("utf-8", errors="replace")
+        body = response.text
     except Exception:
-        return str(exc)
+        return f"HTTP {response.status_code}"
     try:
         payload = json.loads(body)
     except Exception:
-        return body.strip() or str(exc)
+        return body.strip() or f"HTTP {response.status_code}"
     detail = payload.get("detail") if isinstance(payload, dict) else None
     if isinstance(detail, dict):
         return json.dumps(detail, ensure_ascii=True, sort_keys=True)
     if detail is not None:
         return str(detail)
-    return body.strip() or str(exc)
+    return body.strip() or f"HTTP {response.status_code}"
 
 
 def _decode_audio_payload(audio_payload: dict[str, Any]) -> bytes:

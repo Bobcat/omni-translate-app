@@ -67,7 +67,7 @@ export async function createVoiceSession({ sideA, sideB }) {
 
 // One-shot text translation: stateless, the client re-sends the full current
 // text and guards freshness itself (runToken in the view).
-export async function translateText({ source, target, text, final = false }) {
+export async function translateText({ source, target, text }) {
   const response = await fetch('/api/text-translation', {
     method: 'POST',
     headers: authHeaders({ 'Content-Type': 'application/json', Accept: 'application/json' }),
@@ -75,7 +75,6 @@ export async function translateText({ source, target, text, final = false }) {
       source_language: String(source || ''),
       target_language: String(target || ''),
       text: String(text || ''),
-      final: Boolean(final),
     }),
   });
   await ensureOk(response);

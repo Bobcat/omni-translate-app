@@ -13,7 +13,6 @@ export function createTranslationRunner({ minChars = 3, getPayload, translate, o
   let runToken = 0;
   let inFlight = false;
   let dirtyWhileInFlight = false;
-  let pendingFinal = false;
 
   // The current input no longer wants a translation (e.g. cleared below the
   // minimum): an in-flight result must not land, but its cleanup still runs.
@@ -25,11 +24,10 @@ export function createTranslationRunner({ minChars = 3, getPayload, translate, o
     return inFlight;
   }
 
-  async function fire({ final = false } = {}) {
+  async function fire() {
     if (inFlight) {
       // One request at a time; re-fire with the newest text on completion.
       dirtyWhileInFlight = true;
-      pendingFinal = pendingFinal || final;
       return;
     }
     const payload = getPayload();
@@ -39,12 +37,11 @@ export function createTranslationRunner({ minChars = 3, getPayload, translate, o
     }
     inFlight = true;
     dirtyWhileInFlight = false;
-    pendingFinal = false;
     const token = ++runToken;
     onBusy?.(true);
     onStateChange?.();
     try {
-      const result = await translate({ ...payload, final });
+      const result = await translate(payload);
       if (token === runToken) onResult?.(result);
     } catch (error) {
       if (token === runToken) onError?.(error);
@@ -54,7 +51,7 @@ export function createTranslationRunner({ minChars = 3, getPayload, translate, o
       onStateChange?.();
       if (dirtyWhileInFlight) {
         dirtyWhileInFlight = false;
-        fire({ final: pendingFinal });
+        fire();
       }
     }
   }

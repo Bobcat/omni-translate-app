@@ -69,7 +69,12 @@ class RecordingTranslationBridge:
 
     def run(self, request) -> SimpleNamespace:
         self.calls.append(request.opportunity.source_window)
-        return SimpleNamespace(text=self.text, wall_ms=1.0, model="fake-translation")
+        return SimpleNamespace(
+            text=self.text,
+            wall_ms=1.0,
+            profile="general-fast:test",
+            quality="fast",
+        )
 
 
 class TurnStateMachineTests(unittest.IsolatedAsyncioTestCase):

@@ -83,21 +83,6 @@ test('clear then retype during an in-flight request refires with the newest text
   assert.deepEqual(calls.busy, [true, false, true, false]);
 });
 
-test('a pending final flag propagates to the refire', async () => {
-  const { requests, runner } = setup();
-
-  const first = runner.fire();
-  await runner.fire({ final: true }); // dirty, final requested
-  requests[0].resolve({ translated_text: 'a' });
-  await first;
-
-  assert.equal(requests.length, 2);
-  assert.equal(requests[1].payload.final, true);
-
-  requests[1].resolve({ translated_text: 'b' });
-  await flushMicrotasks();
-});
-
 test('an in-flight error after invalidate is swallowed but cleanup runs', async () => {
   const { state, calls, requests, runner } = setup();
 

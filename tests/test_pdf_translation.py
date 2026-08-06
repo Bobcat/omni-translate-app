@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import io
 import json
 import unittest
 import uuid
 from unittest.mock import patch
-from urllib.error import HTTPError
+
+import httpx
 
 from fastapi.testclient import TestClient
 
@@ -156,14 +156,16 @@ class SubmitPdfTests(unittest.TestCase):
         self.assertEqual(request_json["request_id"], operation_id)
 
     def test_upstream_status_code_is_preserved(self) -> None:
-        error = HTTPError(
-            "http://service/v1/requests/missing",
-            404,
-            "Not Found",
-            {},
-            io.BytesIO(b'{"code":"REQUEST_NOT_FOUND","message":"request_id not found"}'),
-        )
-        with patch("app.pdf_translation_bridge.urlopen", side_effect=error):
+        def handle(_request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                404,
+                json={"code": "REQUEST_NOT_FOUND", "message": "request_id not found"},
+            )
+
+        with httpx.Client(transport=httpx.MockTransport(handle)) as client, patch(
+            "app.pdf_translation_bridge.get_upstream_http_client",
+            return_value=client,
+        ):
             with self.assertRaises(PdfTranslationError) as ctx:
                 get_pdf_request("missing")
         self.assertEqual(ctx.exception.status_code, 404)
