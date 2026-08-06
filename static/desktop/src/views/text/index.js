@@ -169,9 +169,9 @@ export function createTextView() {
 
   // Dispatch goes through the runner (request state, newest-wins, cleanup);
   // the view only makes sure no pending timer fires a second request.
-  function fireTranslation({ final = false } = {}) {
+  function fireTranslation() {
     cancelTimers();
-    runner.fire({ final });
+    runner.fire();
   }
 
   function swapLanguages() {
@@ -190,7 +190,7 @@ export function createTextView() {
   inputEl.addEventListener('keydown', (event) => {
     if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
       event.preventDefault();
-      fireTranslation({ final: true });
+      fireTranslation();
     }
   });
 
@@ -205,7 +205,7 @@ export function createTextView() {
     scheduleTranslation({ immediate: true });
   });
   swapBtn.addEventListener('click', swapLanguages);
-  translateBtn.addEventListener('click', () => fireTranslation({ final: true }));
+  translateBtn.addEventListener('click', fireTranslation);
   copyBtn.addEventListener('click', async () => {
     try {
       await navigator.clipboard.writeText(outputEl.textContent);

@@ -86,14 +86,19 @@
     "reconciliation_interval_s": 60,
     "reconciliation_missing_grace_s": 86400
   },
+  "translation_services": {
+    "base_url": "http://127.0.0.1:8030",
+    "request_timeout_s": 120
+  },
+  "upstream_http": {
+    "max_connections": 32,
+    "max_keepalive_connections": 16,
+    "keepalive_expiry_s": 60
+  },
   "text_translation": {
-    "model": "gemma-4-26b-a4b-it-nvidia-nvfp4-vllm-serve",
-    "request_format": "instructions",
-    "second_pass_model": "",
-    "max_output_tokens": 4096,
+    "quality": "fast",
     "success_cache_ttl_s": 30,
-    "success_cache_max_entries": 512,
-    "prompt": "You are a translation engine. Translate the user's text from {{source_lang}} into {{target_lang}}. Return only the translation."
+    "success_cache_max_entries": 512
   },
   "live": {
     "session_ttl_s": 900,
@@ -162,10 +167,7 @@
     }
   },
   "translation": {
-    "model": "translategemma-12b-it-q5-k-m-gguf",
-    "_model": "translategemma-4b-it-q5-k-m-gguf",
-    "request_format": "translategemma_template",
-    "second_pass_model": "",
+    "quality": "fast",
     "source_language": "Dutch",
     "target_language": "English",
     "preview": {
@@ -173,8 +175,7 @@
       "min_chars": 80,
       "max_distance_ratio": 0.15,
       "min_growth_chars": 50
-    },
-    "prompt": "You are a translation engine. Translate the user's text from {{source_lang}} into {{target_lang}}. Return only the translation."
+    }
   },
   "tts": {
     "enabled": false,

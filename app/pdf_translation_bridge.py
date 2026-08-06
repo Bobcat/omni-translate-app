@@ -8,19 +8,20 @@ submit differs: a PDF goes up as ``document_file`` where images use
 ``image_file``.
 
 Synchronous on purpose: the routes that call this are plain ``def`` so FastAPI
-runs them in a threadpool. Uses stdlib ``urllib`` to match the app's existing
-HTTP usage.
+runs them in a threadpool. Requests share the app's process-wide keep-alive
+pool.
 """
 from __future__ import annotations
 
 import json
 import uuid
-from urllib.error import HTTPError, URLError
 from urllib.parse import quote
-from urllib.request import Request, urlopen
+
+import httpx
 
 from app.config import get_float, get_str
 from app.translation_bridge import translation_language_code
+from app.upstreams.http import get_upstream_http_client
 
 
 class PdfTranslationError(RuntimeError):
@@ -70,7 +71,11 @@ def get_pdf_request(request_id: str) -> dict:
     safe_id = quote(str(request_id or "").strip(), safe="")
     if not safe_id:
         raise PdfTranslationError("request_id is required", status_code=400)
-    return _read_json(Request(f"{_base_url()}/v1/requests/{safe_id}", method="GET"), timeout=_short_timeout_s())
+    return _read_json(
+        "GET",
+        f"{_base_url()}/v1/requests/{safe_id}",
+        timeout=_short_timeout_s(),
+    )
 
 
 def cancel_pdf_request(request_id: str) -> dict:
@@ -79,7 +84,9 @@ def cancel_pdf_request(request_id: str) -> dict:
     if not safe_id:
         raise PdfTranslationError("request_id is required", status_code=400)
     return _read_json(
-        Request(f"{_base_url()}/v1/requests/{safe_id}/cancel", data=b"", method="POST"),
+        "POST",
+        f"{_base_url()}/v1/requests/{safe_id}/cancel",
+        content=b"",
         timeout=_short_timeout_s(),
     )
 
@@ -92,15 +99,15 @@ def get_pdf_artifact(request_id: str, artifact_name: str) -> tuple[bytes, str]:
         raise PdfTranslationError("request_id and artifact name are required", status_code=400)
     url = f"{_base_url()}/v1/requests/{safe_id}/artifacts/{safe_name}"
     try:
-        with urlopen(Request(url, method="GET"), timeout=_artifact_timeout_s()) as response:
-            data = response.read()
-            media_type = (response.headers.get("Content-Type") or "application/octet-stream").split(";")[0].strip()
-    except HTTPError as exc:
+        response = get_upstream_http_client().get(url, timeout=_artifact_timeout_s())
+    except httpx.RequestError as exc:
+        raise PdfTranslationError(f"translation-services unreachable: {exc}") from exc
+    if response.is_error:
         raise PdfTranslationError(
-            _http_error_detail(exc), status_code=int(exc.code)
-        ) from exc
-    except URLError as exc:
-        raise PdfTranslationError(f"translation-services unreachable: {exc.reason}") from exc
+            _http_error_detail(response), status_code=response.status_code
+        )
+    data = response.content
+    media_type = (response.headers.get("Content-Type") or "application/octet-stream").split(";")[0].strip()
     if not data:
         raise PdfTranslationError("artifact was empty")
     return data, media_type
@@ -141,37 +148,49 @@ def _submit_multipart(request_json: str, document_bytes: bytes, filename: str, c
             b"--", bnd, b"--", crlf,
         ]
     )
-    request = Request(
+    return _read_json(
+        "POST",
         f"{_base_url()}/v1/requests",
-        data=body,
+        content=body,
         headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
-        method="POST",
+        timeout=_submit_timeout_s(),
     )
-    return _read_json(request, timeout=_submit_timeout_s())
 
 
-def _read_json(request: Request, *, timeout: float) -> dict:
+def _read_json(
+    method: str,
+    url: str,
+    *,
+    timeout: float,
+    content: bytes | None = None,
+    headers: dict[str, str] | None = None,
+) -> dict:
     try:
-        with urlopen(request, timeout=timeout) as response:
-            raw = response.read()
-    except HTTPError as exc:
+        response = get_upstream_http_client().request(
+            method,
+            url,
+            content=content,
+            headers=headers,
+            timeout=timeout,
+        )
+    except httpx.RequestError as exc:
+        raise PdfTranslationError(f"translation-services unreachable: {exc}") from exc
+    if response.is_error:
         raise PdfTranslationError(
-            _http_error_detail(exc), status_code=int(exc.code)
-        ) from exc
-    except URLError as exc:
-        raise PdfTranslationError(f"translation-services unreachable: {exc.reason}") from exc
+            _http_error_detail(response), status_code=response.status_code
+        )
     try:
-        payload = json.loads(raw.decode("utf-8"))
-    except (ValueError, UnicodeDecodeError) as exc:
+        payload = response.json()
+    except ValueError as exc:
         raise PdfTranslationError("invalid response from translation-services") from exc
     if not isinstance(payload, dict):
         raise PdfTranslationError("unexpected response from translation-services")
     return payload
 
 
-def _http_error_detail(exc: HTTPError) -> str:
+def _http_error_detail(response: httpx.Response) -> str:
     try:
-        payload = json.loads(exc.read().decode("utf-8"))
+        payload = response.json()
         detail = (
             payload.get("detail") or payload.get("message") or payload.get("code")
             if isinstance(payload, dict)
@@ -183,4 +202,4 @@ def _http_error_detail(exc: HTTPError) -> str:
             return f"translation-services error: {detail}"
     except Exception:
         pass
-    return f"translation-services HTTP {exc.code}"
+    return f"translation-services HTTP {response.status_code}"

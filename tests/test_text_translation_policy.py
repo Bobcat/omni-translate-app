@@ -27,7 +27,7 @@ class TextTranslationSuccessCacheTests(unittest.TestCase):
         self.cache.put(
             self.first,
             "payload",
-            {"translated_text": "Hello", "model": "model-a"},
+            {"translated_text": "Hello", "profile": "general-fast:test"},
             ttl_s=30,
             max_entries=10,
             now=100,
@@ -40,7 +40,7 @@ class TextTranslationSuccessCacheTests(unittest.TestCase):
         self.cache.put(
             self.first,
             "payload",
-            {"translated_text": "Hello", "model": "model-a"},
+            {"translated_text": "Hello", "profile": "general-fast:test"},
             ttl_s=30,
             max_entries=10,
             now=100,
@@ -48,18 +48,16 @@ class TextTranslationSuccessCacheTests(unittest.TestCase):
 
         self.assertIsNone(self.cache.get(self.first, "payload", now=130))
 
-    def test_payload_hash_covers_languages_text_and_final_flag(self) -> None:
+    def test_payload_hash_covers_languages_and_text(self) -> None:
         base = text_translation_payload_hash(
             source_language="Dutch",
             target_language="English",
             text="Hallo",
-            final=False,
         )
         changed = text_translation_payload_hash(
             source_language="Dutch",
             target_language="English",
-            text="Hallo",
-            final=True,
+            text="Hallo wereld",
         )
 
         self.assertNotEqual(base, changed)

@@ -6,6 +6,7 @@ from urllib.parse import urlparse
 from fastapi import APIRouter, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
+from pydantic import ConfigDict
 
 from app.asr_pc_export import live_pc_events_to_text
 from app.asr_pc_export import pc_export_filename
@@ -38,6 +39,7 @@ from app.text_translation_policy import admit_text_translation
 from app.text_translation_policy import success_cache as text_translation_success_cache
 from app.text_translation_policy import text_translation_payload_hash
 from app.translation_bridge import TranslationBridge
+from app.translation_bridge import TranslationServicesError
 from app.translation_bridge import translation_language_code
 from app.tts_bridge import artifact_path
 from app.tts_bridge import tts_settings_payload
@@ -46,9 +48,6 @@ from app.voice_library import discard_pending_stable_sample
 from app.voice_library import generate_stable_sample
 from app.voice_library import keep_pending_stable_sample
 from app.voice_library import stable_voice_library_status
-
-from realtime_translation_engine.types import LiveDispatchRequest
-from realtime_translation_engine.types import TranslationOpportunity
 
 api_router = APIRouter(prefix="/api")
 
@@ -67,10 +66,11 @@ class GenerateStableVoiceSampleRequest(BaseModel):
 
 
 class TextTranslationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     source_language: str
     target_language: str
     text: str
-    final: bool = False
 
 
 @api_router.get("/health")
@@ -331,35 +331,26 @@ def post_text_translation(request: Request, payload: TextTranslationRequest) -> 
         source_language=payload.source_language,
         target_language=payload.target_language,
         text=text,
-        final=payload.final,
     )
     cached = text_translation_success_cache.get(principal, payload_hash)
     if cached is not None:
         return cached
 
-    # Same invocation shape as the live voice flow (runtime.py): the bridge only
-    # reads the opportunity. commits_target gates the optional second pass.
-    dispatch_request = LiveDispatchRequest(
-        request_id=1,
-        committed_target_base_revision=0,
-        opportunity=TranslationOpportunity(
-            lane="commit",
-            source_window=text,
-            source_chunks_used=1,
-            commits_target=bool(payload.final),
-        ),
-    )
     with admit_text_translation(principal, entitlements):
         bridge = TranslationBridge(
             source_language=payload.source_language,
             target_language=payload.target_language,
-            config_namespace="text_translation",
+            quality=get_str("text_translation.quality", "fast"),
         )
         try:
-            result = bridge.run(dispatch_request)
-        except Exception as exc:
-            raise HTTPException(status_code=502, detail=f"translation failed: {exc}")
-        response = {"translated_text": result.text, "model": result.model}
+            result = bridge.translate(text)
+        except TranslationServicesError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc))
+        response = {
+            "translated_text": result.text,
+            "profile": result.profile,
+            "quality": result.quality,
+        }
         text_translation_success_cache.put(
             principal,
             payload_hash,

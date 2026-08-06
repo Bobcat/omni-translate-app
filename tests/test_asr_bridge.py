@@ -13,13 +13,28 @@ from app.asr_bridge import LiveASRPoolBridge
 class _RecordingPoolClient:
     def __init__(self) -> None:
         self.request = None
+        self.closed = False
 
     def submit_audio(self, request):
         self.request = request
         return SimpleNamespace(request_id=request.request_id)
 
+    def close(self) -> None:
+        self.closed = True
+
 
 class ASRBridgeTests(unittest.TestCase):
+    def test_close_stops_stream_and_closes_persistent_submit_connection(self) -> None:
+        bridge = LiveASRPoolBridge(session_id="sess-close", sample_rate_hz=16000, channels=1)
+        fake_client = _RecordingPoolClient()
+        bridge._client = fake_client
+
+        with patch.object(bridge, "stop_completion_stream") as stop_stream:
+            bridge.close()
+
+        stop_stream.assert_called_once_with()
+        self.assertTrue(fake_client.closed)
+
     def test_enqueue_passes_direct_fw_options_and_json_outputs(self) -> None:
         settings = {
             "live": {

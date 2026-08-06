@@ -8,19 +8,20 @@ directly (no CORS, no exposed backend).
 
 Synchronous on purpose: the route that calls this is a plain ``def`` so FastAPI
 runs it in a threadpool — a translation takes seconds, which must not block the
-event loop. Uses stdlib ``urllib`` to match the app's existing HTTP usage.
+event loop. Requests share the app's process-wide keep-alive pool.
 """
 from __future__ import annotations
 
 import json
 import time
 import uuid
-from urllib.error import HTTPError, URLError
 from urllib.parse import quote
-from urllib.request import Request, urlopen
+
+import httpx
 
 from app.config import get_float, get_str
 from app.translation_bridge import translation_language_code
+from app.upstreams.http import get_upstream_http_client
 
 
 SUPPORTED_IMAGE_MIME = {"image/jpeg", "image/png", "image/webp"}
@@ -175,13 +176,12 @@ def _poll_interval_s() -> float:
 def _submit(request_json: str, image_bytes: bytes, filename: str, mime: str) -> str:
     boundary = uuid.uuid4().hex
     body = _multipart_body(boundary, request_json, image_bytes, filename, mime)
-    request = Request(
+    payload = _read_json(
+        "POST",
         f"{_base_url()}/v1/requests",
-        data=body,
+        content=body,
         headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
-        method="POST",
     )
-    payload = _read_json(request)
     request_id = str(payload.get("request_id") or "").strip()
     if not request_id:
         raise ImageTranslationError("translation-services did not return a request_id")
@@ -196,13 +196,12 @@ def _submit_reentry(source_request_id: str, subpath: str, payload: dict) -> str:
     return the new request_id. Both endpoints take a JSON body and return a lifecycle envelope."""
     body = json.dumps(payload).encode("utf-8")
     safe_source_id = quote(source_request_id, safe="")
-    request = Request(
+    response = _read_json(
+        "POST",
         f"{_base_url()}/v1/requests/{safe_source_id}/{subpath}",
-        data=body,
+        content=body,
         headers={"Content-Type": "application/json"},
-        method="POST",
     )
-    response = _read_json(request)
     request_id = str(response.get("request_id") or "").strip()
     if not request_id:
         raise ImageTranslationError("translation-services did not return a request_id")
@@ -217,7 +216,7 @@ def _await_completion(request_id: str) -> None:
     interval = _poll_interval_s()
     url = f"{_base_url()}/v1/requests/{request_id}"
     while True:
-        payload = _read_json(Request(url, method="GET"))
+        payload = _read_json("GET", url)
         state = str(payload.get("state") or "")
         if state == _TERMINAL_OK:
             return
@@ -231,13 +230,15 @@ def _await_completion(request_id: str) -> None:
 def _fetch_rendered(request_id: str) -> tuple[bytes, str]:
     url = f"{_base_url()}/v1/requests/{request_id}/artifacts/{_RENDERED_ARTIFACT}"
     try:
-        with urlopen(Request(url, method="GET"), timeout=_timeout_s()) as response:
-            data = response.read()
-            media_type = (response.headers.get("Content-Type") or "image/png").split(";")[0].strip()
-    except HTTPError as exc:
-        raise ImageTranslationError(f"could not fetch rendered image: HTTP {exc.code}") from exc
-    except URLError as exc:
-        raise ImageTranslationError(f"translation-services unreachable: {exc.reason}") from exc
+        response = get_upstream_http_client().get(url, timeout=_timeout_s())
+    except httpx.RequestError as exc:
+        raise ImageTranslationError(f"translation-services unreachable: {exc}") from exc
+    if response.is_error:
+        raise ImageTranslationError(
+            f"could not fetch rendered image: HTTP {response.status_code}"
+        )
+    data = response.content
+    media_type = (response.headers.get("Content-Type") or "image/png").split(";")[0].strip()
     if not data:
         raise ImageTranslationError("rendered image was empty")
     return data, media_type
@@ -267,17 +268,28 @@ def _safe_filename(filename: str) -> str:
     return str(filename or "image").replace("\r", " ").replace("\n", " ").replace('"', "'")
 
 
-def _read_json(request: Request) -> dict:
+def _read_json(
+    method: str,
+    url: str,
+    *,
+    content: bytes | None = None,
+    headers: dict[str, str] | None = None,
+) -> dict:
     try:
-        with urlopen(request, timeout=_timeout_s()) as response:
-            raw = response.read()
-    except HTTPError as exc:
-        raise ImageTranslationError(_http_error_detail(exc)) from exc
-    except URLError as exc:
-        raise ImageTranslationError(f"translation-services unreachable: {exc.reason}") from exc
+        response = get_upstream_http_client().request(
+            method,
+            url,
+            content=content,
+            headers=headers,
+            timeout=_timeout_s(),
+        )
+    except httpx.RequestError as exc:
+        raise ImageTranslationError(f"translation-services unreachable: {exc}") from exc
+    if response.is_error:
+        raise ImageTranslationError(_http_error_detail(response))
     try:
-        payload = json.loads(raw.decode("utf-8"))
-    except (ValueError, UnicodeDecodeError) as exc:
+        payload = response.json()
+    except ValueError as exc:
         raise ImageTranslationError("invalid response from translation-services") from exc
     if not isinstance(payload, dict):
         raise ImageTranslationError("unexpected response from translation-services")
@@ -307,9 +319,9 @@ def _terminal_error(payload: dict, state: str) -> ImageTranslationError:
     return ImageTranslationError(message)
 
 
-def _http_error_detail(exc: HTTPError) -> str:
+def _http_error_detail(response: httpx.Response) -> str:
     try:
-        payload = json.loads(exc.read().decode("utf-8"))
+        payload = response.json()
         detail = payload.get("detail") if isinstance(payload, dict) else None
         if isinstance(detail, dict):
             detail = detail.get("message") or detail.get("code")
@@ -317,4 +329,4 @@ def _http_error_detail(exc: HTTPError) -> str:
             return f"translation-services error: {detail}"
     except Exception:
         pass
-    return f"translation-services HTTP {exc.code}"
+    return f"translation-services HTTP {response.status_code}"

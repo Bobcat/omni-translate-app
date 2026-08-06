@@ -81,11 +81,9 @@ def text_translation_payload_hash(
     source_language: str,
     target_language: str,
     text: str,
-    final: bool,
 ) -> str:
     encoded = json.dumps(
         {
-            "final": bool(final),
             "source_language": str(source_language),
             "target_language": str(target_language),
             "text": str(text),

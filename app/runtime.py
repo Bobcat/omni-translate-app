@@ -26,7 +26,7 @@ from realtime_translation_engine.types import LiveDispatchRequest
 
 from app.asr_bridge import ASRJob
 from app.asr_bridge import LiveASRPoolBridge
-from app.config import get_bool, get_float, get_int, optional_str
+from app.config import get_bool, get_float, get_int, get_str, optional_str
 from app.live_metrics import log_event as _metric
 from app.live_settings import default_live_settings
 from app.live_settings import live_runner_config
@@ -228,6 +228,7 @@ class ConversationRuntime:
         except Exception as exc:
             await self._send(event("error", self.session_id, code="vad_init_failed", message=str(exc), fatal=True))
             await self.websocket.close(code=status.WS_1011_INTERNAL_ERROR, reason="vad_init_failed")
+            await self._cleanup()
             return
 
         self.asr_bridge.start_completion_stream(on_terminal_event=self._notify_asr_ready)
@@ -1110,7 +1111,7 @@ class ConversationRuntime:
                 part=part_id,
                 wall_ms=round((time.monotonic() - _xlate_t0) * 1000.0, 2),
                 ok=True,
-                model=str(getattr(translation, "model", "") or ""),
+                profile=str(getattr(translation, "profile", "") or ""),
             )
             if (
                 generation != lane.translation_generation
@@ -1167,7 +1168,8 @@ class ConversationRuntime:
             translation={
                 "reason": step.reason,
                 "wall_ms": round(float(translation.wall_ms), 1),
-                "model": translation.model,
+                "profile": translation.profile,
+                "quality": translation.quality,
             },
         )
         if step.dispatch_request is not None:
@@ -1440,7 +1442,7 @@ class ConversationRuntime:
             await _cancel_task(lane.tts_task)
             lane.translation_task = None
             lane.tts_task = None
-        self.asr_bridge.stop_completion_stream()
+        self.asr_bridge.close()
         SESSIONS.close(self.session_id, reason="closed")
 
     async def _send(self, payload: dict[str, Any]) -> None:
@@ -1462,6 +1464,7 @@ class ConversationRuntime:
             translation_bridge=TranslationBridge(
                 source_language=source_language,
                 target_language=target_language,
+                quality=get_str("translation.quality", "fast"),
             ),
         )
 
