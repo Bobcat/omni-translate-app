@@ -81,7 +81,7 @@ class TurnStateMachineTests(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self) -> None:
         runtimes = getattr(self, "runtimes", [])
         for runtime in runtimes:
-            await runtime._cleanup()
+            await runtime.lifecycle.close()
 
     def make_runtime(self, tts: FastTTS | SlowTTS | None = None) -> tuple[ConversationRuntime, FakeWebSocket]:
         session = ConversationSession(
@@ -292,7 +292,7 @@ class TurnStateMachineTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(events[0]["speech_start_ms"], 100)
             self.assertEqual(events[0]["asr_debug"]["backend"], "faster_whisper_direct")
         finally:
-            await runtime._cleanup()
+            await runtime.lifecycle.close()
             self.runtimes = [item for item in getattr(self, "runtimes", []) if item is not runtime]
             path.unlink(missing_ok=True)
 
@@ -325,20 +325,20 @@ class TurnStateMachineTests(unittest.IsolatedAsyncioTestCase):
         runtime, websocket = self.make_runtime(FastTTS())
         lane = runtime._current_lane()
         lane.translation_task = asyncio.create_task(asyncio.sleep(60))
-        runtime.listening = True
+        runtime.lifecycle.listening = True
 
         with (
-            patch("app.runtime.SESSIONS.update", return_value={}),
+            patch("app.voice.session_lifecycle.SESSIONS.update", return_value={}),
             patch.object(runtime, "_poll_asr_all", new_callable=AsyncMock) as poll_asr,
             patch.object(runtime, "_enqueue_asr", new_callable=AsyncMock) as enqueue_asr,
             patch.object(runtime, "_commit_preview_tail", new_callable=AsyncMock) as commit_tail,
         ):
-            await runtime._pause_listening()
+            await runtime.lifecycle.pause_listening()
 
         poll_asr.assert_not_awaited()
         enqueue_asr.assert_not_awaited()
         commit_tail.assert_not_awaited()
-        self.assertFalse(runtime.listening)
+        self.assertFalse(runtime.lifecycle.listening)
         self.assertIsNone(lane.translation_task)
         self.assertTrue(any(event["type"] == "ended" for event in websocket.sent))
         self.assertIsNotNone(websocket.closed_code)
