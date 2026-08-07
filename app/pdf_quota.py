@@ -118,7 +118,11 @@ def require_pdf_request_owner(request: Request, request_id: str) -> None:
     """
     ctx = get_saas_context()
     principal, _, _ = resolve_request_context(request)
-    event = ctx.store.get_usage_event_by_job_id(ctx.tenant, str(request_id))
+    event = ctx.store.get_usage_event_by_job_id(
+        ctx.tenant,
+        str(request_id),
+        metric=PAGES_METRIC,
+    )
     owned = (
         event is not None
         and event["metric"] == PAGES_METRIC
@@ -180,7 +184,11 @@ def finalize_pdf_reservation(envelope: dict) -> None:
         if not request_id:
             return
         ctx = get_saas_context()
-        event = ctx.store.get_usage_event_by_job_id(ctx.tenant, request_id)
+        event = ctx.store.get_usage_event_by_job_id(
+            ctx.tenant,
+            request_id,
+            metric=PAGES_METRIC,
+        )
         if event is None:
             return
         settle_pdf_usage_event(event, envelope)

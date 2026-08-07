@@ -92,6 +92,12 @@ class EntitlementTests(unittest.TestCase):
         settings = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
         self.assertFalse(settings["saas"]["plans"]["free"]["document_persistence"]["enabled"])
 
+    def test_shipped_free_plan_has_configurable_character_allowance(self) -> None:
+        settings = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
+        translation = settings["saas"]["plans"]["free"]["translation"]
+        self.assertGreater(translation["characters_per_period"], 0)
+        self.assertEqual(translation["period"], "month")
+
 
 if __name__ == "__main__":
     unittest.main()

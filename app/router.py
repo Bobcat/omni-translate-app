@@ -16,6 +16,8 @@ from app.image_admission import read_image_upload
 from app.image_admission import validate_image_upload
 from app.image_ownership import record_image_request_owner
 from app.image_ownership import require_image_request_owner
+from app.image_quota import handle_image_quota_lifecycle
+from app.image_quota import register_image_quota_operation
 from app.image_translation_bridge import ImageTranslationError
 from app.image_translation_bridge import REQUEST_ID_HEADER
 from app.image_translation_bridge import rerender_image
@@ -148,6 +150,11 @@ def post_image_translation(
         record_image_request_owner(principal, operation_id)
         with admit_image_operation(principal, entitlements, operation_id):
             validate_image_upload(content, declared_mime=mime, entitlements=entitlements)
+            quota_authorization_required = register_image_quota_operation(
+                principal,
+                entitlements,
+                operation_id,
+            )
             data, media_type, request_id = translate_image(
                 operation_id=operation_id,
                 image_bytes=content,
@@ -163,6 +170,18 @@ def post_image_translation(
                     "size_cohort_mode": size_cohort_mode,
                 },
                 max_source_characters=max_characters,
+                quota_authorization_required=quota_authorization_required,
+                lifecycle_handler=(
+                    (
+                        lambda envelope: handle_image_quota_lifecycle(
+                            operation_id,
+                            envelope,
+                            raise_quota_errors=True,
+                        )
+                    )
+                    if quota_authorization_required
+                    else None
+                ),
             )
     except ImageTranslationError as exc:
         raise HTTPException(status_code=exc.status_code, detail=_image_error_detail(exc))

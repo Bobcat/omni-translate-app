@@ -83,6 +83,27 @@ CREATE TABLE IF NOT EXISTS resource_owners (
     created_at TEXT NOT NULL,
     PRIMARY KEY (tenant, resource_kind, resource_id)
 );
+-- Host-neutral recovery record for workflows whose authoritative usage can
+-- only be measured after an upstream preparation stage.
+CREATE TABLE IF NOT EXISTS quota_operations (
+    tenant TEXT NOT NULL,
+    operation_kind TEXT NOT NULL,
+    operation_id TEXT NOT NULL,
+    owner_kind TEXT NOT NULL,
+    owner_id TEXT NOT NULL,
+    metric TEXT NOT NULL,
+    entitlement_snapshot TEXT NOT NULL,
+    state TEXT NOT NULL,
+    counting_version TEXT,
+    quantity INTEGER CHECK (quantity IS NULL OR quantity >= 0),
+    error_code TEXT,
+    error_details TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (tenant, operation_kind, operation_id)
+);
+CREATE INDEX IF NOT EXISTS idx_quota_operations_reconciliation
+    ON quota_operations (tenant, operation_kind, state, created_at);
 """
 
 
@@ -286,6 +307,118 @@ class SaasStore:
             ).fetchone()
         return row is not None
 
+    # -- quota operation recovery --------------------------------------------
+
+    def create_quota_operation(
+        self,
+        *,
+        tenant: str,
+        operation_kind: str,
+        operation_id: str,
+        owner_kind: str,
+        owner_id: uuid.UUID,
+        metric: str,
+        entitlement_snapshot: dict[str, Any],
+    ) -> sqlite3.Row:
+        """Create once and return the original immutable operation snapshot."""
+        now = _utcnow()
+        with self.transaction() as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO quota_operations"
+                " (tenant, operation_kind, operation_id, owner_kind, owner_id, metric,"
+                " entitlement_snapshot, state, created_at, updated_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, 'created', ?, ?)",
+                (
+                    tenant,
+                    str(operation_kind),
+                    str(operation_id),
+                    owner_kind,
+                    str(owner_id),
+                    str(metric),
+                    json.dumps(entitlement_snapshot),
+                    now,
+                    now,
+                ),
+            )
+            row = conn.execute(
+                "SELECT * FROM quota_operations WHERE tenant = ?"
+                " AND operation_kind = ? AND operation_id = ?",
+                (tenant, str(operation_kind), str(operation_id)),
+            ).fetchone()
+        if row is None:
+            raise RuntimeError("quota operation was not persisted")
+        return row
+
+    def get_quota_operation(
+        self,
+        tenant: str,
+        operation_kind: str,
+        operation_id: str,
+    ) -> sqlite3.Row | None:
+        with self.transaction() as conn:
+            return conn.execute(
+                "SELECT * FROM quota_operations WHERE tenant = ?"
+                " AND operation_kind = ? AND operation_id = ?",
+                (tenant, str(operation_kind), str(operation_id)),
+            ).fetchone()
+
+    def list_quota_operations(
+        self,
+        tenant: str,
+        *,
+        operation_kind: str,
+        states: tuple[str, ...],
+        limit: int = 100,
+    ) -> list[sqlite3.Row]:
+        if not states:
+            return []
+        placeholders = ",".join("?" for _ in states)
+        with self.transaction() as conn:
+            return list(
+                conn.execute(
+                    "SELECT * FROM quota_operations WHERE tenant = ?"
+                    " AND operation_kind = ?"
+                    f" AND state IN ({placeholders})"
+                    " ORDER BY created_at, operation_id LIMIT ?",
+                    (
+                        tenant,
+                        str(operation_kind),
+                        *[str(state) for state in states],
+                        max(1, int(limit)),
+                    ),
+                ).fetchall()
+            )
+
+    def update_quota_operation(
+        self,
+        *,
+        tenant: str,
+        operation_kind: str,
+        operation_id: str,
+        state: str,
+        counting_version: str | None = None,
+        quantity: int | None = None,
+        error_code: str | None = None,
+        error_details: dict[str, Any] | None = None,
+    ) -> None:
+        with self.transaction() as conn:
+            conn.execute(
+                "UPDATE quota_operations SET state = ?, counting_version = COALESCE(?, counting_version),"
+                " quantity = COALESCE(?, quantity), error_code = ?, error_details = ?, updated_at = ?"
+                " WHERE tenant = ? AND operation_kind = ? AND operation_id = ?",
+                (
+                    str(state),
+                    counting_version,
+                    quantity,
+                    error_code,
+                    json.dumps(error_details) if error_details is not None else None,
+                    _utcnow(),
+                    tenant,
+                    str(operation_kind),
+                    str(operation_id),
+                ),
+            )
+
     # -- usage ledger -----------------------------------------------------------
 
     def get_usage_event_by_key(
@@ -308,9 +441,20 @@ class SaasStore:
                 "SELECT * FROM usage_events WHERE id = ?", (str(event_id),)
             ).fetchone()
 
-    def get_usage_event_by_job_id(self, tenant: str, job_id: str) -> sqlite3.Row | None:
+    def get_usage_event_by_job_id(
+        self,
+        tenant: str,
+        job_id: str,
+        *,
+        metric: str | None = None,
+    ) -> sqlite3.Row | None:
         """The usage event linked to a host job (e.g. an upstream request id)."""
         with self.transaction() as conn:
+            if metric is not None:
+                return conn.execute(
+                    "SELECT * FROM usage_events WHERE tenant = ? AND job_id = ? AND metric = ?",
+                    (tenant, str(job_id), str(metric)),
+                ).fetchone()
             return conn.execute(
                 "SELECT * FROM usage_events WHERE tenant = ? AND job_id = ?",
                 (tenant, str(job_id)),

@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import time
 import uuid
+from collections.abc import Callable
 from urllib.parse import quote
 
 import httpx
@@ -28,7 +29,7 @@ SUPPORTED_IMAGE_MIME = {"image/jpeg", "image/png", "image/webp"}
 REQUEST_ID_HEADER = "X-Image-Translation-Request-Id"
 
 _TERMINAL_OK = "completed"
-_TERMINAL_BAD = {"failed", "cancelled"}
+_TERMINAL_BAD = {"failed", "cancelled", "cancelled_before_authorization"}
 # The lifecycle response keys artifacts by name without extension; "rendered" is the
 # translated image (PNG). "output" is the side-by-side/original composite.
 _RENDERED_ARTIFACT = "rendered"
@@ -64,6 +65,8 @@ def translate_image(
     target_language: str,
     render_options: dict | None = None,
     max_source_characters: int | None = None,
+    quota_authorization_required: bool = False,
+    lifecycle_handler: Callable[[dict], None] | None = None,
 ) -> tuple[bytes, str, str]:
     """Translate ``image_bytes`` and return ``(rendered_png_bytes, media_type, request_id)``.
 
@@ -74,6 +77,8 @@ def translate_image(
     service uses its own defaults for them. ``max_source_characters`` is the
     caller's per-image source-text ceiling, enforced by the service after OCR —
     over it the request fails with code ``SOURCE_CHARACTER_LIMIT_EXCEEDED``.
+    Metered plans set ``quota_authorization_required`` and supply a lifecycle
+    handler that reserves the authoritative measurement before translation.
     Raises ``ImageTranslationError`` on an unsupported type, a service failure,
     or a timeout.
     """
@@ -100,6 +105,8 @@ def translate_image(
     }
     if max_source_characters is not None:
         request["max_source_characters"] = int(max_source_characters)
+    if quota_authorization_required:
+        request["quota_authorization_required"] = True
     for key in RENDER_OPTION_KEYS:
         value = str((render_options or {}).get(key) or "").strip()
         if value:
@@ -112,7 +119,7 @@ def translate_image(
         mime,
         expected_request_id=operation_id,
     )
-    _await_completion(request_id)
+    _await_completion(request_id, lifecycle_handler=lifecycle_handler)
     data, media_type = _fetch_rendered(request_id)
     return data, media_type, request_id
 
@@ -250,12 +257,58 @@ def _submit_reentry(
     return request_id
 
 
-def _await_completion(request_id: str) -> None:
+def get_image_request(request_id: str) -> dict:
+    safe_id = quote(str(request_id or "").strip(), safe="")
+    if not safe_id:
+        raise ImageTranslationError("request_id is required", status_code=400)
+    return _read_json("GET", f"{_base_url()}/v1/requests/{safe_id}")
+
+
+def authorize_image_request(
+    request_id: str,
+    *,
+    counting_version: str,
+    source_character_count: int,
+) -> dict:
+    safe_id = quote(str(request_id or "").strip(), safe="")
+    if not safe_id:
+        raise ImageTranslationError("request_id is required", status_code=400)
+    return _read_json(
+        "POST",
+        f"{_base_url()}/v1/requests/{safe_id}/authorize",
+        content=json.dumps(
+            {
+                "source_character_counting_version": str(counting_version),
+                "source_character_count": int(source_character_count),
+            }
+        ).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+    )
+
+
+def cancel_image_request(request_id: str) -> dict:
+    safe_id = quote(str(request_id or "").strip(), safe="")
+    if not safe_id:
+        raise ImageTranslationError("request_id is required", status_code=400)
+    return _read_json(
+        "POST",
+        f"{_base_url()}/v1/requests/{safe_id}/cancel",
+        content=b"",
+    )
+
+
+def _await_completion(
+    request_id: str,
+    *,
+    lifecycle_handler: Callable[[dict], None] | None = None,
+) -> None:
     deadline = time.monotonic() + _timeout_s()
     interval = _poll_interval_s()
     url = f"{_base_url()}/v1/requests/{request_id}"
     while True:
         payload = _read_json("GET", url)
+        if lifecycle_handler is not None:
+            lifecycle_handler(payload)
         state = str(payload.get("state") or "")
         if state == _TERMINAL_OK:
             return
