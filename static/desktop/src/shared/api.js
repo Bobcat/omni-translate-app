@@ -81,20 +81,26 @@ export async function translateText({ source, target, text }) {
   return response.json();
 }
 
-export async function translateImage(file, { source, target }) {
+export async function translateImage(file, { source, target, operationId }) {
+  if (!operationId) throw new Error('Image operation id missing');
   const form = new FormData();
   form.append('image', file);
   form.append('source_language', String(source || 'auto'));
   form.append('target_language', String(target || ''));
-  const response = await fetch('/api/image-translation', { method: 'POST', body: form, headers: authHeaders() });
+  const response = await submitImageOperation('/api/image-translation', form, operationId);
   return imagePayload(response);
 }
 
-export async function retranslateImage(requestId, { target }) {
+export async function retranslateImage(requestId, { target, operationId }) {
+  if (!operationId) throw new Error('Image operation id missing');
   const form = new FormData();
   form.append('target_language', String(target || ''));
   const safeId = encodeURIComponent(String(requestId || ''));
-  const response = await fetch(`/api/image-translation/${safeId}/retranslate`, { method: 'POST', body: form, headers: authHeaders() });
+  const response = await submitImageOperation(
+    `/api/image-translation/${safeId}/retranslate`,
+    form,
+    operationId,
+  );
   return imagePayload(response);
 }
 
@@ -103,6 +109,39 @@ async function imagePayload(response) {
   const requestId = response.headers.get('X-Image-Translation-Request-Id') || '';
   if (!requestId) throw new Error('image translation request id missing');
   return { blob: await response.blob(), requestId };
+}
+
+async function submitImageOperation(url, form, operationId) {
+  const headers = authHeaders({ 'Idempotency-Key': String(operationId) });
+  await ensureAnonymousImagePrincipal(headers);
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const response = await fetch(url, { method: 'POST', body: form, headers });
+      if (attempt === 0 && (response.status === 408 || response.status >= 500)) continue;
+      return response;
+    } catch (err) {
+      if (attempt === 0) continue;
+      throw err;
+    }
+  }
+  throw new Error('Image submit retry failed');
+}
+
+let anonymousImagePrincipalReady = null;
+
+async function ensureAnonymousImagePrincipal(headers) {
+  if (headers.Authorization) return;
+  if (!anonymousImagePrincipalReady) {
+    anonymousImagePrincipalReady = fetch('/api/me', {
+      headers: { ...headers, Accept: 'application/json' },
+    }).then(async (response) => {
+      await ensureOk(response);
+    }).catch((err) => {
+      anonymousImagePrincipalReady = null;
+      throw err;
+    });
+  }
+  await anonymousImagePrincipalReady;
 }
 
 async function submitPdfOnce(file, { target, headers }) {

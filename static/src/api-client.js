@@ -26,7 +26,8 @@ export const api = {
     return fetchJson('/api/me');
   },
 
-  async translateImage(file, { source, target, renderOptions = {} }) {
+  async translateImage(file, { source, target, operationId, renderOptions = {} }) {
+    if (!operationId) throw new Error('Image operation id missing');
     const form = new FormData();
     form.append('image', file);
     form.append('source_language', String(source || ''));
@@ -34,28 +35,38 @@ export const api = {
     for (const [key, value] of Object.entries(renderOptions)) {
       if (value) form.append(key, String(value));
     }
-    const response = await fetch('/api/image-translation', { method: 'POST', body: form, headers: authHeaders() });
+    const response = await submitImageOperation('/api/image-translation', form, operationId);
     return imageTranslationPayload(response);
   },
 
-  async retranslateImage(requestId, { target }) {
+  async retranslateImage(requestId, { target, operationId }) {
+    if (!operationId) throw new Error('Image operation id missing');
     const form = new FormData();
     form.append('target_language', String(target || ''));
     const safeRequestId = encodeURIComponent(String(requestId || ''));
-    const response = await fetch(`/api/image-translation/${safeRequestId}/retranslate`, { method: 'POST', body: form, headers: authHeaders() });
+    const response = await submitImageOperation(
+      `/api/image-translation/${safeRequestId}/retranslate`,
+      form,
+      operationId,
+    );
     return imageTranslationPayload(response);
   },
 
   // Re-render a prior image request with new render flags — reuses the cached translations,
   // no new translation. `renderOptions` keys are the render_*/erase_*/size_*/width_* flags;
   // empty values are dropped so the service keeps the source run's value.
-  async rerenderImage(requestId, renderOptions = {}) {
+  async rerenderImage(requestId, renderOptions = {}, operationId = '') {
+    if (!operationId) throw new Error('Image operation id missing');
     const form = new FormData();
     for (const [key, value] of Object.entries(renderOptions)) {
       if (value) form.append(key, String(value));
     }
     const safeRequestId = encodeURIComponent(String(requestId || ''));
-    const response = await fetch(`/api/image-translation/${safeRequestId}/rerender`, { method: 'POST', body: form, headers: authHeaders() });
+    const response = await submitImageOperation(
+      `/api/image-translation/${safeRequestId}/rerender`,
+      form,
+      operationId,
+    );
     return imageTranslationPayload(response);
   },
 
@@ -113,6 +124,41 @@ export const api = {
     };
   },
 };
+
+async function submitImageOperation(url, form, operationId) {
+  const headers = authHeaders({ 'Idempotency-Key': String(operationId) });
+  await ensureAnonymousImagePrincipal(headers);
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const response = await fetch(url, { method: 'POST', body: form, headers });
+      if (attempt === 0 && (response.status === 408 || response.status >= 500)) continue;
+      return response;
+    } catch (err) {
+      if (attempt === 0) continue;
+      throw err;
+    }
+  }
+  throw new Error('Image submit retry failed');
+}
+
+let anonymousImagePrincipalReady = null;
+
+async function ensureAnonymousImagePrincipal(headers) {
+  if (headers.Authorization) return;
+  if (!anonymousImagePrincipalReady) {
+    anonymousImagePrincipalReady = fetch('/api/me', {
+      headers: { ...headers, Accept: 'application/json' },
+    }).then(async (response) => {
+      if (!response.ok) {
+        throw new Error(await errorDetailFromResponse(response) || `HTTP ${response.status}`);
+      }
+    }).catch((err) => {
+      anonymousImagePrincipalReady = null;
+      throw err;
+    });
+  }
+  await anonymousImagePrincipalReady;
+}
 
 async function imageTranslationPayload(response) {
   if (!response.ok) {

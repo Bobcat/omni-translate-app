@@ -29,6 +29,7 @@ def _png_bytes() -> bytes:
 
 
 PNG_BYTES = _png_bytes()
+OPERATION_ID = "123e4567-e89b-42d3-a456-426614174000"
 ENABLED = EntitlementSet(
     "anonymous",
     {
@@ -54,6 +55,7 @@ def _post_image(
 ):
     return client.post(
         "/api/image-translation",
+        headers={"Idempotency-Key": OPERATION_ID},
         data={"source_language": "auto", "target_language": "English"},
         files={"image": ("photo.png", content, content_type)},
     )
@@ -83,7 +85,7 @@ class ImageTranslationRouteTests(unittest.TestCase):
 
         def fake_translate_image(**kwargs: object):
             captured.update(kwargs)
-            return PNG_BYTES, "image/png", "req_1"
+            return PNG_BYTES, "image/png", OPERATION_ID
 
         def resolve_with_new_identity(request):
             stage_identity_cookie(request, "tok123")
@@ -96,14 +98,15 @@ class ImageTranslationRouteTests(unittest.TestCase):
             response = _post_image(self.client)
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.headers.get("x-image-translation-request-id"), "req_1")
+        self.assertEqual(response.headers.get("x-image-translation-request-id"), OPERATION_ID)
+        self.assertEqual(captured.get("operation_id"), OPERATION_ID)
         self.assertEqual(captured.get("max_source_characters"), 1500)
         self.assertIn("ot_anon=tok123", response.headers.get("set-cookie") or "")
-        self.record_owner.assert_called_once_with(PRINCIPAL, "req_1")
+        self.record_owner.assert_called_once_with(PRINCIPAL, OPERATION_ID)
 
     def test_valid_identity_issues_no_new_cookie(self) -> None:
         def fake_translate_image(**kwargs: object):
-            return PNG_BYTES, "image/png", "req_1"
+            return PNG_BYTES, "image/png", OPERATION_ID
 
         with (
             patch("app.router.resolve_request_context", return_value=(PRINCIPAL, ENABLED, None)),
@@ -192,33 +195,45 @@ class ImageTranslationRouteTests(unittest.TestCase):
             response = _post_image(self.client, content=output.getvalue())
 
         self.assertEqual(response.status_code, 422)
-        self.admit.assert_called_once_with(PRINCIPAL, ENABLED)
+        self.admit.assert_called_once_with(PRINCIPAL, ENABLED, OPERATION_ID)
         translate.assert_not_called()
 
     def test_retranslate_is_admitted_for_the_resolved_principal(self) -> None:
         with (
             patch("app.router.resolve_request_context", return_value=(PRINCIPAL, ENABLED, None)),
-            patch("app.router.retranslate_image", return_value=(PNG_BYTES, "image/png", "req_2")),
+            patch(
+                "app.router.retranslate_image",
+                return_value=(PNG_BYTES, "image/png", OPERATION_ID),
+            ) as retranslate,
         ):
             response = self.client.post(
                 "/api/image-translation/req_1/retranslate",
+                headers={"Idempotency-Key": OPERATION_ID},
                 data={"target_language": "German"},
             )
         self.assertEqual(response.status_code, 200)
         self.require_owner.assert_called_once_with(PRINCIPAL, "req_1")
-        self.record_owner.assert_called_once_with(PRINCIPAL, "req_2")
-        self.admit.assert_called_with(PRINCIPAL, ENABLED)
+        self.record_owner.assert_called_once_with(PRINCIPAL, OPERATION_ID)
+        self.assertEqual(retranslate.call_args.kwargs["operation_id"], OPERATION_ID)
+        self.admit.assert_called_with(PRINCIPAL, ENABLED, OPERATION_ID)
 
     def test_rerender_is_admitted_for_the_resolved_principal(self) -> None:
         with (
             patch("app.router.resolve_request_context", return_value=(PRINCIPAL, ENABLED, None)),
-            patch("app.router.rerender_image", return_value=(PNG_BYTES, "image/png", "req_2")),
+            patch(
+                "app.router.rerender_image",
+                return_value=(PNG_BYTES, "image/png", OPERATION_ID),
+            ) as rerender,
         ):
-            response = self.client.post("/api/image-translation/req_1/rerender")
+            response = self.client.post(
+                "/api/image-translation/req_1/rerender",
+                headers={"Idempotency-Key": OPERATION_ID},
+            )
         self.assertEqual(response.status_code, 200)
         self.require_owner.assert_called_once_with(PRINCIPAL, "req_1")
-        self.record_owner.assert_called_once_with(PRINCIPAL, "req_2")
-        self.admit.assert_called_with(PRINCIPAL, ENABLED)
+        self.record_owner.assert_called_once_with(PRINCIPAL, OPERATION_ID)
+        self.assertEqual(rerender.call_args.kwargs["operation_id"], OPERATION_ID)
+        self.admit.assert_called_with(PRINCIPAL, ENABLED, OPERATION_ID)
 
     def test_other_owner_cannot_retranslate(self) -> None:
         self.require_owner.side_effect = SaasError(
@@ -232,6 +247,7 @@ class ImageTranslationRouteTests(unittest.TestCase):
         ):
             response = self.client.post(
                 "/api/image-translation/req_other/retranslate",
+                headers={"Idempotency-Key": OPERATION_ID},
                 data={"target_language": "German"},
             )
         self.assertEqual(response.status_code, 404)
@@ -243,9 +259,17 @@ class BridgeCeilingTests(unittest.TestCase):
     def _run_bridge(self, max_source_characters: int | None) -> str:
         captured: dict[str, str] = {}
 
-        def fake_submit(request_json: str, image_bytes: bytes, filename: str, mime: str) -> str:
+        def fake_submit(
+            request_json: str,
+            image_bytes: bytes,
+            filename: str,
+            mime: str,
+            *,
+            expected_request_id: str,
+        ) -> str:
             captured["request_json"] = request_json
-            return "req_1"
+            self.assertEqual(expected_request_id, OPERATION_ID)
+            return OPERATION_ID
 
         with (
             patch("app.image_translation_bridge._submit", fake_submit),
@@ -256,6 +280,7 @@ class BridgeCeilingTests(unittest.TestCase):
             ),
         ):
             translate_image(
+                operation_id=OPERATION_ID,
                 image_bytes=PNG_BYTES,
                 filename="photo.png",
                 content_type="image/png",
@@ -267,6 +292,7 @@ class BridgeCeilingTests(unittest.TestCase):
 
     def test_ceiling_is_forwarded_to_the_service(self) -> None:
         request = json.loads(self._run_bridge(1500))
+        self.assertEqual(request["request_id"], OPERATION_ID)
         self.assertEqual(request["max_source_characters"], 1500)
 
     def test_no_ceiling_leaves_the_field_out(self) -> None:
