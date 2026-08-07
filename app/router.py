@@ -24,8 +24,8 @@ from app.image_translation_bridge import translate_image
 from app.live_settings import default_live_settings
 from app.live_settings import merge_live_settings
 from app.live_settings import normalize_live_settings_delta
+from app.operation_ids import normalize_operation_id
 from app.pdf_quota import finalize_pdf_reservation
-from app.pdf_quota import normalize_operation_id
 from app.pdf_quota import require_pdf_request_owner
 from app.pdf_quota import submit_pdf_with_quota
 from app.pdf_translation_bridge import PdfTranslationError
@@ -131,7 +131,9 @@ def post_image_translation(
     width_fit_mode: str = Form(""),
     size_metric_mode: str = Form(""),
     size_cohort_mode: str = Form(""),
+    operation_id: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> Response:
+    operation_id = normalize_operation_id(operation_id)
     # Resolve before validation so a rejected first anonymous request receives
     # a durable identity cookie and cannot reset its rate window on every try.
     principal, entitlements, _ = resolve_request_context(request)
@@ -143,9 +145,11 @@ def post_image_translation(
     )
     max_characters = entitlements.get_int("image_translation.max_characters_per_job")
     try:
-        with admit_image_operation(principal, entitlements):
+        record_image_request_owner(principal, operation_id)
+        with admit_image_operation(principal, entitlements, operation_id):
             validate_image_upload(content, declared_mime=mime, entitlements=entitlements)
             data, media_type, request_id = translate_image(
+                operation_id=operation_id,
                 image_bytes=content,
                 filename=image.filename or "image",
                 content_type=mime,
@@ -160,7 +164,6 @@ def post_image_translation(
                 },
                 max_source_characters=max_characters,
             )
-            record_image_request_owner(principal, request_id)
     except ImageTranslationError as exc:
         raise HTTPException(status_code=exc.status_code, detail=_image_error_detail(exc))
     return Response(content=data, media_type=media_type, headers={REQUEST_ID_HEADER: request_id})
@@ -180,17 +183,20 @@ def post_image_retranslation(
     request: Request,
     source_request_id: str,
     target_language: str = Form(...),
+    operation_id: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> Response:
+    operation_id = normalize_operation_id(operation_id)
     principal, entitlements, _ = resolve_request_context(request)
     entitlements.require_enabled("image_translation.enabled")
     require_image_request_owner(principal, source_request_id)
     try:
-        with admit_image_operation(principal, entitlements):
+        record_image_request_owner(principal, operation_id)
+        with admit_image_operation(principal, entitlements, operation_id):
             data, media_type, request_id = retranslate_image(
+                operation_id=operation_id,
                 source_request_id=source_request_id,
                 target_language=target_language,
             )
-            record_image_request_owner(principal, request_id)
     except ImageTranslationError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc))
     return Response(content=data, media_type=media_type, headers={REQUEST_ID_HEADER: request_id})
@@ -207,13 +213,17 @@ def post_image_rerender(
     width_fit_mode: str = Form(""),
     size_metric_mode: str = Form(""),
     size_cohort_mode: str = Form(""),
+    operation_id: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> Response:
+    operation_id = normalize_operation_id(operation_id)
     principal, entitlements, _ = resolve_request_context(request)
     entitlements.require_enabled("image_translation.enabled")
     require_image_request_owner(principal, source_request_id)
     try:
-        with admit_image_operation(principal, entitlements):
+        record_image_request_owner(principal, operation_id)
+        with admit_image_operation(principal, entitlements, operation_id):
             data, media_type, request_id = rerender_image(
+                operation_id=operation_id,
                 source_request_id=source_request_id,
                 render_options={
                     "render_size_mode": render_size_mode,
@@ -223,7 +233,6 @@ def post_image_rerender(
                     "size_cohort_mode": size_cohort_mode,
                 },
             )
-            record_image_request_owner(principal, request_id)
     except ImageTranslationError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc))
     return Response(content=data, media_type=media_type, headers={REQUEST_ID_HEADER: request_id})

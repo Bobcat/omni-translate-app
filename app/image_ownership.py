@@ -9,7 +9,7 @@ IMAGE_REQUEST_RESOURCE = "image_translation_request"
 
 
 def record_image_request_owner(principal: Principal, request_id: str) -> None:
-    """Persist the owner before exposing a new upstream request ID."""
+    """Persist the owner before submitting or exposing an upstream request ID."""
     resource_id = str(request_id or "").strip()
     if not resource_id:
         raise RuntimeError("cannot register an empty image request id")
@@ -22,7 +22,11 @@ def record_image_request_owner(principal: Principal, request_id: str) -> None:
         principal.id,
     )
     if not claimed:
-        raise RuntimeError("image request id already belongs to another principal")
+        raise SaasError(
+            RESOURCE_NOT_FOUND,
+            "image operation not found",
+            status_code=404,
+        )
 
 
 def require_image_request_owner(principal: Principal, request_id: str) -> None:

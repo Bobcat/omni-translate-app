@@ -56,6 +56,7 @@ class ImageTranslationError(RuntimeError):
 
 def translate_image(
     *,
+    operation_id: str,
     image_bytes: bytes,
     filename: str,
     content_type: str,
@@ -66,7 +67,8 @@ def translate_image(
 ) -> tuple[bytes, str, str]:
     """Translate ``image_bytes`` and return ``(rendered_png_bytes, media_type, request_id)``.
 
-    ``source_language``/``target_language`` are language names or ISO codes; they
+    ``operation_id`` is the browser UUID for this explicit action and becomes the
+    service ``request_id``. ``source_language``/``target_language`` are language names or ISO codes; they
     are normalised to the ISO codes the service expects. ``render_options`` carries
     the render flags for the first render; empty/unknown values are dropped so the
     service uses its own defaults for them. ``max_source_characters`` is the
@@ -91,6 +93,7 @@ def translate_image(
         raise ImageTranslationError("target language is required", status_code=400)
 
     request = {
+        "request_id": str(operation_id),
         "task": "translate_image",
         "source_lang_code": source_code,
         "target_lang_code": target_code,
@@ -102,7 +105,13 @@ def translate_image(
         if value:
             request[key] = value
     request_json = json.dumps(request)
-    request_id = _submit(request_json, image_bytes, filename or "image", mime)
+    request_id = _submit(
+        request_json,
+        image_bytes,
+        filename or "image",
+        mime,
+        expected_request_id=operation_id,
+    )
     _await_completion(request_id)
     data, media_type = _fetch_rendered(request_id)
     return data, media_type, request_id
@@ -121,6 +130,7 @@ RENDER_OPTION_KEYS = (
 
 def retranslate_image(
     *,
+    operation_id: str,
     source_request_id: str,
     target_language: str,
 ) -> tuple[bytes, str, str]:
@@ -132,7 +142,12 @@ def retranslate_image(
     if not target_code:
         raise ImageTranslationError("target language is required", status_code=400)
 
-    request_id = _submit_reentry(source_id, "retranslate", {"target_lang_code": target_code})
+    request_id = _submit_reentry(
+        source_id,
+        "retranslate",
+        {"request_id": str(operation_id), "target_lang_code": target_code},
+        expected_request_id=operation_id,
+    )
     _await_completion(request_id)
     data, media_type = _fetch_rendered(request_id)
     return data, media_type, request_id
@@ -140,6 +155,7 @@ def retranslate_image(
 
 def rerender_image(
     *,
+    operation_id: str,
     source_request_id: str,
     render_options: dict,
 ) -> tuple[bytes, str, str]:
@@ -155,7 +171,13 @@ def rerender_image(
         for key in RENDER_OPTION_KEYS
         if str(render_options.get(key) or "").strip()
     }
-    request_id = _submit_reentry(source_id, "rerender", payload)
+    payload["request_id"] = str(operation_id)
+    request_id = _submit_reentry(
+        source_id,
+        "rerender",
+        payload,
+        expected_request_id=operation_id,
+    )
     _await_completion(request_id)
     data, media_type = _fetch_rendered(request_id)
     return data, media_type, request_id
@@ -173,7 +195,14 @@ def _poll_interval_s() -> float:
     return get_float("image_translation.poll_interval_s", 0.5, min_value=0.05)
 
 
-def _submit(request_json: str, image_bytes: bytes, filename: str, mime: str) -> str:
+def _submit(
+    request_json: str,
+    image_bytes: bytes,
+    filename: str,
+    mime: str,
+    *,
+    expected_request_id: str,
+) -> str:
     boundary = uuid.uuid4().hex
     body = _multipart_body(boundary, request_json, image_bytes, filename, mime)
     payload = _read_json(
@@ -185,13 +214,21 @@ def _submit(request_json: str, image_bytes: bytes, filename: str, mime: str) -> 
     request_id = str(payload.get("request_id") or "").strip()
     if not request_id:
         raise ImageTranslationError("translation-services did not return a request_id")
+    if request_id != str(expected_request_id):
+        raise ImageTranslationError("translation-services returned an unexpected request_id")
     state = str(payload.get("state") or "")
     if state in _TERMINAL_BAD:
         raise _terminal_error(payload, state)
     return request_id
 
 
-def _submit_reentry(source_request_id: str, subpath: str, payload: dict) -> str:
+def _submit_reentry(
+    source_request_id: str,
+    subpath: str,
+    payload: dict,
+    *,
+    expected_request_id: str,
+) -> str:
     """Submit a re-entry request (retranslate or rerender) against a prior request_id and
     return the new request_id. Both endpoints take a JSON body and return a lifecycle envelope."""
     body = json.dumps(payload).encode("utf-8")
@@ -205,6 +242,8 @@ def _submit_reentry(source_request_id: str, subpath: str, payload: dict) -> str:
     request_id = str(response.get("request_id") or "").strip()
     if not request_id:
         raise ImageTranslationError("translation-services did not return a request_id")
+    if request_id != str(expected_request_id):
+        raise ImageTranslationError("translation-services returned an unexpected request_id")
     state = str(response.get("state") or "")
     if state in _TERMINAL_BAD:
         raise _terminal_error(response, state)
@@ -286,7 +325,10 @@ def _read_json(
     except httpx.RequestError as exc:
         raise ImageTranslationError(f"translation-services unreachable: {exc}") from exc
     if response.is_error:
-        raise ImageTranslationError(_http_error_detail(response))
+        raise ImageTranslationError(
+            _http_error_detail(response),
+            status_code=response.status_code,
+        )
     try:
         payload = response.json()
     except ValueError as exc:
@@ -322,7 +364,11 @@ def _terminal_error(payload: dict, state: str) -> ImageTranslationError:
 def _http_error_detail(response: httpx.Response) -> str:
     try:
         payload = response.json()
-        detail = payload.get("detail") if isinstance(payload, dict) else None
+        detail = (
+            payload.get("detail") or payload.get("message") or payload.get("code")
+            if isinstance(payload, dict)
+            else None
+        )
         if isinstance(detail, dict):
             detail = detail.get("message") or detail.get("code")
         if detail:

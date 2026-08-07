@@ -18,13 +18,22 @@ class AdmissionControllerTests(unittest.TestCase):
         self.controller = AdmissionController()
         self.principal = _principal()
 
-    def _admit(self, *, now: float, minute: int = 5, hour: int = 30, concurrent: int = 1):
+    def _admit(
+        self,
+        *,
+        now: float,
+        minute: int = 5,
+        hour: int = 30,
+        concurrent: int = 1,
+        idempotency_key: str | None = None,
+    ):
         return self.controller.admit(
             self.principal,
             operation="image_processing",
             max_per_minute=minute,
             max_per_hour=hour,
             max_concurrent=concurrent,
+            idempotency_key=idempotency_key,
             now=now,
         )
 
@@ -42,6 +51,19 @@ class AdmissionControllerTests(unittest.TestCase):
             pass
         with self._admit(now=1):
             pass
+
+    def test_same_active_idempotency_key_reuses_one_admission(self) -> None:
+        with self._admit(now=0, minute=1, idempotency_key="operation-a"):
+            with self._admit(now=1, minute=1, idempotency_key="operation-a"):
+                with self.assertRaises(SaasError) as caught:
+                    with self._admit(now=2, minute=1, idempotency_key="operation-b"):
+                        pass
+        self.assertEqual(caught.exception.details["constraint"], "concurrent")
+
+        with self.assertRaises(SaasError) as caught:
+            with self._admit(now=3, minute=1, idempotency_key="operation-b"):
+                pass
+        self.assertEqual(caught.exception.details["constraint"], "rate")
 
     def test_admitted_failure_still_counts_toward_the_rate(self) -> None:
         with self.assertRaises(RuntimeError):

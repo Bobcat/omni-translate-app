@@ -174,7 +174,11 @@ export function createImageView() {
     setStatus('');
     setBusy(true);
     try {
-      const result = await translateImage(file, { source: 'auto', target: targetSelect.value });
+      const result = await translateImage(file, {
+        source: 'auto',
+        target: targetSelect.value,
+        operationId: globalThis.crypto.randomUUID(),
+      });
       if (token !== runToken) return;
       requestId = result.requestId;
       showTranslated(result.blob);
@@ -194,7 +198,10 @@ export function createImageView() {
     setStatus('');
     setBusy(true);
     try {
-      const result = await retranslateImage(requestId, { target: targetSelect.value });
+      const result = await retranslateImage(requestId, {
+        target: targetSelect.value,
+        operationId: globalThis.crypto.randomUUID(),
+      });
       if (token !== runToken) return;
       requestId = result.requestId;
       showTranslated(result.blob);

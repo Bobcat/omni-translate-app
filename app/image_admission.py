@@ -99,7 +99,11 @@ def validate_image_upload(
         )
 
 
-def admit_image_operation(principal: Principal, entitlements: EntitlementSet):
+def admit_image_operation(
+    principal: Principal,
+    entitlements: EntitlementSet,
+    operation_id: str,
+):
     """One shared operational limit for translate, retranslate, and rerender."""
     return _controller.admit(
         principal,
@@ -107,4 +111,5 @@ def admit_image_operation(principal: Principal, entitlements: EntitlementSet):
         max_per_minute=entitlements.get_int("image_translation.max_jobs_per_minute"),
         max_per_hour=entitlements.get_int("image_translation.max_jobs_per_hour"),
         max_concurrent=entitlements.get_int("image_translation.max_concurrent_jobs"),
+        idempotency_key=operation_id,
     )

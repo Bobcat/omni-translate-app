@@ -60,6 +60,8 @@ class ImageOwnershipTests(unittest.TestCase):
 
     def test_existing_request_cannot_be_claimed_by_another_owner(self) -> None:
         record_image_request_owner(self.owner, "request-1")
-        with self.assertRaises(RuntimeError):
+        with self.assertRaises(SaasError) as caught:
             record_image_request_owner(_principal(), "request-1")
+        self.assertEqual(caught.exception.code, RESOURCE_NOT_FOUND)
+        self.assertEqual(caught.exception.status_code, 404)
         require_image_request_owner(self.owner, "request-1")

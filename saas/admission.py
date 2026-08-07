@@ -21,6 +21,7 @@ _CLEANUP_INTERVAL_S = 60.0
 class _AdmissionBucket:
     attempts: deque[float] = field(default_factory=deque)
     active: int = 0
+    active_idempotency_keys: dict[str, int] = field(default_factory=dict)
 
 
 class AdmissionController:
@@ -45,6 +46,7 @@ class AdmissionController:
         max_per_minute: int,
         max_per_hour: int,
         max_concurrent: int,
+        idempotency_key: str | None = None,
         now: float | None = None,
     ) -> Iterator[None]:
         limits = (int(max_per_minute), int(max_per_hour), int(max_concurrent))
@@ -52,17 +54,19 @@ class AdmissionController:
             raise ValueError("admission limits must be positive")
         timestamp = time.monotonic() if now is None else float(now)
         key = (principal.tenant, principal.kind, str(principal.id), str(operation))
-        self._enter(
+        replay_key = str(idempotency_key or "").strip()
+        counted = self._enter(
             key,
             timestamp,
             max_per_minute=limits[0],
             max_per_hour=limits[1],
             max_concurrent=limits[2],
+            idempotency_key=replay_key,
         )
         try:
             yield
         finally:
-            self._leave(key)
+            self._leave(key, idempotency_key=replay_key, counted=counted)
 
     def _enter(
         self,
@@ -72,11 +76,15 @@ class AdmissionController:
         max_per_minute: int,
         max_per_hour: int,
         max_concurrent: int,
-    ) -> None:
+        idempotency_key: str,
+    ) -> bool:
         with self._lock:
             self._cleanup(now)
             bucket = self._buckets.setdefault(key, _AdmissionBucket())
             self._prune(bucket, now)
+            if idempotency_key and idempotency_key in bucket.active_idempotency_keys:
+                bucket.active_idempotency_keys[idempotency_key] += 1
+                return False
             if bucket.active >= max_concurrent:
                 raise SaasError(
                     RATE_LIMIT_EXCEEDED,
@@ -99,11 +107,30 @@ class AdmissionController:
 
             bucket.attempts.append(now)
             bucket.active += 1
+            if idempotency_key:
+                bucket.active_idempotency_keys[idempotency_key] = 1
+            return True
 
-    def _leave(self, key: tuple[str, str, str, str]) -> None:
+    def _leave(
+        self,
+        key: tuple[str, str, str, str],
+        *,
+        idempotency_key: str,
+        counted: bool,
+    ) -> None:
         with self._lock:
             bucket = self._buckets.get(key)
-            if bucket is not None:
+            if bucket is None:
+                return
+            if idempotency_key:
+                remaining = bucket.active_idempotency_keys.get(idempotency_key, 0) - 1
+                if remaining > 0:
+                    bucket.active_idempotency_keys[idempotency_key] = remaining
+                else:
+                    bucket.active_idempotency_keys.pop(idempotency_key, None)
+                    bucket.active = max(0, bucket.active - 1)
+                return
+            if counted:
                 bucket.active = max(0, bucket.active - 1)
 
     def _cleanup(self, now: float) -> None:

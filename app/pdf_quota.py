@@ -18,11 +18,11 @@ from typing import Any, Mapping
 from fastapi import Request
 from pypdf import PdfReader
 
+from app.operation_ids import normalize_operation_id
 from app.pdf_translation_bridge import PdfTranslationError
 from app.pdf_translation_bridge import submit_pdf
 from app.saas_setup import get_saas_context, resolve_request_context
 from saas.errors import (
-    INVALID_OPERATION_ID,
     INVALID_UPLOAD,
     PAGE_LIMIT_PER_JOB_EXCEEDED,
     RESOURCE_NOT_FOUND,
@@ -53,25 +53,6 @@ def count_pdf_pages(document_bytes: bytes) -> int:
             "the uploaded file is not a readable PDF",
             status_code=400,
         ) from exc
-
-
-def normalize_operation_id(value: str | None) -> str:
-    """Canonical random UUID supplied by the browser for one explicit action."""
-    try:
-        operation_id = uuid.UUID(str(value or "").strip())
-    except (ValueError, AttributeError) as exc:
-        raise SaasError(
-            INVALID_OPERATION_ID,
-            "Idempotency-Key must be a UUID",
-            status_code=400,
-        ) from exc
-    if operation_id.version != 4:
-        raise SaasError(
-            INVALID_OPERATION_ID,
-            "Idempotency-Key must be a random UUID",
-            status_code=400,
-        )
-    return str(operation_id)
 
 
 def submit_pdf_with_quota(

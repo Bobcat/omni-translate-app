@@ -61,7 +61,7 @@ export function rerenderCurrentImage() {
   renderImageTranslation();
   renderLifecycle();
   updateActionButtons();
-  api.rerenderImage(it.requestId, { ...state.imageRender })
+  api.rerenderImage(it.requestId, { ...state.imageRender }, globalThis.crypto.randomUUID())
     .then((result) => applyImageTranslationResult(result, token, it.translatedTargetLanguage))
     .catch((err) => applyRerenderError(err, token));
 }
@@ -181,6 +181,7 @@ function requestTranslation(file, token) {
   api.translateImage(file, {
     source: lane.sourceLanguage,
     target: targetLanguage,
+    operationId: globalThis.crypto.randomUUID(),
     renderOptions: { ...state.imageRender },
   })
     .then((result) => applyImageTranslationResult(result, token, targetLanguage))
@@ -188,7 +189,10 @@ function requestTranslation(file, token) {
 }
 
 function requestRetranslation(requestId, targetLanguage, token) {
-  api.retranslateImage(requestId, { target: targetLanguage })
+  api.retranslateImage(requestId, {
+    target: targetLanguage,
+    operationId: globalThis.crypto.randomUUID(),
+  })
     .then((result) => applyImageTranslationResult(result, token, targetLanguage))
     .catch((err) => applyImageTranslationError(err, token));
 }
