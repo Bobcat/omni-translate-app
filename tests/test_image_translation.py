@@ -16,7 +16,7 @@ from app.image_translation_bridge import translate_image
 from app.main import app
 from saas.entitlements import EntitlementSet
 from saas.fastapi_glue import stage_identity_cookie
-from saas.errors import RATE_LIMIT_EXCEEDED, RESOURCE_NOT_FOUND, SaasError
+from saas.errors import PERIOD_QUOTA_EXCEEDED, RATE_LIMIT_EXCEEDED, RESOURCE_NOT_FOUND, SaasError
 from saas.principals import Principal
 
 
@@ -74,8 +74,14 @@ class ImageTranslationRouteTests(unittest.TestCase):
         self.record_owner = self._record_owner_patch.start()
         self._require_owner_patch = patch("app.router.require_image_request_owner")
         self.require_owner = self._require_owner_patch.start()
+        self._quota_operation_patch = patch(
+            "app.router.register_image_quota_operation",
+            return_value=False,
+        )
+        self.register_quota = self._quota_operation_patch.start()
 
     def tearDown(self) -> None:
+        self._quota_operation_patch.stop()
         self._require_owner_patch.stop()
         self._record_owner_patch.stop()
         self._admission_patch.stop()
@@ -101,8 +107,53 @@ class ImageTranslationRouteTests(unittest.TestCase):
         self.assertEqual(response.headers.get("x-image-translation-request-id"), OPERATION_ID)
         self.assertEqual(captured.get("operation_id"), OPERATION_ID)
         self.assertEqual(captured.get("max_source_characters"), 1500)
+        self.assertFalse(captured.get("quota_authorization_required"))
+        self.assertIsNone(captured.get("lifecycle_handler"))
         self.assertIn("ot_anon=tok123", response.headers.get("set-cookie") or "")
         self.record_owner.assert_called_once_with(PRINCIPAL, OPERATION_ID)
+
+    def test_metered_plan_forwards_checkpoint_and_lifecycle_handler(self) -> None:
+        captured: dict[str, object] = {}
+
+        def fake_translate_image(**kwargs: object):
+            captured.update(kwargs)
+            handler = kwargs["lifecycle_handler"]
+            handler({"request_id": OPERATION_ID, "state": "awaiting_quota"})
+            return PNG_BYTES, "image/png", OPERATION_ID
+
+        self.register_quota.return_value = True
+        with (
+            patch("app.router.resolve_request_context", return_value=(PRINCIPAL, ENABLED, None)),
+            patch("app.router.translate_image", fake_translate_image),
+            patch("app.router.handle_image_quota_lifecycle") as handle,
+        ):
+            response = _post_image(self.client)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(captured["quota_authorization_required"])
+        handle.assert_called_once_with(
+            OPERATION_ID,
+            {"request_id": OPERATION_ID, "state": "awaiting_quota"},
+            raise_quota_errors=True,
+        )
+
+    def test_character_period_rejection_uses_control_error_shape(self) -> None:
+        self.register_quota.return_value = True
+        rejection = SaasError(
+            PERIOD_QUOTA_EXCEEDED,
+            "This image needs about 12 translation characters, but only 10 remain this month.",
+            status_code=429,
+            details={"requested": 12, "remaining": 10},
+        )
+        with (
+            patch("app.router.resolve_request_context", return_value=(PRINCIPAL, ENABLED, None)),
+            patch("app.router.translate_image", side_effect=rejection),
+        ):
+            response = _post_image(self.client)
+
+        self.assertEqual(response.status_code, 429)
+        self.assertEqual(response.json()["error"]["code"], PERIOD_QUOTA_EXCEEDED)
+        self.assertIn("only 10 remain", response.json()["error"]["message"])
 
     def test_valid_identity_issues_no_new_cookie(self) -> None:
         def fake_translate_image(**kwargs: object):
@@ -256,7 +307,12 @@ class ImageTranslationRouteTests(unittest.TestCase):
 
 
 class BridgeCeilingTests(unittest.TestCase):
-    def _run_bridge(self, max_source_characters: int | None) -> str:
+    def _run_bridge(
+        self,
+        max_source_characters: int | None,
+        *,
+        quota_authorization_required: bool = False,
+    ) -> str:
         captured: dict[str, str] = {}
 
         def fake_submit(
@@ -287,6 +343,7 @@ class BridgeCeilingTests(unittest.TestCase):
                 source_language="auto",
                 target_language="English",
                 max_source_characters=max_source_characters,
+                quota_authorization_required=quota_authorization_required,
             )
         return captured["request_json"]
 
@@ -298,6 +355,10 @@ class BridgeCeilingTests(unittest.TestCase):
     def test_no_ceiling_leaves_the_field_out(self) -> None:
         request = json.loads(self._run_bridge(None))
         self.assertNotIn("max_source_characters", request)
+
+    def test_metered_request_asks_service_to_pause_before_translation(self) -> None:
+        request = json.loads(self._run_bridge(1500, quota_authorization_required=True))
+        self.assertTrue(request["quota_authorization_required"])
 
 
 class TerminalErrorMappingTests(unittest.TestCase):

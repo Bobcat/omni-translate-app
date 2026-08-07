@@ -9,10 +9,12 @@ double-reserves.
 """
 from __future__ import annotations
 
+import json
 import sqlite3
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 from typing import Literal
 
 from saas.errors import PERIOD_QUOTA_EXCEEDED, USAGE_IDEMPOTENCY_CONFLICT, SaasError
@@ -123,6 +125,7 @@ class QuotaService:
         job_id: str | None = None,
         idempotency_key: str,
         now: datetime | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> UsageReservation:
         """Atomically hold ``quantity`` of ``metric`` against ``limit``.
 
@@ -188,6 +191,7 @@ class QuotaService:
                     period_kind=kind.value,
                     period_start=start.isoformat(),
                     period_end=end.isoformat(),
+                    metadata=metadata,
                 )
                 self._store.adjust_reserved(
                     principal.tenant, principal.kind, principal.id, metric, start.isoformat(), quantity
@@ -261,11 +265,20 @@ class QuotaService:
                 )
             if row["state"] != "reserved":
                 return
+            merged_metadata = None
+            if metadata is not None:
+                try:
+                    existing_metadata = json.loads(str(row["metadata"] or "{}"))
+                except (TypeError, ValueError):
+                    existing_metadata = {}
+                if not isinstance(existing_metadata, dict):
+                    existing_metadata = {}
+                merged_metadata = {**existing_metadata, **metadata}
             self._store.update_usage_event(
                 reservation_id,
                 state=target,
                 quantity=actual_quantity,
-                metadata=metadata,
+                metadata=merged_metadata,
             )
             self._store.adjust_reserved(
                 row["tenant"], row["owner_kind"], uuid.UUID(row["owner_id"]),

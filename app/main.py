@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.responses import FileResponse, HTMLResponse, Response
 
 from app.config import get_str
+from app.image_quota import run_image_quota_reconciliation_loop
 from app.pdf_reconciliation import run_pdf_reconciliation_loop
 from app.router import api_router
 from app.routes import websocket_endpoint
@@ -31,19 +32,26 @@ root_path = get_str("service.root_path", "")
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     open_upstream_http_client()
-    reconciliation_task: asyncio.Task | None = None
+    reconciliation_tasks: list[asyncio.Task] = []
     try:
         await asyncio.to_thread(warm_asr_vad)
-        reconciliation_task = asyncio.create_task(
-            run_pdf_reconciliation_loop(),
-            name="pdf-quota-reconciliation",
-        )
+        reconciliation_tasks = [
+            asyncio.create_task(
+                run_pdf_reconciliation_loop(),
+                name="pdf-quota-reconciliation",
+            ),
+            asyncio.create_task(
+                run_image_quota_reconciliation_loop(),
+                name="image-quota-reconciliation",
+            ),
+        ]
         yield
     finally:
-        if reconciliation_task is not None:
-            reconciliation_task.cancel()
+        for task in reconciliation_tasks:
+            task.cancel()
+        for task in reconciliation_tasks:
             with contextlib.suppress(asyncio.CancelledError):
-                await reconciliation_task
+                await task
         close_upstream_http_client()
 
 

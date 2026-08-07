@@ -46,6 +46,10 @@
           "max_jobs_per_minute": 60,
           "max_jobs_per_hour": 1200
         },
+        "translation": {
+          "characters_per_period": 10000,
+          "period": "month"
+        },
         "image_translation": {
           "enabled": true,
           "max_characters_per_job": 1500,
@@ -65,7 +69,8 @@
       }
     },
     "usage_metrics": [
-      { "metric": "pdf_translation.pages", "period": "month", "limit_key": "pdf_translation.pages_per_period" }
+      { "metric": "pdf_translation.pages", "period": "month", "limit_key": "pdf_translation.pages_per_period" },
+      { "metric": "translation.source_characters", "period": "month", "limit_key": "translation.characters_per_period" }
     ]
   },
   "asr_pool": {
@@ -79,7 +84,9 @@
   "image_translation": {
     "base_url": "http://127.0.0.1:8030",
     "request_timeout_s": 120,
-    "poll_interval_s": 0.5
+    "poll_interval_s": 0.5,
+    "quota_reconciliation_interval_s": 5,
+    "quota_reconciliation_missing_grace_s": 86400
   },
   "pdf_translation": {
     "base_url": "http://127.0.0.1:8030",

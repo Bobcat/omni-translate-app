@@ -289,6 +289,28 @@ class PdfQuotaFlowTests(unittest.TestCase):
         envelope = self._submit(5)
         require_pdf_request_owner(None, envelope["request_id"])
 
+    def test_same_job_id_in_another_metric_cannot_shadow_pdf_event(self) -> None:
+        operation_id = str(uuid.uuid4())
+        character_reservation = self.ctx.quota_service.reserve(
+            self.principal,
+            metric="translation.source_characters",
+            quantity=12,
+            limit=100,
+            period_kind="month",
+            job_id=operation_id,
+            idempotency_key=f"image-characters:{operation_id}",
+        )
+        envelope = self._submit(5, operation_id=operation_id)
+
+        require_pdf_request_owner(None, operation_id)
+        finalize_pdf_reservation({**envelope, "state": "completed"})
+
+        self.assertEqual(self._usage(), (0, 5))
+        self.assertEqual(
+            str(self.store.get_usage_event(character_reservation.id)["state"]),
+            "reserved",
+        )
+
     def test_other_principal_cannot_access_pdf_request(self) -> None:
         envelope = self._submit(5)
         other = _principal()
