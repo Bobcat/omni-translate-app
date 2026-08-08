@@ -53,6 +53,7 @@ export function createPdfView() {
       </div>
     </div>
     <div class="usage-line" id="pdfUsage" hidden></div>
+    <div class="usage-line">Translations are temporary. Download the result after it completes.</div>
     <div class="dropzone-card" id="pdfDropzone">
       <div class="dropzone-drop">
         ${iconMarkup('upload-cloud')}
@@ -170,7 +171,7 @@ export function createPdfView() {
         usageEl.hidden = true;
         return;
       }
-      usageEl.textContent = `PDF pages this month: ${pages.remaining} of ${pages.limit} left`;
+      usageEl.textContent = `PDF pages this month: ${pages.remaining} of ${pages.limit} left${usageBreakdown(pages)}${formatResetDate(pages.period_end)}`;
       usageEl.hidden = false;
     } catch {
       // A failed fetch leaves the previous balance in place.
@@ -587,4 +588,16 @@ export function createPdfView() {
   });
 
   return container;
+}
+
+function formatResetDate(value) {
+  const date = new Date(String(value || ''));
+  if (Number.isNaN(date.getTime())) return '';
+  return ` · resets ${new Intl.DateTimeFormat(undefined, { day: 'numeric', month: 'short' }).format(date)}`;
+}
+
+function usageBreakdown(entry) {
+  const consumed = Number(entry?.consumed || 0);
+  const reserved = Number(entry?.reserved || 0);
+  return ` · ${consumed.toLocaleString()} used · ${reserved.toLocaleString()} pending`;
 }

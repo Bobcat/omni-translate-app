@@ -297,6 +297,14 @@ def cancel_image_request(request_id: str) -> dict:
     )
 
 
+def get_image_artifact(request_id: str) -> tuple[bytes, str]:
+    """Fetch the rendered image for an existing durable request."""
+    safe_id = quote(str(request_id or "").strip(), safe="")
+    if not safe_id:
+        raise ImageTranslationError("request_id is required", status_code=400)
+    return _fetch_rendered(safe_id)
+
+
 def _await_completion(
     request_id: str,
     *,
@@ -327,7 +335,8 @@ def _fetch_rendered(request_id: str) -> tuple[bytes, str]:
         raise ImageTranslationError(f"translation-services unreachable: {exc}") from exc
     if response.is_error:
         raise ImageTranslationError(
-            f"could not fetch rendered image: HTTP {response.status_code}"
+            _http_error_detail(response),
+            status_code=response.status_code,
         )
     data = response.content
     media_type = (response.headers.get("Content-Type") or "image/png").split(";")[0].strip()

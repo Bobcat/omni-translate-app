@@ -18,6 +18,9 @@ from app.image_ownership import record_image_request_owner
 from app.image_ownership import require_image_request_owner
 from app.image_quota import handle_image_quota_lifecycle
 from app.image_quota import register_image_quota_operation
+from app.image_translation_bridge import cancel_image_request
+from app.image_translation_bridge import get_image_artifact
+from app.image_translation_bridge import get_image_request
 from app.image_translation_bridge import ImageTranslationError
 from app.image_translation_bridge import REQUEST_ID_HEADER
 from app.image_translation_bridge import rerender_image
@@ -27,6 +30,7 @@ from app.live_settings import default_live_settings
 from app.live_settings import merge_live_settings
 from app.live_settings import normalize_live_settings_delta
 from app.operation_ids import normalize_operation_id
+from app.operation_ids import operation_payload_hash
 from app.pdf_quota import finalize_pdf_reservation
 from app.pdf_quota import require_pdf_request_owner
 from app.pdf_quota import submit_pdf_with_quota
@@ -146,8 +150,25 @@ def post_image_translation(
         entitlements=entitlements,
     )
     max_characters = entitlements.get_int("image_translation.max_characters_per_job")
+    render_options = {
+        "render_size_mode": render_size_mode,
+        "erase_fill_mode": erase_fill_mode,
+        "width_fit_mode": width_fit_mode,
+        "size_metric_mode": size_metric_mode,
+        "size_cohort_mode": size_cohort_mode,
+    }
+    payload_hash = operation_payload_hash(
+        "image_translation",
+        content=content,
+        parameters={
+            "content_type": mime,
+            "source_language": _image_language_hash_value(source_language, allow_auto=True),
+            "target_language": _image_language_hash_value(target_language),
+            **_image_render_hash_values(render_options),
+        },
+    )
     try:
-        record_image_request_owner(principal, operation_id)
+        record_image_request_owner(principal, operation_id, payload_hash)
         with admit_image_operation(principal, entitlements, operation_id):
             validate_image_upload(content, declared_mime=mime, entitlements=entitlements)
             quota_authorization_required = register_image_quota_operation(
@@ -162,13 +183,7 @@ def post_image_translation(
                 content_type=mime,
                 source_language=source_language,
                 target_language=target_language,
-                render_options={
-                    "render_size_mode": render_size_mode,
-                    "erase_fill_mode": erase_fill_mode,
-                    "width_fit_mode": width_fit_mode,
-                    "size_metric_mode": size_metric_mode,
-                    "size_cohort_mode": size_cohort_mode,
-                },
+                render_options=render_options,
                 max_source_characters=max_characters,
                 quota_authorization_required=quota_authorization_required,
                 lifecycle_handler=(
@@ -197,6 +212,21 @@ def _image_error_detail(exc: ImageTranslationError) -> Any:
     return {"code": exc.code, "message": str(exc), "details": exc.details}
 
 
+def _image_language_hash_value(value: str, *, allow_auto: bool = False) -> str:
+    raw = str(value or "").strip()
+    if allow_auto and raw.lower() == "auto":
+        return "auto"
+    return translation_language_code(raw) or raw.casefold()
+
+
+def _image_render_hash_values(render_options: dict[str, str]) -> dict[str, str]:
+    return {
+        key: str(value).strip()
+        for key, value in render_options.items()
+        if str(value or "").strip()
+    }
+
+
 @api_router.post("/image-translation/{source_request_id}/retranslate")
 def post_image_retranslation(
     request: Request,
@@ -208,8 +238,15 @@ def post_image_retranslation(
     principal, entitlements, _ = resolve_request_context(request)
     entitlements.require_enabled("image_translation.enabled")
     require_image_request_owner(principal, source_request_id)
+    payload_hash = operation_payload_hash(
+        "image_retranslation",
+        parameters={
+            "source_request_id": str(source_request_id),
+            "target_language": _image_language_hash_value(target_language),
+        },
+    )
     try:
-        record_image_request_owner(principal, operation_id)
+        record_image_request_owner(principal, operation_id, payload_hash)
         with admit_image_operation(principal, entitlements, operation_id):
             data, media_type, request_id = retranslate_image(
                 operation_id=operation_id,
@@ -238,23 +275,71 @@ def post_image_rerender(
     principal, entitlements, _ = resolve_request_context(request)
     entitlements.require_enabled("image_translation.enabled")
     require_image_request_owner(principal, source_request_id)
+    render_options = {
+        "render_size_mode": render_size_mode,
+        "erase_fill_mode": erase_fill_mode,
+        "width_fit_mode": width_fit_mode,
+        "size_metric_mode": size_metric_mode,
+        "size_cohort_mode": size_cohort_mode,
+    }
+    payload_hash = operation_payload_hash(
+        "image_rerender",
+        parameters={
+            "source_request_id": str(source_request_id),
+            **_image_render_hash_values(render_options),
+        },
+    )
     try:
-        record_image_request_owner(principal, operation_id)
+        record_image_request_owner(principal, operation_id, payload_hash)
         with admit_image_operation(principal, entitlements, operation_id):
             data, media_type, request_id = rerender_image(
                 operation_id=operation_id,
                 source_request_id=source_request_id,
-                render_options={
-                    "render_size_mode": render_size_mode,
-                    "erase_fill_mode": erase_fill_mode,
-                    "width_fit_mode": width_fit_mode,
-                    "size_metric_mode": size_metric_mode,
-                    "size_cohort_mode": size_cohort_mode,
-                },
+                render_options=render_options,
             )
     except ImageTranslationError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc))
     return Response(content=data, media_type=media_type, headers={REQUEST_ID_HEADER: request_id})
+
+
+@api_router.get("/image-translation/requests/{operation_id}")
+def get_image_translation_request(request: Request, operation_id: str) -> dict[str, Any]:
+    operation_id = normalize_operation_id(operation_id)
+    principal, _, _ = resolve_request_context(request)
+    require_image_request_owner(principal, operation_id)
+    try:
+        return get_image_request(operation_id)
+    except ImageTranslationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=_image_error_detail(exc))
+
+
+@api_router.get("/image-translation/requests/{operation_id}/artifact")
+def get_image_translation_artifact(request: Request, operation_id: str) -> Response:
+    operation_id = normalize_operation_id(operation_id)
+    principal, _, _ = resolve_request_context(request)
+    require_image_request_owner(principal, operation_id)
+    try:
+        data, media_type = get_image_artifact(operation_id)
+    except ImageTranslationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=_image_error_detail(exc))
+    return Response(
+        content=data,
+        media_type=media_type,
+        headers={"Cache-Control": "private, no-store"},
+    )
+
+
+@api_router.post("/image-translation/requests/{operation_id}/cancel")
+def post_image_translation_cancel(request: Request, operation_id: str) -> dict[str, Any]:
+    operation_id = normalize_operation_id(operation_id)
+    principal, _, _ = resolve_request_context(request)
+    require_image_request_owner(principal, operation_id)
+    try:
+        envelope = cancel_image_request(operation_id)
+        handle_image_quota_lifecycle(operation_id, envelope)
+        return envelope
+    except ImageTranslationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=_image_error_detail(exc))
 
 
 # PDF translation: unlike images, the submit returns a lifecycle envelope immediately

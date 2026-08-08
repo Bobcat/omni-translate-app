@@ -11,8 +11,7 @@ async function fetchJson(url, options = {}) {
     }),
   });
   if (!response.ok) {
-    const detail = await errorDetailFromResponse(response);
-    throw new Error(detail || `HTTP ${response.status}`);
+    throw await responseError(response);
   }
   return response.json();
 }
@@ -24,6 +23,14 @@ export const api = {
 
   getMe() {
     return fetchJson('/api/me');
+  },
+
+  getEntitlements() {
+    return fetchJson('/api/entitlements');
+  },
+
+  getUsage() {
+    return fetchJson('/api/usage');
   },
 
   async translateImage(file, { source, target, operationId, renderOptions = {} }) {
@@ -50,6 +57,25 @@ export const api = {
       operationId,
     );
     return imageTranslationPayload(response);
+  },
+
+  getImageRequest(operationId) {
+    const safeId = encodeURIComponent(String(operationId || ''));
+    return fetchJson(`/api/image-translation/requests/${safeId}`);
+  },
+
+  async getImageArtifact(operationId) {
+    const safeId = encodeURIComponent(String(operationId || ''));
+    const response = await fetch(`/api/image-translation/requests/${safeId}/artifact`, {
+      headers: authHeaders(),
+    });
+    if (!response.ok) throw await responseError(response);
+    return response.blob();
+  },
+
+  cancelImage(operationId) {
+    const safeId = encodeURIComponent(String(operationId || ''));
+    return fetchJson(`/api/image-translation/requests/${safeId}/cancel`, { method: 'POST' });
   },
 
   // Re-render a prior image request with new render flags — reuses the cached translations,
@@ -162,8 +188,7 @@ async function ensureAnonymousImagePrincipal(headers) {
 
 async function imageTranslationPayload(response) {
   if (!response.ok) {
-    const detail = await errorDetailFromResponse(response);
-    throw new Error(detail || `HTTP ${response.status}`);
+    throw await responseError(response);
   }
   const requestId = response.headers.get('X-Image-Translation-Request-Id') || '';
   if (!requestId) throw new Error('image translation request id missing');
@@ -171,6 +196,13 @@ async function imageTranslationPayload(response) {
     blob: await response.blob(),
     requestId,
   };
+}
+
+async function responseError(response) {
+  const detail = await errorDetailFromResponse(response);
+  const error = new Error(detail || `HTTP ${response.status}`);
+  error.status = response.status;
+  return error;
 }
 
 const MAX_ERROR_DETAIL_LENGTH = 240;

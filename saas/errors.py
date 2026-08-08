@@ -17,6 +17,8 @@ PERIOD_QUOTA_EXCEEDED = "PERIOD_QUOTA_EXCEEDED"
 RATE_LIMIT_EXCEEDED = "RATE_LIMIT_EXCEEDED"
 # An idempotency key was replayed with different reservation inputs.
 USAGE_IDEMPOTENCY_CONFLICT = "USAGE_IDEMPOTENCY_CONFLICT"
+# An operation ID was replayed with a different workflow payload.
+OPERATION_IDEMPOTENCY_CONFLICT = "OPERATION_IDEMPOTENCY_CONFLICT"
 # A caller-supplied operation id is absent or is not a random UUID.
 INVALID_OPERATION_ID = "INVALID_OPERATION_ID"
 # The upload cannot be parsed or fails basic validation.

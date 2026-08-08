@@ -52,8 +52,10 @@ import {
 import { bindImageRenderControls, renderImageRenderControls } from './settings/image-render.js';
 import { bindAppearanceSettings, renderAppearanceSettings } from './settings/appearance.js';
 import { initAccountSettings } from './settings/account.js';
-import { initAuth, onAuthChange } from './auth.js';
-import { createAccountChangeGuard } from './shared/account-state.js';
+import { initAuth, onAuthChange, onBeforeSignOut } from './auth.js';
+import {
+  registerImageSignOutCancellation,
+} from '../shared/image-operation-recovery.js';
 import { initAppearance } from './domain/appearance.js';
 import {
   setStatus,
@@ -88,8 +90,11 @@ import {
   setImageDisplayMode,
   saveTranslatedImage,
   finishImageTranslation,
+  handleImageAuthChange,
+  initializeImageOperationRecovery,
   renderImageTranslation,
 } from './image/lifecycle.js';
+import { refreshImageUsageCopy } from './image/usage.js';
 import {
   speakNow,
   translateNow,
@@ -101,6 +106,15 @@ import { handleSetupFixtureClick } from './session/fixture-player.js';
 
 setAudioQueue(audioQueue);
 setTtsAudioQueue(audioQueue);
+
+let operationStorage = null;
+try { operationStorage = window.localStorage; } catch {}
+registerImageSignOutCancellation({
+  storage: operationStorage,
+  getRequest: api.getImageRequest,
+  cancelRequest: api.cancelImage,
+  onBeforeSignOut,
+});
 
 init().catch(() => {
   setStatus('error');
@@ -121,9 +135,14 @@ async function init() {
 
   // Auth kicks off in the background (the SDK loads from a CDN); the account
   // UI subscribes to auth-state changes and renders once init resolves.
+  initializeImageOperationRecovery();
   initAuth(config.auth || {});
   initAccountSettings();
-  onAuthChange(createAccountChangeGuard(() => { finishImageTranslation(); }));
+  onAuthChange((authState) => {
+    handleImageAuthChange(authState);
+    refreshImageUsageCopy();
+  });
+  refreshImageUsageCopy();
 
   els.startButton.addEventListener('click', handleStartButton);
   els.imageFileInput.addEventListener('change', handleImageFileChange);

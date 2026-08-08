@@ -241,7 +241,9 @@ def create_saas_router(
                     "reserved": summary.reserved,
                     "consumed": summary.consumed,
                     "limit": limit,
-                    "remaining": (limit - summary.reserved - summary.consumed) if limit is not None else None,
+                    "remaining": max(0, limit - summary.reserved - summary.consumed)
+                    if limit is not None
+                    else None,
                 }
             )
         return {"usage": usage}

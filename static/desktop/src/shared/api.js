@@ -50,6 +50,14 @@ export async function getUsage() {
   return response.json();
 }
 
+export async function getEntitlements() {
+  const response = await fetch('/api/entitlements', {
+    headers: authHeaders({ Accept: 'application/json' }),
+  });
+  await ensureOk(response);
+  return response.json();
+}
+
 // Voice sessions only pin the language pair; live/TTS settings stay at the
 // server defaults (the desktop app has no tuning UI).
 export async function createVoiceSession({ sideA, sideB }) {
@@ -102,6 +110,34 @@ export async function retranslateImage(requestId, { target, operationId }) {
     operationId,
   );
   return imagePayload(response);
+}
+
+export async function getImageRequest(operationId) {
+  const safeId = encodeURIComponent(String(operationId || ''));
+  const response = await fetch(`/api/image-translation/requests/${safeId}`, {
+    headers: authHeaders({ Accept: 'application/json' }),
+  });
+  await ensureOk(response);
+  return response.json();
+}
+
+export async function getImageArtifact(operationId) {
+  const safeId = encodeURIComponent(String(operationId || ''));
+  const response = await fetch(`/api/image-translation/requests/${safeId}/artifact`, {
+    headers: authHeaders(),
+  });
+  await ensureOk(response);
+  return response.blob();
+}
+
+export async function cancelImage(operationId) {
+  const safeId = encodeURIComponent(String(operationId || ''));
+  const response = await fetch(`/api/image-translation/requests/${safeId}/cancel`, {
+    method: 'POST',
+    headers: authHeaders({ Accept: 'application/json' }),
+  });
+  await ensureOk(response);
+  return response.json();
 }
 
 async function imagePayload(response) {
