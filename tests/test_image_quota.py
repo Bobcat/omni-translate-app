@@ -12,10 +12,15 @@ from unittest.mock import AsyncMock, patch
 
 from app.image_quota import CHARACTERS_METRIC
 from app.image_quota import IMAGE_QUOTA_OPERATION
+from app.image_quota import JOBS_METRIC
+from app.image_quota import handle_image_operation_lifecycle
 from app.image_quota import handle_image_quota_lifecycle
+from app.image_quota import reconcile_image_job_reservations
 from app.image_quota import reconcile_image_quota_operations
 from app.image_quota import register_image_quota_operation
+from app.image_quota import reserve_image_job
 from app.image_quota import run_image_quota_reconciliation_loop
+from app.image_quota import settle_image_job_reservation
 from app.image_translation_bridge import ImageTranslationError
 from app.saas_setup import SaasContext
 from saas.entitlements import EntitlementService, EntitlementSet
@@ -297,10 +302,192 @@ class ImageQuotaTests(unittest.TestCase):
         self.assertEqual(str(self._operation(operation_id)["state"]), "created")
 
 
+class ImageJobQuotaTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = TemporaryDirectory()
+        self.store = SaasStore(Path(self._tmp.name) / "saas.db")
+        self.ctx = SaasContext(
+            store=self.store,
+            entitlement_service=EntitlementService({}),
+            quota_service=QuotaService(self.store),
+            signing_secret="test",
+            tenant=TENANT,
+            token_verifier=None,
+            user_plan="free",
+        )
+        self.principal = Principal(
+            tenant=TENANT,
+            kind="user",
+            id=uuid.uuid4(),
+            plan_code="free",
+        )
+        self.entitlements = EntitlementSet(
+            "free",
+            {
+                "image_translation.jobs_per_period": 100,
+                "image_translation.period": "month",
+            },
+        )
+        self._context_patch = patch("app.image_quota.get_saas_context", return_value=self.ctx)
+        self._context_patch.start()
+
+    def tearDown(self) -> None:
+        self._context_patch.stop()
+        self.store.close()
+        self._tmp.cleanup()
+
+    @staticmethod
+    def _operation_id() -> str:
+        return str(uuid.uuid4())
+
+    def _reserve(self, operation_id: str, *, action: str = "translate") -> None:
+        reserve_image_job(
+            self.principal,
+            self.entitlements,
+            operation_id,
+            action=action,
+        )
+
+    def _event(self, operation_id: str):
+        return self.store.get_usage_event_by_job_id(
+            TENANT,
+            operation_id,
+            metric=JOBS_METRIC,
+        )
+
+    def test_reservation_is_one_job_and_replay_does_not_double_count(self) -> None:
+        operation_id = self._operation_id()
+        self._reserve(operation_id)
+        self._reserve(operation_id)
+
+        event = self._event(operation_id)
+        self.assertEqual(
+            (event["metric"], event["quantity"], event["state"]),
+            (JOBS_METRIC, 1, "reserved"),
+        )
+        self.assertEqual(json.loads(str(event["metadata"]))["image_action"], "translate")
+        usage = self.ctx.quota_service.get_usage(self.principal, JOBS_METRIC, "month")
+        self.assertEqual((usage.reserved, usage.consumed), (1, 0))
+
+    def test_period_limit_rejects_before_a_second_reservation(self) -> None:
+        entitlements = EntitlementSet(
+            "free",
+            {
+                "image_translation.jobs_per_period": 1,
+                "image_translation.period": "month",
+            },
+        )
+        reserve_image_job(
+            self.principal,
+            entitlements,
+            self._operation_id(),
+            action="translate",
+        )
+        with self.assertRaises(SaasError) as caught:
+            reserve_image_job(
+                self.principal,
+                entitlements,
+                self._operation_id(),
+                action="retranslate",
+            )
+
+        self.assertEqual(caught.exception.code, PERIOD_QUOTA_EXCEEDED)
+        self.assertEqual(caught.exception.details["metric"], JOBS_METRIC)
+        self.assertEqual(caught.exception.details["remaining"], 0)
+        self.assertIn("rerenders do not", str(caught.exception))
+
+    def test_terminal_settlement_policy(self) -> None:
+        cases = (
+            ({"state": "completed"}, "consumed"),
+            ({"state": "cancelled"}, "consumed"),
+            ({"state": "cancelled_before_authorization"}, "consumed"),
+            (
+                {"state": "failed", "error": {"code": "REQUEST_FAILED"}},
+                "released",
+            ),
+            (
+                {
+                    "state": "failed",
+                    "error": {"code": "REQUEST_INTERRUPTED_BY_RESTART"},
+                },
+                "released",
+            ),
+            (
+                {"state": "failed", "error": {"code": "SOURCE_CHARACTER_LIMIT_EXCEEDED"}},
+                "consumed",
+            ),
+        )
+        for terminal, expected in cases:
+            with self.subTest(state=terminal):
+                operation_id = self._operation_id()
+                self._reserve(operation_id)
+                envelope = {"request_id": operation_id, **terminal}
+                self.assertEqual(
+                    settle_image_job_reservation(operation_id, envelope),
+                    expected,
+                )
+                self.assertEqual(str(self._event(operation_id)["state"]), expected)
+
+    def test_combined_lifecycle_settles_job_without_character_operation(self) -> None:
+        operation_id = self._operation_id()
+        self._reserve(operation_id, action="retranslate")
+        outcome = handle_image_operation_lifecycle(
+            operation_id,
+            {"request_id": operation_id, "state": "completed"},
+        )
+        self.assertEqual(outcome, "consumed")
+        self.assertEqual(str(self._event(operation_id)["state"]), "consumed")
+
+    def test_reconciler_keeps_unknown_then_consumes_missing_after_grace(self) -> None:
+        operation_id = self._operation_id()
+        self._reserve(operation_id)
+        created_at = datetime.fromisoformat(str(self._event(operation_id)["created_at"]))
+        missing = ImageTranslationError("not found", status_code=404)
+        with patch("app.image_quota.get_image_request", side_effect=missing):
+            self.assertEqual(
+                reconcile_image_job_reservations(
+                    now=created_at + timedelta(hours=23),
+                    missing_grace_s=24 * 60 * 60,
+                ),
+                0,
+            )
+            self.assertEqual(
+                reconcile_image_job_reservations(
+                    now=created_at + timedelta(hours=25),
+                    missing_grace_s=24 * 60 * 60,
+                ),
+                1,
+            )
+        self.assertEqual(str(self._event(operation_id)["state"]), "consumed")
+        metadata = json.loads(str(self._event(operation_id)["metadata"]))
+        self.assertEqual(metadata["settlement_reason"], "missing_service_record_after_grace")
+
+    def test_reconciler_consumes_completed_job_without_browser_state(self) -> None:
+        operation_id = self._operation_id()
+        self._reserve(operation_id, action="retranslate")
+        with patch(
+            "app.image_quota.get_image_request",
+            return_value={"request_id": operation_id, "state": "completed"},
+        ):
+            self.assertEqual(reconcile_image_job_reservations(), 1)
+        self.assertEqual(str(self._event(operation_id)["state"]), "consumed")
+
+    def test_temporary_reconciliation_error_keeps_reservation(self) -> None:
+        operation_id = self._operation_id()
+        self._reserve(operation_id)
+        with patch(
+            "app.image_quota.get_image_request",
+            side_effect=ImageTranslationError("unreachable", status_code=502),
+        ):
+            self.assertEqual(reconcile_image_job_reservations(missing_grace_s=0), 0)
+        self.assertEqual(str(self._event(operation_id)["state"]), "reserved")
+
+
 class ImageQuotaLoopTests(unittest.IsolatedAsyncioTestCase):
     async def test_loop_runs_before_sleeping(self) -> None:
         with (
             patch("app.image_quota.reconcile_image_quota_operations") as reconcile,
+            patch("app.image_quota.reconcile_image_job_reservations") as reconcile_jobs,
             patch(
                 "app.image_quota.asyncio.sleep",
                 new=AsyncMock(side_effect=asyncio.CancelledError),
@@ -309,6 +496,7 @@ class ImageQuotaLoopTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(asyncio.CancelledError):
                 await run_image_quota_reconciliation_loop()
         reconcile.assert_called_once_with()
+        reconcile_jobs.assert_called_once_with()
 
 
 if __name__ == "__main__":

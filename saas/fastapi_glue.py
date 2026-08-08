@@ -227,8 +227,14 @@ def create_saas_router(
         entitlements = entitlement_service.resolve(principal)
         usage = []
         for spec in usage_metrics or []:
+            period_key = str(spec.get("period_key") or "")
+            period = (
+                entitlements.get_str(period_key)
+                if period_key
+                else str(spec.get("period") or "month")
+            )
             summary = quota_service.get_usage(
-                principal, str(spec["metric"]), str(spec.get("period") or "month")
+                principal, str(spec["metric"]), period
             )
             limit_key = str(spec.get("limit_key") or "")
             limit = entitlements.get_int(limit_key) if limit_key and entitlements.has(limit_key) else None

@@ -9,7 +9,6 @@ export const els = {
   setupStartPanel: document.querySelector('#setupStartPanel'),
   startButton: document.querySelector('#startButton'),
   setupImageButton: document.querySelector('#setupImageButton'),
-  setupImageRule: document.querySelector('#setupImageRule'),
   setupCameraButton: document.querySelector('#setupCameraButton'),
   imageFileInput: document.querySelector('#imageFileInput'),
   cameraFileInput: document.querySelector('#cameraFileInput'),

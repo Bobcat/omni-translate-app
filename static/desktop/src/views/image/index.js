@@ -2,10 +2,8 @@ import { iconMarkup } from '../../shared/icons.js';
 import { populateLanguageSelect, recordLanguageMru } from '../../shared/languages.js';
 import {
   cancelImage,
-  getEntitlements,
   getImageArtifact,
   getImageRequest,
-  getUsage,
   translateImage,
   retranslateImage,
 } from '../../shared/api.js';
@@ -58,7 +56,6 @@ export function createImageView() {
         <button type="button" class="icon-square-btn" id="imageReset" title="Choose another image" aria-label="Choose another image" hidden>${iconMarkup('x')}</button>
       </div>
     </div>
-    <div class="usage-line" id="imageUsage">Images can contain up to 1,500 translatable characters.</div>
     <div class="dropzone-card" id="imageDropzone">
       <div class="dropzone-drop">
         ${iconMarkup('upload-cloud')}
@@ -102,7 +99,6 @@ export function createImageView() {
   const translatedImg = container.querySelector('#imageTranslated');
   const pending = container.querySelector('#imagePending');
   const statusEl = container.querySelector('#imageStatus');
-  const usageEl = container.querySelector('#imageUsage');
 
   let requestId = '';
   let fileName = '';
@@ -119,14 +115,12 @@ export function createImageView() {
     storage: operationStorage,
     getRequest: getImageRequest,
   });
-  let usageFetchToken = 0;
   // Auto-fit wins until the user touches the slider; re-armed for each image.
   let zoomAuto = true;
 
   populateLanguageSelect(targetSelect, 'English');
   applyViewMode();
   recoverPendingOperation(activeOwnerKey);
-  refreshUsage();
   onAuthChange((authState) => {
     const nextOwnerKey = imageOperationOwnerKey(authState);
     if (nextOwnerKey === activeOwnerKey) return;
@@ -134,32 +128,7 @@ export function createImageView() {
     resetView({ cancelPending: false });
     activeOwnerKey = nextOwnerKey;
     recoverPendingOperation(activeOwnerKey);
-    refreshUsage();
   });
-
-  async function refreshUsage() {
-    const token = ++usageFetchToken;
-    try {
-      const [entitlementData, usageData] = await Promise.all([getEntitlements(), getUsage()]);
-      if (token !== usageFetchToken) return;
-      const maxCharacters = entitlementData?.entitlements?.['image_translation.max_characters_per_job'];
-      const characters = (usageData?.usage || [])
-        .find((entry) => entry.metric === 'translation.source_characters');
-      const parts = [];
-      if (typeof maxCharacters === 'number') {
-        parts.push(`Images can contain up to ${maxCharacters.toLocaleString()} translatable characters.`);
-      }
-      if (typeof characters?.remaining === 'number' && typeof characters?.limit === 'number') {
-        parts.push(
-          `Character balance: ${characters.remaining.toLocaleString()} of ${characters.limit.toLocaleString()} left${usageBreakdown(characters)}${formatResetDate(characters.period_end)}.`,
-        );
-      }
-      usageEl.textContent = parts.join(' ');
-      usageEl.hidden = !parts.length;
-    } catch {
-      // Keep the product-limit copy already rendered in the document.
-    }
-  }
 
   function setBusy(busy) {
     publishViewBusy('image', busy);
@@ -225,7 +194,6 @@ export function createImageView() {
     downloadLink.download = `${stem}_${targetSelect.value.toLowerCase()}.${extension}`;
     downloadLink.hidden = false;
     setStatus('');
-    refreshUsage();
   }
 
   function showError(message) {
@@ -273,7 +241,6 @@ export function createImageView() {
       requestId = '';
       showError(message);
       setBusy(false);
-      refreshUsage();
       return true;
     }
     pending.hidden = false;
@@ -501,16 +468,4 @@ export function createImageView() {
   };
 
   return container;
-}
-
-function formatResetDate(value) {
-  const date = new Date(String(value || ''));
-  if (Number.isNaN(date.getTime())) return '';
-  return ` · resets ${new Intl.DateTimeFormat(undefined, { day: 'numeric', month: 'short' }).format(date)}`;
-}
-
-function usageBreakdown(entry) {
-  const consumed = Number(entry?.consumed || 0);
-  const reserved = Number(entry?.reserved || 0);
-  return ` · ${consumed.toLocaleString()} used · ${reserved.toLocaleString()} pending`;
 }

@@ -62,9 +62,6 @@ def _validate_idempotent_replay(
     idempotency_key: str,
     metric: str,
     quantity: int,
-    period_kind: str,
-    period_start: str,
-    period_end: str,
     job_id: str | None,
 ) -> None:
     existing_job_id = str(row["job_id"] or "")
@@ -72,9 +69,6 @@ def _validate_idempotent_replay(
     matches = (
         row["metric"] == metric
         and int(row["quantity"]) == quantity
-        and row["period_kind"] == period_kind
-        and row["period_start"] == period_start
-        and row["period_end"] == period_end
         and (not existing_job_id or not requested_job_id or existing_job_id == requested_job_id)
     )
     if matches:
@@ -130,9 +124,9 @@ class QuotaService:
         """Atomically hold ``quantity`` of ``metric`` against ``limit``.
 
         Idempotent: replaying ``idempotency_key`` returns the original
-        reservation without spending again (also under races, via the unique
-        key). Raises PERIOD_QUOTA_EXCEEDED (429) when the hold would exceed
-        the limit.
+        reservation in its original period without spending again (also under
+        races, via the unique key). Raises PERIOD_QUOTA_EXCEEDED (429) when a
+        new hold would exceed the limit.
         """
         quantity = int(quantity)
         if quantity < 0:
@@ -148,9 +142,6 @@ class QuotaService:
                 idempotency_key=idempotency_key,
                 metric=metric,
                 quantity=quantity,
-                period_kind=kind.value,
-                period_start=start.isoformat(),
-                period_end=end.isoformat(),
                 job_id=job_id,
             )
             return _reservation_from_row(existing)
@@ -208,9 +199,6 @@ class QuotaService:
                     idempotency_key=idempotency_key,
                     metric=metric,
                     quantity=quantity,
-                    period_kind=kind.value,
-                    period_start=start.isoformat(),
-                    period_end=end.isoformat(),
                     job_id=job_id,
                 )
                 return _reservation_from_row(existing)

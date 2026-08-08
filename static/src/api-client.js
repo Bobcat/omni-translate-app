@@ -29,10 +29,6 @@ export const api = {
     return fetchJson('/api/entitlements');
   },
 
-  getUsage() {
-    return fetchJson('/api/usage');
-  },
-
   async translateImage(file, { source, target, operationId, renderOptions = {} }) {
     if (!operationId) throw new Error('Image operation id missing');
     const form = new FormData();

@@ -24,6 +24,8 @@
         },
         "image_translation": {
           "enabled": true,
+          "jobs_per_period": 10,
+          "period": "month",
           "max_characters_per_job": 1500,
           "max_upload_bytes": 33554432,
           "max_image_width": 10000,
@@ -52,6 +54,8 @@
         },
         "image_translation": {
           "enabled": true,
+          "jobs_per_period": 50,
+          "period": "month",
           "max_characters_per_job": 1500,
           "max_upload_bytes": 33554432,
           "max_image_width": 10000,
@@ -69,6 +73,7 @@
       }
     },
     "usage_metrics": [
+      { "metric": "image_translation.jobs", "period_key": "image_translation.period", "limit_key": "image_translation.jobs_per_period" },
       { "metric": "pdf_translation.pages", "period": "month", "limit_key": "pdf_translation.pages_per_period" },
       { "metric": "translation.source_characters", "period": "month", "limit_key": "translation.characters_per_period" }
     ]

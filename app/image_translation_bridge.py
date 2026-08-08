@@ -140,6 +140,7 @@ def retranslate_image(
     operation_id: str,
     source_request_id: str,
     target_language: str,
+    lifecycle_handler: Callable[[dict], None] | None = None,
 ) -> tuple[bytes, str, str]:
     """Re-translate a prior image request and return ``(rendered_png_bytes, media_type, request_id)``."""
     source_id = str(source_request_id or "").strip()
@@ -155,7 +156,7 @@ def retranslate_image(
         {"request_id": str(operation_id), "target_lang_code": target_code},
         expected_request_id=operation_id,
     )
-    _await_completion(request_id)
+    _await_completion(request_id, lifecycle_handler=lifecycle_handler)
     data, media_type = _fetch_rendered(request_id)
     return data, media_type, request_id
 

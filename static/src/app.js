@@ -94,7 +94,6 @@ import {
   initializeImageOperationRecovery,
   renderImageTranslation,
 } from './image/lifecycle.js';
-import { refreshImageUsageCopy } from './image/usage.js';
 import {
   speakNow,
   translateNow,
@@ -140,9 +139,7 @@ async function init() {
   initAccountSettings();
   onAuthChange((authState) => {
     handleImageAuthChange(authState);
-    refreshImageUsageCopy();
   });
-  refreshImageUsageCopy();
 
   els.startButton.addEventListener('click', handleStartButton);
   els.imageFileInput.addEventListener('change', handleImageFileChange);

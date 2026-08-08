@@ -1,4 +1,4 @@
-"""Durable character authorization and settlement for image translation."""
+"""Durable operational and character quota for image translation."""
 from __future__ import annotations
 
 import asyncio
@@ -24,9 +24,12 @@ from saas.principals import Principal
 logger = logging.getLogger(__name__)
 
 CHARACTERS_METRIC = "translation.source_characters"
+JOBS_METRIC = "image_translation.jobs"
 IMAGE_QUOTA_OPERATION = "image_translation"
 _IDEMPOTENCY_PREFIX = "image-characters:"
+_JOB_IDEMPOTENCY_PREFIX = "image-job:"
 _OPEN_STATES = ("created", "awaiting_quota", "reserved", "authorized")
+_TERMINAL_STATES = {"completed", "failed", "cancelled", "cancelled_before_authorization"}
 _TECHNICAL_FAILURE_CODES = {"REQUEST_FAILED", "REQUEST_INTERRUPTED_BY_RESTART"}
 _DEFAULT_INTERVAL_S = 5.0
 _DEFAULT_MISSING_GRACE_S = 24 * 60 * 60
@@ -38,6 +41,47 @@ _MEASUREMENT_KEYS = (
     "source_character_preserved_count",
     "source_character_decoration_count",
 )
+
+
+def reserve_image_job(
+    principal: Principal,
+    entitlements: EntitlementSet,
+    operation_id: str,
+    *,
+    action: str,
+) -> None:
+    """Reserve one operational image job before translate or retranslate work."""
+    if action not in {"translate", "retranslate"}:
+        raise ValueError(f"unsupported image job action: {action}")
+    ctx = get_saas_context()
+    try:
+        ctx.quota_service.reserve(
+            principal,
+            metric=JOBS_METRIC,
+            quantity=1,
+            limit=entitlements.get_int("image_translation.jobs_per_period"),
+            period_kind=entitlements.get_str("image_translation.period"),
+            job_id=operation_id,
+            idempotency_key=f"{_JOB_IDEMPOTENCY_PREFIX}{operation_id}",
+            metadata={"image_action": action},
+        )
+    except SaasError as exc:
+        if exc.code != PERIOD_QUOTA_EXCEEDED:
+            raise
+        details = dict(exc.details)
+        details["remaining"] = max(
+            0,
+            int(details.get("limit") or 0)
+            - int(details.get("consumed") or 0)
+            - int(details.get("reserved") or 0),
+        )
+        raise SaasError(
+            PERIOD_QUOTA_EXCEEDED,
+            "No image translation jobs remain in the current quota period. "
+            "New translations and retranslations use one job; rerenders do not.",
+            status_code=429,
+            details=details,
+        ) from exc
 
 
 def register_image_quota_operation(
@@ -116,6 +160,56 @@ def handle_image_quota_lifecycle(
     return "pending"
 
 
+def handle_image_operation_lifecycle(
+    operation_id: str,
+    envelope: Mapping[str, Any],
+    *,
+    raise_quota_errors: bool = False,
+) -> str:
+    """Settle the operational job and advance any character authorization."""
+    job_outcome = settle_image_job_reservation(operation_id, envelope)
+    character_outcome = handle_image_quota_lifecycle(
+        operation_id,
+        envelope,
+        raise_quota_errors=raise_quota_errors,
+    )
+    return job_outcome if character_outcome == "unmetered" else character_outcome
+
+
+def settle_image_job_reservation(
+    operation_id: str,
+    envelope: Mapping[str, Any],
+) -> str:
+    """Apply the image-job settlement policy to one lifecycle response."""
+    event = _image_job_event(operation_id)
+    if event is None:
+        return "unmetered"
+    request_id = str(envelope.get("request_id") or "")
+    if request_id != str(operation_id):
+        raise ImageTranslationError(
+            "translation-services returned an unexpected request_id",
+            status_code=409,
+        )
+    if str(event["state"]) != "reserved":
+        return "ignored"
+    state = str(envelope.get("state") or "").lower()
+    if state not in _TERMINAL_STATES:
+        return "reserved"
+
+    ctx = get_saas_context()
+    reservation_id = uuid.UUID(str(event["id"]))
+    error = envelope.get("error")
+    error_code = str(error.get("code") or "") if isinstance(error, Mapping) else ""
+    if state == "failed" and error_code in _TECHNICAL_FAILURE_CODES:
+        ctx.quota_service.release(reservation_id, f"technical_failure:{error_code}")
+        return "released"
+    ctx.quota_service.consume(
+        reservation_id,
+        metadata={"settlement_reason": _job_settlement_reason(state, error_code)},
+    )
+    return "consumed"
+
+
 def reconcile_image_quota_operations(
     *,
     now: datetime | None = None,
@@ -154,13 +248,66 @@ def reconcile_image_quota_operations(
             advanced += 1
             continue
         try:
-            outcome = handle_image_quota_lifecycle(operation_id, envelope)
+            outcome = handle_image_operation_lifecycle(operation_id, envelope)
         except Exception:
             logger.warning("could not reconcile image request %s", operation_id, exc_info=True)
             continue
         if outcome not in {"pending", "unmetered"}:
             advanced += 1
     return advanced
+
+
+def reconcile_image_job_reservations(
+    *,
+    now: datetime | None = None,
+    missing_grace_s: float | None = None,
+) -> int:
+    """Settle operational job reservations from durable service status."""
+    ctx = get_saas_context()
+    current_time = now or datetime.now(timezone.utc)
+    grace_s = (
+        get_float(
+            "image_translation.quota_reconciliation_missing_grace_s",
+            _DEFAULT_MISSING_GRACE_S,
+            min_value=0,
+        )
+        if missing_grace_s is None
+        else max(0.0, float(missing_grace_s))
+    )
+    events = ctx.store.list_usage_events(
+        ctx.tenant,
+        metric=JOBS_METRIC,
+        state="reserved",
+        limit=_BATCH_SIZE,
+    )
+    settled = 0
+    for event in events:
+        operation_id = str(event["job_id"] or "")
+        if not operation_id:
+            logger.warning("reserved image-job usage event %s has no job id", event["id"])
+            continue
+        try:
+            envelope = get_image_request(operation_id)
+        except ImageTranslationError as exc:
+            if exc.status_code != 404:
+                logger.warning("could not reconcile image job %s: %s", operation_id, exc)
+                continue
+            if not _missing_grace_elapsed(event, current_time, grace_s):
+                continue
+            ctx.quota_service.consume(
+                uuid.UUID(str(event["id"])),
+                metadata={"settlement_reason": "missing_service_record_after_grace"},
+            )
+            settled += 1
+            continue
+        try:
+            outcome = settle_image_job_reservation(operation_id, envelope)
+        except Exception:
+            logger.warning("could not settle image job %s", operation_id, exc_info=True)
+            continue
+        if outcome in {"consumed", "released"}:
+            settled += 1
+    return settled
 
 
 async def run_image_quota_reconciliation_loop() -> None:
@@ -174,7 +321,11 @@ async def run_image_quota_reconciliation_loop() -> None:
         try:
             await asyncio.to_thread(reconcile_image_quota_operations)
         except Exception:
-            logger.exception("image quota reconciliation pass failed")
+            logger.exception("image character-quota reconciliation pass failed")
+        try:
+            await asyncio.to_thread(reconcile_image_job_reservations)
+        except Exception:
+            logger.exception("image job-quota reconciliation pass failed")
         await asyncio.sleep(interval_s)
 
 
@@ -229,7 +380,8 @@ def _reserve_and_authorize(
             raise
         rejection = _quota_exceeded_error(exc.details)
         try:
-            cancel_image_request(operation_id)
+            cancelled = cancel_image_request(operation_id)
+            settle_image_job_reservation(operation_id, cancelled)
         except ImageTranslationError:
             logger.warning("could not cancel over-quota image request %s", operation_id)
         ctx.store.update_quota_operation(
@@ -265,6 +417,7 @@ def _reserve_and_authorize(
         "cancelled",
         "cancelled_before_authorization",
     }:
+        settle_image_job_reservation(operation_id, authorized)
         return _settle(row, authorized)
     if authorized_state == "awaiting_quota":
         return "reserved"
@@ -339,6 +492,15 @@ def _usage_event(row: Mapping[str, Any]):
         str(row["owner_kind"]),
         uuid.UUID(str(row["owner_id"])),
         f"{_IDEMPOTENCY_PREFIX}{row['operation_id']}",
+    )
+
+
+def _image_job_event(operation_id: str):
+    ctx = get_saas_context()
+    return ctx.store.get_usage_event_by_job_id(
+        ctx.tenant,
+        str(operation_id),
+        metric=JOBS_METRIC,
     )
 
 
@@ -457,7 +619,8 @@ def _missing_grace_elapsed(
         if created_at.tzinfo is None:
             created_at = created_at.replace(tzinfo=timezone.utc)
     except (TypeError, ValueError):
-        logger.warning("image quota operation %s has an invalid timestamp", row["operation_id"])
+        identifier = row["operation_id"] if "operation_id" in row.keys() else row["job_id"]
+        logger.warning("image quota record %s has an invalid timestamp", identifier)
         return False
     return max(0.0, (now - created_at).total_seconds()) >= grace_s
 
@@ -466,5 +629,13 @@ def _settlement_reason(state: str, error_code: str) -> str:
     if state == "completed":
         return "completed"
     if state == "cancelled":
+        return "accepted_cancellation"
+    return f"non_refundable_failure:{error_code or 'unclassified'}"
+
+
+def _job_settlement_reason(state: str, error_code: str) -> str:
+    if state == "completed":
+        return "completed"
+    if state in {"cancelled", "cancelled_before_authorization"}:
         return "accepted_cancellation"
     return f"non_refundable_failure:{error_code or 'unclassified'}"
