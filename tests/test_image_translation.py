@@ -110,7 +110,10 @@ class ImageTranslationRouteTests(unittest.TestCase):
         self.assertFalse(captured.get("quota_authorization_required"))
         self.assertIsNone(captured.get("lifecycle_handler"))
         self.assertIn("ot_anon=tok123", response.headers.get("set-cookie") or "")
-        self.record_owner.assert_called_once_with(PRINCIPAL, OPERATION_ID)
+        self.record_owner.assert_called_once()
+        owner_args = self.record_owner.call_args.args
+        self.assertEqual(owner_args[:2], (PRINCIPAL, OPERATION_ID))
+        self.assertEqual(len(owner_args[2]), 64)
 
     def test_metered_plan_forwards_checkpoint_and_lifecycle_handler(self) -> None:
         captured: dict[str, object] = {}
@@ -264,7 +267,8 @@ class ImageTranslationRouteTests(unittest.TestCase):
             )
         self.assertEqual(response.status_code, 200)
         self.require_owner.assert_called_once_with(PRINCIPAL, "req_1")
-        self.record_owner.assert_called_once_with(PRINCIPAL, OPERATION_ID)
+        self.record_owner.assert_called_once()
+        self.assertEqual(self.record_owner.call_args.args[:2], (PRINCIPAL, OPERATION_ID))
         self.assertEqual(retranslate.call_args.kwargs["operation_id"], OPERATION_ID)
         self.admit.assert_called_with(PRINCIPAL, ENABLED, OPERATION_ID)
 
@@ -282,7 +286,8 @@ class ImageTranslationRouteTests(unittest.TestCase):
             )
         self.assertEqual(response.status_code, 200)
         self.require_owner.assert_called_once_with(PRINCIPAL, "req_1")
-        self.record_owner.assert_called_once_with(PRINCIPAL, OPERATION_ID)
+        self.record_owner.assert_called_once()
+        self.assertEqual(self.record_owner.call_args.args[:2], (PRINCIPAL, OPERATION_ID))
         self.assertEqual(rerender.call_args.kwargs["operation_id"], OPERATION_ID)
         self.admit.assert_called_with(PRINCIPAL, ENABLED, OPERATION_ID)
 
@@ -304,6 +309,54 @@ class ImageTranslationRouteTests(unittest.TestCase):
         self.assertEqual(response.status_code, 404)
         self.admit.assert_not_called()
         retranslate.assert_not_called()
+
+    def test_status_is_owner_checked_and_proxied(self) -> None:
+        envelope = {"request_id": OPERATION_ID, "state": "running"}
+        with (
+            patch("app.router.resolve_request_context", return_value=(PRINCIPAL, ENABLED, None)),
+            patch("app.router.get_image_request", return_value=envelope) as get_request,
+        ):
+            response = self.client.get(f"/api/image-translation/requests/{OPERATION_ID}")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), envelope)
+        self.require_owner.assert_called_once_with(PRINCIPAL, OPERATION_ID)
+        get_request.assert_called_once_with(OPERATION_ID)
+
+    def test_recovered_artifact_is_private_and_owner_checked(self) -> None:
+        with (
+            patch("app.router.resolve_request_context", return_value=(PRINCIPAL, ENABLED, None)),
+            patch(
+                "app.router.get_image_artifact",
+                return_value=(PNG_BYTES, "image/png"),
+            ) as get_artifact,
+        ):
+            response = self.client.get(
+                f"/api/image-translation/requests/{OPERATION_ID}/artifact"
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.content, PNG_BYTES)
+        self.assertEqual(response.headers["cache-control"], "private, no-store")
+        self.require_owner.assert_called_once_with(PRINCIPAL, OPERATION_ID)
+        get_artifact.assert_called_once_with(OPERATION_ID)
+
+    def test_cancel_is_owner_checked_and_settles_quota(self) -> None:
+        envelope = {"request_id": OPERATION_ID, "state": "cancelled_before_authorization"}
+        with (
+            patch("app.router.resolve_request_context", return_value=(PRINCIPAL, ENABLED, None)),
+            patch("app.router.cancel_image_request", return_value=envelope) as cancel,
+            patch("app.router.handle_image_quota_lifecycle") as settle,
+        ):
+            response = self.client.post(
+                f"/api/image-translation/requests/{OPERATION_ID}/cancel"
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), envelope)
+        self.require_owner.assert_called_once_with(PRINCIPAL, OPERATION_ID)
+        cancel.assert_called_once_with(OPERATION_ID)
+        settle.assert_called_once_with(OPERATION_ID, envelope)
 
 
 class BridgeCeilingTests(unittest.TestCase):

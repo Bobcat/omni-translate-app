@@ -24,6 +24,7 @@ let googleClientId = '';
 let accessToken = '';
 let current = { signedIn: false, email: '', userId: '' };
 const listeners = new Set();
+const beforeSignOutListeners = new Set();
 const googleButtonElements = new Set();
 let googleThemeObserver = null;
 
@@ -63,6 +64,13 @@ export function onAuthChange(callback) {
   listeners.add(callback);
   if (initialized) callback(current);
   return () => listeners.delete(callback);
+}
+
+// Runs while the bearer token still belongs to the current user. Workflows use
+// this to settle account-owned operations before the SDK discards the session.
+export function onBeforeSignOut(callback) {
+  beforeSignOutListeners.add(callback);
+  return () => beforeSignOutListeners.delete(callback);
 }
 
 // Renders Google's own sign-in button into `element` — Google's branding
@@ -120,7 +128,9 @@ function observeGoogleButtonTheme() {
 
 export async function signOut() {
   if (!client) return;
-  await client.auth.signOut();
+  for (const callback of [...beforeSignOutListeners]) await callback(current);
+  const { error } = await client.auth.signOut();
+  if (error) throw error;
 }
 
 // Resolves on the first auth-state notification — i.e. once setup() has

@@ -12,8 +12,9 @@ import {
 } from '../foundation/spa-foundation/index.js';
 import { iconMarkup } from './src/shared/icons.js';
 import { VIEW_BUSY_EVENT } from './src/shared/view-activity.js';
-import { getConfig } from './src/shared/api.js';
-import { initAuth } from './src/auth.js';
+import { cancelImage, getConfig, getImageRequest } from './src/shared/api.js';
+import { initAuth, onBeforeSignOut } from './src/auth.js';
+import { registerImageSignOutCancellation } from '../shared/image-operation-recovery.js';
 import { createVoiceView } from './src/views/voice/index.js';
 import { createTextView } from './src/views/text/index.js';
 import { createImageView } from './src/views/image/index.js';
@@ -54,6 +55,15 @@ const presetStylesheet = byId('presetStylesheet');
 const themeToggle = byId('themeToggle');
 const themeToggleIcon = byId('themeToggleIcon');
 const themeToggleLabel = byId('themeToggleLabel');
+
+let operationStorage = null;
+try { operationStorage = window.localStorage; } catch {}
+registerImageSignOutCancellation({
+  storage: operationStorage,
+  getRequest: getImageRequest,
+  cancelRequest: cancelImage,
+  onBeforeSignOut,
+});
 
 const initialShell = window.__OMNI_DESKTOP_INITIAL_SHELL__ || {};
 let activePreset = initialShell.preset === 'dark' ? 'dark' : 'modern';

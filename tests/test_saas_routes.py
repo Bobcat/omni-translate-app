@@ -17,13 +17,14 @@ from saas.fastapi_glue import (
     saas_error_handler,
     stage_identity_cookie,
 )
+from saas.principals import Principal
 from saas.storage import SaasStore
 from saas.usage import QuotaService
 
 SECRET = "route-test-secret"
 
 
-def _make_app(db_path: Path) -> FastAPI:
+def _make_app(db_path: Path, *, return_store: bool = False) -> FastAPI | tuple[FastAPI, SaasStore]:
     store = SaasStore(db_path)
     plans = {
         "anonymous": EntitlementService.flatten(
@@ -48,6 +49,8 @@ def _make_app(db_path: Path) -> FastAPI:
     )
     app.add_exception_handler(SaasError, saas_error_handler)
     app.middleware("http")(identity_cookie_middleware)
+    if return_store:
+        return app, store
     return app
 
 
@@ -99,6 +102,34 @@ class SaasRouteTests(unittest.TestCase):
         self.assertEqual(entry["period"], "month")
         self.assertEqual((entry["reserved"], entry["consumed"]), (0, 0))
         self.assertEqual((entry["limit"], entry["remaining"]), (12, 12))
+
+    def test_usage_never_reports_a_negative_remaining_balance(self) -> None:
+        with TemporaryDirectory() as tmp:
+            app, store = _make_app(Path(tmp) / "saas.db", return_store=True)
+            client = TestClient(app)
+            client.get("/api/me")
+            principal_id = uuid.UUID(client.cookies["ot_anon"].partition(".")[0])
+            principal = Principal(
+                tenant="test",
+                kind="anonymous",
+                id=principal_id,
+                plan_code="anonymous",
+            )
+            reservation = QuotaService(store).reserve(
+                principal,
+                metric="pdf_translation.pages",
+                quantity=10,
+                limit=12,
+                period_kind="month",
+                idempotency_key="overrun-test",
+            )
+            QuotaService(store).consume(reservation.id, actual_quantity=20)
+
+            response = client.get("/api/usage")
+            (entry,) = response.json()["usage"]
+            self.assertEqual(entry["consumed"], 20)
+            self.assertEqual(entry["remaining"], 0)
+            store.close()
 
     def test_rejected_first_requests_reuse_one_anonymous_identity(self) -> None:
         with TemporaryDirectory() as tmp:

@@ -80,6 +80,7 @@ CREATE TABLE IF NOT EXISTS resource_owners (
     resource_id TEXT NOT NULL,
     owner_kind TEXT NOT NULL,
     owner_id TEXT NOT NULL,
+    payload_hash TEXT,
     created_at TEXT NOT NULL,
     PRIMARY KEY (tenant, resource_kind, resource_id)
 );
@@ -164,6 +165,16 @@ def _migrate_usage_event_idempotency(conn: sqlite3.Connection) -> None:
         conn.commit()
 
 
+def _migrate_resource_owners(conn: sqlite3.Connection) -> None:
+    """Add durable payload binding to databases created before operation recovery."""
+    tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    if "resource_owners" not in tables:
+        return
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(resource_owners)")}
+    if "payload_hash" not in columns:
+        conn.execute("ALTER TABLE resource_owners ADD COLUMN payload_hash TEXT")
+
+
 class SaasStore:
     def __init__(self, path: str | Path) -> None:
         self._path = str(path)
@@ -179,6 +190,7 @@ class SaasStore:
                 _migrate_identities(self._conn)
                 _migrate_usage_event_idempotency(self._conn)
                 self._conn.executescript(SCHEMA)
+                _migrate_resource_owners(self._conn)
             return self._conn
 
     def close(self) -> None:
@@ -264,24 +276,26 @@ class SaasStore:
         resource_id: str,
         owner_kind: str,
         owner_id: uuid.UUID,
+        payload_hash: str,
     ) -> bool:
-        """Claim a host resource once; return whether this owner holds it."""
+        """Claim a host resource once; require the same owner and payload on replay."""
         with self.transaction() as conn:
             conn.execute(
                 "INSERT OR IGNORE INTO resource_owners"
-                " (tenant, resource_kind, resource_id, owner_kind, owner_id, created_at)"
-                " VALUES (?, ?, ?, ?, ?, ?)",
+                " (tenant, resource_kind, resource_id, owner_kind, owner_id, payload_hash, created_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (
                     tenant,
                     str(resource_kind),
                     str(resource_id),
                     owner_kind,
                     str(owner_id),
+                    str(payload_hash),
                     _utcnow(),
                 ),
             )
             row = conn.execute(
-                "SELECT owner_kind, owner_id FROM resource_owners"
+                "SELECT owner_kind, owner_id, payload_hash FROM resource_owners"
                 " WHERE tenant = ? AND resource_kind = ? AND resource_id = ?",
                 (tenant, str(resource_kind), str(resource_id)),
             ).fetchone()
@@ -289,6 +303,7 @@ class SaasStore:
             row is not None
             and row["owner_kind"] == owner_kind
             and row["owner_id"] == str(owner_id)
+            and row["payload_hash"] == str(payload_hash)
         )
 
     def resource_is_owned_by(

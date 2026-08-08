@@ -89,7 +89,16 @@ function initAccountGroup(accountGroup) {
     signOutButton.type = 'button';
     signOutButton.className = 'link-btn';
     signOutButton.textContent = 'Sign out';
-    signOutButton.addEventListener('click', () => { signOut(); });
+    signOutButton.addEventListener('click', async () => {
+      signOutButton.disabled = true;
+      try {
+        await signOut();
+      } catch (err) {
+        console.warn('Sign out failed:', err);
+        signOutButton.textContent = 'Could not sign out — retry';
+        signOutButton.disabled = false;
+      }
+    });
     accountGroup.append(title, emailRow, planRow, signOutButton);
     fillPlanLabel(planValue);
   }

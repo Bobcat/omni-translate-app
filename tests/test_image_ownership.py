@@ -1,6 +1,7 @@
 """Durable app-side ownership for image request IDs."""
 from __future__ import annotations
 
+import sqlite3
 import unittest
 import uuid
 from pathlib import Path
@@ -10,12 +11,13 @@ from unittest.mock import patch
 from app.image_ownership import record_image_request_owner, require_image_request_owner
 from app.saas_setup import SaasContext
 from saas.entitlements import EntitlementService
-from saas.errors import RESOURCE_NOT_FOUND, SaasError
+from saas.errors import OPERATION_IDEMPOTENCY_CONFLICT, RESOURCE_NOT_FOUND, SaasError
 from saas.principals import Principal
 from saas.storage import SaasStore
 from saas.usage import QuotaService
 
 TENANT = "test"
+PAYLOAD_HASH = "a" * 64
 
 
 def _principal() -> Principal:
@@ -45,12 +47,12 @@ class ImageOwnershipTests(unittest.TestCase):
         self._tmp.cleanup()
 
     def test_recorded_owner_survives_store_reopen(self) -> None:
-        record_image_request_owner(self.owner, "request-1")
+        record_image_request_owner(self.owner, "request-1", PAYLOAD_HASH)
         self.store.close()
         require_image_request_owner(self.owner, "request-1")
 
     def test_unknown_and_other_owner_requests_are_hidden(self) -> None:
-        record_image_request_owner(self.owner, "request-1")
+        record_image_request_owner(self.owner, "request-1", PAYLOAD_HASH)
         for principal, request_id in ((_principal(), "request-1"), (self.owner, "missing")):
             with self.subTest(request_id=request_id):
                 with self.assertRaises(SaasError) as caught:
@@ -59,9 +61,61 @@ class ImageOwnershipTests(unittest.TestCase):
                 self.assertEqual(caught.exception.status_code, 404)
 
     def test_existing_request_cannot_be_claimed_by_another_owner(self) -> None:
-        record_image_request_owner(self.owner, "request-1")
+        record_image_request_owner(self.owner, "request-1", PAYLOAD_HASH)
         with self.assertRaises(SaasError) as caught:
-            record_image_request_owner(_principal(), "request-1")
+            record_image_request_owner(_principal(), "request-1", PAYLOAD_HASH)
         self.assertEqual(caught.exception.code, RESOURCE_NOT_FOUND)
         self.assertEqual(caught.exception.status_code, 404)
         require_image_request_owner(self.owner, "request-1")
+
+    def test_same_owner_cannot_reuse_operation_for_another_payload(self) -> None:
+        record_image_request_owner(self.owner, "request-1", PAYLOAD_HASH)
+
+        with self.assertRaises(SaasError) as caught:
+            record_image_request_owner(self.owner, "request-1", "b" * 64)
+
+        self.assertEqual(caught.exception.code, OPERATION_IDEMPOTENCY_CONFLICT)
+        self.assertEqual(caught.exception.status_code, 409)
+
+    def test_same_owner_and_payload_replay_is_idempotent(self) -> None:
+        record_image_request_owner(self.owner, "request-1", PAYLOAD_HASH)
+        record_image_request_owner(self.owner, "request-1", PAYLOAD_HASH)
+        require_image_request_owner(self.owner, "request-1")
+
+
+class ImageOwnershipMigrationTests(unittest.TestCase):
+    def test_legacy_owner_rows_survive_payload_hash_migration(self) -> None:
+        owner_id = uuid.uuid4()
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "saas.db"
+            legacy = sqlite3.connect(path)
+            legacy.execute(
+                "CREATE TABLE resource_owners ("
+                "tenant TEXT NOT NULL, resource_kind TEXT NOT NULL, resource_id TEXT NOT NULL, "
+                "owner_kind TEXT NOT NULL, owner_id TEXT NOT NULL, created_at TEXT NOT NULL, "
+                "PRIMARY KEY (tenant, resource_kind, resource_id))"
+            )
+            legacy.execute(
+                "INSERT INTO resource_owners VALUES (?, ?, ?, ?, ?, ?)",
+                (TENANT, "image_translation_request", "legacy-request", "user", str(owner_id), "now"),
+            )
+            legacy.commit()
+            legacy.close()
+
+            store = SaasStore(path)
+            with store.transaction() as conn:
+                columns = {
+                    row[1]
+                    for row in conn.execute("PRAGMA table_info(resource_owners)")
+                }
+            owned = store.resource_is_owned_by(
+                TENANT,
+                "image_translation_request",
+                "legacy-request",
+                "user",
+                owner_id,
+            )
+            store.close()
+
+        self.assertIn("payload_hash", columns)
+        self.assertTrue(owned)

@@ -10,6 +10,42 @@ import { currentLane } from '../domain/lanes.js';
 import { normalizeLanguageName, codeForLanguage } from '../domain/languages.js';
 import { renderLifecycle } from '../ui/render-status.js';
 import { updateActionButtons } from '../ui/action-buttons.js';
+import { refreshImageUsageCopy } from './usage.js';
+import {
+  createImageOperationRecovery,
+  imageOperationOwnerKey,
+} from '../../shared/image-operation-recovery.js';
+
+const TERMINAL_STATES = new Set(['failed', 'cancelled', 'cancelled_before_authorization']);
+const RECOVERY_POLL_INTERVAL_MS = 1000;
+
+let operationStorage = null;
+try { operationStorage = window.localStorage; } catch {}
+const operationRecovery = createImageOperationRecovery({
+  storage: operationStorage,
+  getRequest: api.getImageRequest,
+});
+let activeRecoveryOwnerKey = 'anonymous';
+let pendingOperationId = '';
+let requestState = '';
+let recoveryPollTimer = 0;
+
+export function initializeImageOperationRecovery() {
+  recoverPendingImageOperation(activeRecoveryOwnerKey);
+}
+
+export function handleImageAuthChange(authState) {
+  const nextOwnerKey = imageOperationOwnerKey(authState);
+  if (nextOwnerKey === activeRecoveryOwnerKey) return;
+  operationRecovery.forget(activeRecoveryOwnerKey);
+  stopRecoveryPolling();
+  if (state.appMode === APP_MODES.IMAGE_TRANSLATION) {
+    syncImageTranslationHistory(state.appMode, APP_MODES.SETUP);
+    resetImageTranslationState({ cancelPending: false });
+  }
+  activeRecoveryOwnerKey = nextOwnerKey;
+  recoverPendingImageOperation(activeRecoveryOwnerKey);
+}
 
 export function handleImageFileChange(event) {
   if (state.appMode !== APP_MODES.SETUP) {
@@ -61,7 +97,9 @@ export function rerenderCurrentImage() {
   renderImageTranslation();
   renderLifecycle();
   updateActionButtons();
-  api.rerenderImage(it.requestId, { ...state.imageRender }, globalThis.crypto.randomUUID())
+  const operationId = globalThis.crypto.randomUUID();
+  rememberOperation(operationId, it.translatedTargetLanguage);
+  api.rerenderImage(it.requestId, { ...state.imageRender }, operationId)
     .then((result) => applyImageTranslationResult(result, token, it.translatedTargetLanguage))
     .catch((err) => applyRerenderError(err, token));
 }
@@ -99,13 +137,46 @@ export function finishImageTranslationFromHistory() {
   return true;
 }
 
-function resetImageTranslationState() {
+function stopRecoveryPolling() {
+  if (!recoveryPollTimer) return;
+  window.clearTimeout(recoveryPollTimer);
+  recoveryPollTimer = 0;
+}
+
+function rememberOperation(operationId, targetLanguage) {
+  if (pendingOperationId && pendingOperationId !== operationId) {
+    api.cancelImage(pendingOperationId).catch(() => {});
+  }
+  pendingOperationId = operationId;
+  requestState = '';
+  operationRecovery.remember(activeRecoveryOwnerKey, {
+    operationId,
+    fileName: state.imageTranslation.fileName,
+    targetLanguage,
+    startedAt: new Date().toISOString(),
+  });
+}
+
+function forgetOperation(operationId = pendingOperationId || state.imageTranslation.requestId) {
+  operationRecovery.forget(activeRecoveryOwnerKey, operationId);
+  if (!operationId || pendingOperationId === operationId) pendingOperationId = '';
+}
+
+function resetImageTranslationState({ cancelPending = true } = {}) {
+  stopRecoveryPolling();
+  const operationId = pendingOperationId;
+  if (cancelPending && operationId && !TERMINAL_STATES.has(requestState)) {
+    api.cancelImage(operationId).catch(() => {});
+  }
+  forgetOperation(operationId);
+  requestState = '';
   clearSelectedImage();
   resetFileInput();
   state.appMode = APP_MODES.SETUP;
   renderImageTranslation();
   renderLifecycle();
   updateActionButtons();
+  refreshImageUsageCopy();
 }
 
 export function renderImageTranslation() {
@@ -119,19 +190,20 @@ export function renderImageTranslation() {
     error,
     busy,
   } = state.imageTranslation;
-  const showingTranslated = translatedReady && displayMode === 'translated';
+  const originalAvailable = Boolean(previewUrl);
+  const showingTranslated = translatedReady && (!originalAvailable || displayMode === 'translated');
   const imageUrl = showingTranslated ? translatedUrl : previewUrl;
-  els.imageModeToggle.hidden = !translatedReady || busy;
+  els.imageModeToggle.hidden = !translatedReady || busy || !originalAvailable;
   els.imageSaveButton.hidden = !translatedReady || busy;
   els.imageRenderStrip.hidden = !translatedReady || busy || !state.devToolsSettings.showControls;
-  els.imageBusyIndicator.hidden = !previewUrl || !busy || Boolean(error);
+  els.imageBusyIndicator.hidden = !busy || Boolean(error);
   els.imageError.hidden = !error;
   els.imageError.textContent = error || '';
   els.imageOriginalButton.classList.toggle('is-active', !showingTranslated);
   els.imageTranslatedButton.classList.toggle('is-active', showingTranslated);
   els.imageOriginalButton.setAttribute('aria-pressed', showingTranslated ? 'false' : 'true');
   els.imageTranslatedButton.setAttribute('aria-pressed', showingTranslated ? 'true' : 'false');
-  if (previewUrl) {
+  if (imageUrl) {
     if (shouldResetScroll) {
       state.imageTranslation.shouldResetScroll = false;
       els.imageDisplayPreview.addEventListener('load', resetImageScrollToImageTop, { once: true });
@@ -143,7 +215,7 @@ export function renderImageTranslation() {
   }
   els.imageDisplayPreview.removeAttribute('src');
   els.imageDisplayPreview.alt = 'Selected image';
-  els.imageSourceName.textContent = '';
+  els.imageSourceName.textContent = fileName;
 }
 
 function setSelectedImage(file) {
@@ -178,10 +250,12 @@ function setSelectedImage(file) {
 function requestTranslation(file, token) {
   const lane = currentLane();
   const targetLanguage = lane.targetLanguage;
+  const operationId = globalThis.crypto.randomUUID();
+  rememberOperation(operationId, targetLanguage);
   api.translateImage(file, {
     source: lane.sourceLanguage,
     target: targetLanguage,
-    operationId: globalThis.crypto.randomUUID(),
+    operationId,
     renderOptions: { ...state.imageRender },
   })
     .then((result) => applyImageTranslationResult(result, token, targetLanguage))
@@ -189,9 +263,11 @@ function requestTranslation(file, token) {
 }
 
 function requestRetranslation(requestId, targetLanguage, token) {
+  const operationId = globalThis.crypto.randomUUID();
+  rememberOperation(operationId, targetLanguage);
   api.retranslateImage(requestId, {
     target: targetLanguage,
-    operationId: globalThis.crypto.randomUUID(),
+    operationId,
   })
     .then((result) => applyImageTranslationResult(result, token, targetLanguage))
     .catch((err) => applyImageTranslationError(err, token));
@@ -203,6 +279,8 @@ function applyImageTranslationResult({ blob, requestId }, token, targetLanguage)
   clearTranslatedImageUrl();
   it.translatedUrl = URL.createObjectURL(blob);
   it.requestId = String(requestId || '');
+  requestState = 'completed';
+  forgetOperation(it.requestId);
   it.translatedReady = true;
   it.displayMode = 'translated';
   it.translatedTargetLanguage = normalizeLanguageName(targetLanguage);
@@ -219,6 +297,7 @@ function applyImageTranslationResult({ blob, requestId }, token, targetLanguage)
 function applyRerenderError(err, token) {
   const it = state.imageTranslation;
   if (it.requestToken !== token) return;
+  if (err?.status && err.status !== 408 && err.status < 500) forgetOperation();
   it.busy = false;
   it.error = String((err && err.message) || 'Re-render failed');
   renderImageTranslation();
@@ -229,6 +308,7 @@ function applyRerenderError(err, token) {
 function applyImageTranslationError(err, token) {
   const it = state.imageTranslation;
   if (it.requestToken !== token) return;
+  if (err?.status && err.status !== 408 && err.status < 500) forgetOperation();
   clearTranslatedImageUrl();
   it.translatedReady = false;
   it.displayMode = 'original';
@@ -238,6 +318,140 @@ function applyImageTranslationError(err, token) {
   renderImageTranslation();
   renderLifecycle();
   updateActionButtons();
+}
+
+async function applyRecoveredEnvelope(envelope, token, targetLanguage) {
+  const it = state.imageTranslation;
+  if (it.requestToken !== token) return true;
+  if (String(envelope?.request_id || '') !== it.requestId) {
+    throw new Error('The service returned a different image operation.');
+  }
+  const nextState = String(envelope?.state || '').toLowerCase();
+  requestState = nextState;
+  if (nextState === 'completed') {
+    const operationId = it.requestId;
+    const blob = await api.getImageArtifact(operationId);
+    if (it.requestToken !== token || operationId !== it.requestId) return true;
+    applyImageTranslationResult({ blob, requestId: operationId }, token, targetLanguage);
+    return true;
+  }
+  if (TERMINAL_STATES.has(nextState)) {
+    forgetOperation(it.requestId);
+    it.requestId = '';
+    it.busy = false;
+    it.error = envelope?.error?.message || `Translation ${nextState.replaceAll('_', ' ')}.`;
+    renderImageTranslation();
+    renderLifecycle();
+    updateActionButtons();
+    return true;
+  }
+  it.busy = true;
+  it.error = '';
+  renderImageTranslation();
+  renderLifecycle();
+  updateActionButtons();
+  return false;
+}
+
+async function pollRecoveredImageOperation(token, targetLanguage) {
+  stopRecoveryPolling();
+  const it = state.imageTranslation;
+  if (it.requestToken !== token || !it.requestId) return;
+  try {
+    const envelope = await api.getImageRequest(it.requestId);
+    if (it.requestToken !== token) return;
+    if (await applyRecoveredEnvelope(envelope, token, targetLanguage)) return;
+  } catch (err) {
+    if (it.requestToken !== token) return;
+    if (err?.status === 404 || err?.status === 410) {
+      forgetOperation(it.requestId);
+      it.requestId = '';
+      it.busy = false;
+      it.error = 'The previous image translation is no longer available.';
+      renderImageTranslation();
+      renderLifecycle();
+      updateActionButtons();
+      return;
+    }
+    it.error = 'Translation status is temporarily unavailable. Retrying…';
+    renderImageTranslation();
+  }
+  recoveryPollTimer = window.setTimeout(
+    () => pollRecoveredImageOperation(token, targetLanguage),
+    RECOVERY_POLL_INTERVAL_MS,
+  );
+}
+
+async function recoverPendingImageOperation(ownerKey) {
+  const saved = operationRecovery.load(ownerKey);
+  if (!saved) return;
+  stopRecoveryPolling();
+  clearSelectedImage();
+  const it = state.imageTranslation;
+  const token = {};
+  it.requestToken = token;
+  it.fileName = saved.fileName || 'image';
+  it.busy = true;
+  it.requestId = saved.operationId;
+  it.displayMode = 'translated';
+  it.translatedTargetLanguage = normalizeLanguageName(saved.targetLanguage);
+  pendingOperationId = saved.operationId;
+  requestState = '';
+  const previousAppMode = state.appMode;
+  state.appMode = APP_MODES.IMAGE_TRANSLATION;
+  syncImageTranslationHistory(previousAppMode, state.appMode);
+  renderImageTranslation();
+  renderLifecycle();
+  updateActionButtons();
+
+  const result = await operationRecovery.recover(ownerKey);
+  if (it.requestToken !== token || ownerKey !== activeRecoveryOwnerKey) return;
+  if (result.error) {
+    if (result.unavailable) {
+      it.busy = false;
+      it.error = 'The previous image translation is no longer available.';
+      renderImageTranslation();
+      renderLifecycle();
+      updateActionButtons();
+    } else {
+      it.error = 'Could not restore the translation yet. Retrying…';
+      renderImageTranslation();
+      recoveryPollTimer = window.setTimeout(
+        () => pollRecoveredImageOperation(token, saved.targetLanguage),
+        RECOVERY_POLL_INTERVAL_MS,
+      );
+    }
+    return;
+  }
+  try {
+    if (await applyRecoveredEnvelope(result.envelope, token, saved.targetLanguage)) return;
+  } catch (err) {
+    if (it.requestToken !== token) return;
+    if (err?.status === 404 || err?.status === 410) {
+      forgetOperation(it.requestId);
+      it.requestId = '';
+      it.busy = false;
+      it.error = err.message || 'The previous image translation is no longer available.';
+      renderImageTranslation();
+      renderLifecycle();
+      updateActionButtons();
+      return;
+    }
+    it.busy = true;
+    it.error = 'The translated image is temporarily unavailable. Retrying…';
+    renderImageTranslation();
+    renderLifecycle();
+    updateActionButtons();
+    recoveryPollTimer = window.setTimeout(
+      () => pollRecoveredImageOperation(token, saved.targetLanguage),
+      RECOVERY_POLL_INTERVAL_MS,
+    );
+    return;
+  }
+  recoveryPollTimer = window.setTimeout(
+    () => pollRecoveredImageOperation(token, saved.targetLanguage),
+    RECOVERY_POLL_INTERVAL_MS,
+  );
 }
 
 function clearSelectedImage() {

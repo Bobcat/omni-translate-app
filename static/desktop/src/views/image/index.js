@@ -1,15 +1,26 @@
 import { iconMarkup } from '../../shared/icons.js';
 import { populateLanguageSelect, recordLanguageMru } from '../../shared/languages.js';
-import { translateImage, retranslateImage } from '../../shared/api.js';
-import { createAccountChangeGuard } from '../../shared/account-state.js';
+import {
+  cancelImage,
+  getEntitlements,
+  getImageArtifact,
+  getImageRequest,
+  getUsage,
+  translateImage,
+  retranslateImage,
+} from '../../shared/api.js';
 import { publishViewBusy } from '../../shared/view-activity.js';
 import { onAuthChange } from '../../auth.js';
+import {
+  createImageOperationRecovery,
+  imageOperationOwnerKey,
+} from '../../../../shared/image-operation-recovery.js';
 
 // Image translation view, same stage model as the PDF view: an empty state
 // (dropzone) swaps for a loaded state (original frame + translated frame) once
 // a file is chosen. The translated frame shows a spinner while the backend
-// translates (synchronous call — no server-side cancel, so there is no Cancel
-// button; × simply abandons the wait). Changing the target re-translates the
+// translates. The explicit reset action cancels a pending durable request;
+// changing the target re-translates the
 // current image (the service reuses its OCR, so that is cheap). `runToken`
 // makes a stale response a no-op when the user drops a new file, switches
 // target, or resets mid-flight.
@@ -19,6 +30,8 @@ import { onAuthChange } from '../../auth.js';
 // sidebar entry via view-busy.
 
 const ACCEPTED_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp']);
+const TERMINAL_STATES = new Set(['failed', 'cancelled', 'cancelled_before_authorization']);
+const POLL_INTERVAL_MS = 1000;
 
 export function createImageView() {
   const container = document.createElement('div');
@@ -45,6 +58,7 @@ export function createImageView() {
         <button type="button" class="icon-square-btn" id="imageReset" title="Choose another image" aria-label="Choose another image" hidden>${iconMarkup('x')}</button>
       </div>
     </div>
+    <div class="usage-line" id="imageUsage">Images can contain up to 1,500 translatable characters.</div>
     <div class="dropzone-card" id="imageDropzone">
       <div class="dropzone-drop">
         ${iconMarkup('upload-cloud')}
@@ -74,6 +88,7 @@ export function createImageView() {
 
   const targetSelect = container.querySelector('#imageTarget');
   const showOriginalToggle = container.querySelector('#imageShowOriginal');
+  const showOriginalField = showOriginalToggle.closest('.switch-field');
   const downloadLink = container.querySelector('#imageDownload');
   const resetBtn = container.querySelector('#imageReset');
   const zoomField = container.querySelector('#imageZoomField');
@@ -87,21 +102,74 @@ export function createImageView() {
   const translatedImg = container.querySelector('#imageTranslated');
   const pending = container.querySelector('#imagePending');
   const statusEl = container.querySelector('#imageStatus');
+  const usageEl = container.querySelector('#imageUsage');
 
   let requestId = '';
   let fileName = '';
   let originalUrl = '';
   let translatedUrl = '';
+  let pendingOperationId = '';
+  let requestState = '';
   let runToken = 0;
+  let pollTimer = 0;
+  let activeOwnerKey = 'anonymous';
+  let operationStorage = null;
+  try { operationStorage = window.localStorage; } catch {}
+  const operationRecovery = createImageOperationRecovery({
+    storage: operationStorage,
+    getRequest: getImageRequest,
+  });
+  let usageFetchToken = 0;
   // Auto-fit wins until the user touches the slider; re-armed for each image.
   let zoomAuto = true;
 
   populateLanguageSelect(targetSelect, 'English');
   applyViewMode();
-  onAuthChange(createAccountChangeGuard(resetView));
+  recoverPendingOperation(activeOwnerKey);
+  refreshUsage();
+  onAuthChange((authState) => {
+    const nextOwnerKey = imageOperationOwnerKey(authState);
+    if (nextOwnerKey === activeOwnerKey) return;
+    operationRecovery.forget(activeOwnerKey);
+    resetView({ cancelPending: false });
+    activeOwnerKey = nextOwnerKey;
+    recoverPendingOperation(activeOwnerKey);
+    refreshUsage();
+  });
+
+  async function refreshUsage() {
+    const token = ++usageFetchToken;
+    try {
+      const [entitlementData, usageData] = await Promise.all([getEntitlements(), getUsage()]);
+      if (token !== usageFetchToken) return;
+      const maxCharacters = entitlementData?.entitlements?.['image_translation.max_characters_per_job'];
+      const characters = (usageData?.usage || [])
+        .find((entry) => entry.metric === 'translation.source_characters');
+      const parts = [];
+      if (typeof maxCharacters === 'number') {
+        parts.push(`Images can contain up to ${maxCharacters.toLocaleString()} translatable characters.`);
+      }
+      if (typeof characters?.remaining === 'number' && typeof characters?.limit === 'number') {
+        parts.push(
+          `Character balance: ${characters.remaining.toLocaleString()} of ${characters.limit.toLocaleString()} left${usageBreakdown(characters)}${formatResetDate(characters.period_end)}.`,
+        );
+      }
+      usageEl.textContent = parts.join(' ');
+      usageEl.hidden = !parts.length;
+    } catch {
+      // Keep the product-limit copy already rendered in the document.
+    }
+  }
 
   function setBusy(busy) {
     publishViewBusy('image', busy);
+    targetSelect.disabled = busy;
+  }
+
+  function stopPolling() {
+    if (!pollTimer) return;
+    window.clearTimeout(pollTimer);
+    pollTimer = 0;
   }
 
   function setStatus(message, isError = false) {
@@ -139,6 +207,12 @@ export function createImageView() {
     zoomField.hidden = !loaded;
   }
 
+  function setOriginalAvailable(available) {
+    showOriginalField.hidden = !available;
+    showOriginalToggle.checked = available;
+    applyViewMode();
+  }
+
   function showTranslated(blob) {
     if (translatedUrl) URL.revokeObjectURL(translatedUrl);
     translatedUrl = URL.createObjectURL(blob);
@@ -151,6 +225,7 @@ export function createImageView() {
     downloadLink.download = `${stem}_${targetSelect.value.toLowerCase()}.${extension}`;
     downloadLink.hidden = false;
     setStatus('');
+    refreshUsage();
   }
 
   function showError(message) {
@@ -158,9 +233,131 @@ export function createImageView() {
     setStatus(message || 'Translation failed.', true);
   }
 
+  function rememberOperation(operationId) {
+    if (pendingOperationId && pendingOperationId !== operationId) {
+      cancelImage(pendingOperationId).catch(() => {});
+    }
+    pendingOperationId = operationId;
+    requestState = '';
+    operationRecovery.remember(activeOwnerKey, {
+      operationId,
+      fileName,
+      targetLanguage: targetSelect.value,
+      startedAt: new Date().toISOString(),
+    });
+  }
+
+  function forgetOperation(operationId = pendingOperationId || requestId) {
+    operationRecovery.forget(activeOwnerKey, operationId);
+    if (!operationId || pendingOperationId === operationId) pendingOperationId = '';
+  }
+
+  async function applyRecoveredEnvelope(token, envelope) {
+    if (String(envelope?.request_id || '') !== requestId) {
+      throw new Error('The service returned a different image operation.');
+    }
+    const state = String(envelope?.state || '').toLowerCase();
+    requestState = state;
+    if (state === 'completed') {
+      const artifactRequestId = requestId;
+      const blob = await getImageArtifact(artifactRequestId);
+      if (token !== runToken || artifactRequestId !== requestId) return true;
+      showTranslated(blob);
+      forgetOperation(artifactRequestId);
+      setBusy(false);
+      return true;
+    }
+    if (TERMINAL_STATES.has(state)) {
+      const message = envelope?.error?.message || `Translation ${state.replaceAll('_', ' ')}.`;
+      forgetOperation(requestId);
+      requestId = '';
+      showError(message);
+      setBusy(false);
+      refreshUsage();
+      return true;
+    }
+    pending.hidden = false;
+    pending.querySelector('.stage-pending-text').textContent = state === 'queued'
+      ? 'Waiting in queue…'
+      : 'Translating…';
+    return false;
+  }
+
+  async function pollRecoveredOperation(token) {
+    stopPolling();
+    if (token !== runToken || !requestId) return;
+    try {
+      const envelope = await getImageRequest(requestId);
+      if (token !== runToken) return;
+      if (await applyRecoveredEnvelope(token, envelope)) return;
+      setStatus('');
+    } catch (err) {
+      if (token !== runToken) return;
+      if (err?.status === 404 || err?.status === 410) {
+        forgetOperation(requestId);
+        resetView({ cancelPending: false, keepStatus: true });
+        setStatus('The previous image translation is no longer available.', true);
+        return;
+      }
+      setStatus('Translation status is temporarily unavailable. Retrying…', true);
+    }
+    pollTimer = window.setTimeout(() => pollRecoveredOperation(token), POLL_INTERVAL_MS);
+  }
+
+  async function recoverPendingOperation(ownerKey) {
+    const saved = operationRecovery.load(ownerKey);
+    if (!saved) return;
+    const token = ++runToken;
+    stopPolling();
+    fileName = saved.fileName || 'image';
+    pendingOperationId = saved.operationId;
+    requestId = saved.operationId;
+    requestState = '';
+    populateLanguageSelect(targetSelect, saved.targetLanguage);
+    setOriginalAvailable(false);
+    setStageLoaded(true);
+    translatedImg.hidden = true;
+    downloadLink.hidden = true;
+    pending.hidden = false;
+    pending.querySelector('.stage-pending-text').textContent = 'Restoring translation…';
+    setStatus('');
+    setBusy(true);
+
+    const result = await operationRecovery.recover(ownerKey);
+    if (token !== runToken || ownerKey !== activeOwnerKey) return;
+    if (result.error) {
+      if (result.unavailable) {
+        resetView({ cancelPending: false, keepStatus: true });
+        setStatus('The previous image translation is no longer available.', true);
+      } else {
+        setStatus('Could not restore the translation yet. Retrying…', true);
+        pollTimer = window.setTimeout(() => pollRecoveredOperation(token), POLL_INTERVAL_MS);
+      }
+      return;
+    }
+    try {
+      if (await applyRecoveredEnvelope(token, result.envelope)) return;
+    } catch (err) {
+      if (token !== runToken) return;
+      if (err?.status === 404 || err?.status === 410) {
+        forgetOperation(requestId);
+        requestId = '';
+        showError(err.message || 'The previous image translation is no longer available.');
+        setBusy(false);
+        return;
+      }
+      setStatus('The translated image is temporarily unavailable. Retrying…', true);
+      pollTimer = window.setTimeout(() => pollRecoveredOperation(token), POLL_INTERVAL_MS);
+      return;
+    }
+    pollTimer = window.setTimeout(() => pollRecoveredOperation(token), POLL_INTERVAL_MS);
+  }
+
   async function translate(file) {
     const token = ++runToken;
+    stopPolling();
     requestId = '';
+    requestState = '';
     zoomAuto = true;
     fileName = file.name || 'image';
     if (originalUrl) URL.revokeObjectURL(originalUrl);
@@ -170,21 +367,27 @@ export function createImageView() {
     translatedImg.hidden = true;
     downloadLink.hidden = true;
     setStageLoaded(true);
+    setOriginalAvailable(true);
     pending.hidden = false;
     setStatus('');
     setBusy(true);
+    const operationId = globalThis.crypto.randomUUID();
+    rememberOperation(operationId);
     try {
       const result = await translateImage(file, {
         source: 'auto',
         target: targetSelect.value,
-        operationId: globalThis.crypto.randomUUID(),
+        operationId,
       });
       if (token !== runToken) return;
       requestId = result.requestId;
+      requestState = 'completed';
       showTranslated(result.blob);
+      forgetOperation(operationId);
       setBusy(false);
     } catch (err) {
       if (token !== runToken) return;
+      if (err?.status && err.status !== 408 && err.status < 500) forgetOperation(operationId);
       showError(err.message);
       setBusy(false);
     }
@@ -192,30 +395,43 @@ export function createImageView() {
 
   async function retranslate() {
     const token = ++runToken;
+    stopPolling();
     downloadLink.hidden = true;
     translatedImg.hidden = true;
     pending.hidden = false;
     setStatus('');
     setBusy(true);
+    const operationId = globalThis.crypto.randomUUID();
+    rememberOperation(operationId);
     try {
       const result = await retranslateImage(requestId, {
         target: targetSelect.value,
-        operationId: globalThis.crypto.randomUUID(),
+        operationId,
       });
       if (token !== runToken) return;
       requestId = result.requestId;
+      requestState = 'completed';
       showTranslated(result.blob);
+      forgetOperation(operationId);
       setBusy(false);
     } catch (err) {
       if (token !== runToken) return;
+      if (err?.status && err.status !== 408 && err.status < 500) forgetOperation(operationId);
       showError(err.message);
       setBusy(false);
     }
   }
 
-  function resetView() {
+  function resetView({ cancelPending = true, keepStatus = false } = {}) {
     ++runToken;
+    stopPolling();
+    const operationId = pendingOperationId;
+    if (cancelPending && operationId && !TERMINAL_STATES.has(requestState)) {
+      cancelImage(operationId).catch(() => {});
+    }
+    forgetOperation(operationId);
     requestId = '';
+    requestState = '';
     setBusy(false);
     downloadLink.hidden = true;
     originalImg.removeAttribute('src');
@@ -229,7 +445,8 @@ export function createImageView() {
       translatedUrl = '';
     }
     pending.hidden = true;
-    setStatus('');
+    setOriginalAvailable(true);
+    if (!keepStatus) setStatus('');
     setStageLoaded(false);
   }
 
@@ -243,7 +460,7 @@ export function createImageView() {
     applyViewMode();
     if (zoomAuto) fitZoom();
   });
-  resetBtn.addEventListener('click', resetView);
+  resetBtn.addEventListener('click', () => resetView());
   originalImg.addEventListener('load', () => {
     if (zoomAuto) fitZoom();
   });
@@ -284,4 +501,16 @@ export function createImageView() {
   };
 
   return container;
+}
+
+function formatResetDate(value) {
+  const date = new Date(String(value || ''));
+  if (Number.isNaN(date.getTime())) return '';
+  return ` · resets ${new Intl.DateTimeFormat(undefined, { day: 'numeric', month: 'short' }).format(date)}`;
+}
+
+function usageBreakdown(entry) {
+  const consumed = Number(entry?.consumed || 0);
+  const reserved = Number(entry?.reserved || 0);
+  return ` · ${consumed.toLocaleString()} used · ${reserved.toLocaleString()} pending`;
 }

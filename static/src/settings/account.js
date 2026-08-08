@@ -15,7 +15,17 @@ export function initAccountSettings() {
   els.settingsAccountNav.hidden = !isEnabled();
   if (!isEnabled()) return;
   renderGoogleButton(els.googleSignInHolder);
-  els.accountSignOutButton.addEventListener('click', () => { signOut(); });
+  els.accountSignOutButton.addEventListener('click', async () => {
+    els.accountSignOutButton.disabled = true;
+    try {
+      await signOut();
+    } catch (err) {
+      console.warn('Sign out failed:', err);
+      els.accountSignOutButton.textContent = 'Could not sign out — retry';
+    } finally {
+      els.accountSignOutButton.disabled = false;
+    }
+  });
   onAuthChange((next) => {
     authState = next;
     renderAccountSettings();
@@ -28,6 +38,7 @@ export function renderAccountSettings() {
   els.accountSignedOut.hidden = authState.signedIn;
   els.accountSignedIn.hidden = !authState.signedIn;
   if (!authState.signedIn) return;
+  els.accountSignOutButton.textContent = 'Sign out';
   els.accountEmail.textContent = authState.email;
   renderPlanLabel();
 }
