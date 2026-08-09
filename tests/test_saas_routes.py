@@ -30,7 +30,11 @@ def _make_app(db_path: Path, *, return_store: bool = False) -> FastAPI | tuple[F
         "anonymous": EntitlementService.flatten(
             {
                 "image_translation": {"enabled": True, "max_characters_per_job": 1500},
-                "pdf_translation": {"enabled": True, "pages_per_period": 12},
+                "pdf_translation": {
+                    "enabled": True,
+                    "pages_per_period": 12,
+                    "period": "month",
+                },
             }
         )
     }
@@ -43,7 +47,11 @@ def _make_app(db_path: Path, *, return_store: bool = False) -> FastAPI | tuple[F
             signing_secret=SECRET,
             tenant="test",
             usage_metrics=[
-                {"metric": "pdf_translation.pages", "period": "month", "limit_key": "pdf_translation.pages_per_period"}
+                {
+                    "metric": "pdf_translation.pages",
+                    "period_key": "pdf_translation.period",
+                    "limit_key": "pdf_translation.pages_per_period",
+                }
             ],
         )
     )

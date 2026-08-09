@@ -68,6 +68,17 @@ class QuotaServiceTests(unittest.TestCase):
         summary = self.quota.get_usage(self.principal, METRIC, "month", now=NOW)
         self.assertEqual(summary.reserved, 6)
 
+    def test_idempotent_replay_keeps_the_original_period(self) -> None:
+        first = self._reserve(6, key="job-1:pages")
+        august = datetime(2026, 8, 15, 12, 0, tzinfo=UTC)
+        replay = self._reserve(6, key="job-1:pages", now=august)
+
+        self.assertEqual(replay.id, first.id)
+        self.assertEqual(replay.period_start, first.period_start)
+        july_usage = self.quota.get_usage(self.principal, METRIC, "month", now=NOW)
+        august_usage = self.quota.get_usage(self.principal, METRIC, "month", now=august)
+        self.assertEqual((july_usage.reserved, august_usage.reserved), (6, 0))
+
     def test_same_key_with_different_quantity_conflicts(self) -> None:
         self._reserve(6, key="job-1:pages")
         with self.assertRaises(SaasError) as ctx:

@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 
 from app.image_translation_bridge import ImageTranslationError
 from app.image_translation_bridge import _terminal_error
+from app.image_translation_bridge import retranslate_image
 from app.image_translation_bridge import translate_image
 from app.main import app
 from saas.entitlements import EntitlementSet
@@ -34,6 +35,8 @@ ENABLED = EntitlementSet(
     "anonymous",
     {
         "image_translation.enabled": True,
+        "image_translation.jobs_per_period": 10,
+        "image_translation.period": "month",
         "image_translation.max_characters_per_job": 1500,
         "image_translation.max_upload_bytes": 1024 * 1024,
         "image_translation.max_image_width": 100,
@@ -79,8 +82,11 @@ class ImageTranslationRouteTests(unittest.TestCase):
             return_value=False,
         )
         self.register_quota = self._quota_operation_patch.start()
+        self._job_quota_patch = patch("app.router.reserve_image_job")
+        self.reserve_job = self._job_quota_patch.start()
 
     def tearDown(self) -> None:
+        self._job_quota_patch.stop()
         self._quota_operation_patch.stop()
         self._require_owner_patch.stop()
         self._record_owner_patch.stop()
@@ -108,8 +114,14 @@ class ImageTranslationRouteTests(unittest.TestCase):
         self.assertEqual(captured.get("operation_id"), OPERATION_ID)
         self.assertEqual(captured.get("max_source_characters"), 1500)
         self.assertFalse(captured.get("quota_authorization_required"))
-        self.assertIsNone(captured.get("lifecycle_handler"))
+        self.assertTrue(callable(captured.get("lifecycle_handler")))
         self.assertIn("ot_anon=tok123", response.headers.get("set-cookie") or "")
+        self.reserve_job.assert_called_once_with(
+            PRINCIPAL,
+            ENABLED,
+            OPERATION_ID,
+            action="translate",
+        )
         self.record_owner.assert_called_once()
         owner_args = self.record_owner.call_args.args
         self.assertEqual(owner_args[:2], (PRINCIPAL, OPERATION_ID))
@@ -128,7 +140,7 @@ class ImageTranslationRouteTests(unittest.TestCase):
         with (
             patch("app.router.resolve_request_context", return_value=(PRINCIPAL, ENABLED, None)),
             patch("app.router.translate_image", fake_translate_image),
-            patch("app.router.handle_image_quota_lifecycle") as handle,
+            patch("app.router.handle_image_operation_lifecycle") as handle,
         ):
             response = _post_image(self.client)
 
@@ -157,6 +169,25 @@ class ImageTranslationRouteTests(unittest.TestCase):
         self.assertEqual(response.status_code, 429)
         self.assertEqual(response.json()["error"]["code"], PERIOD_QUOTA_EXCEEDED)
         self.assertIn("only 10 remain", response.json()["error"]["message"])
+
+    def test_job_period_rejection_stops_before_service_submit(self) -> None:
+        self.reserve_job.side_effect = SaasError(
+            PERIOD_QUOTA_EXCEEDED,
+            "No image translation jobs remain in the current quota period.",
+            status_code=429,
+            details={"metric": "image_translation.jobs", "remaining": 0},
+        )
+        with (
+            patch("app.router.resolve_request_context", return_value=(PRINCIPAL, ENABLED, None)),
+            patch("app.router.translate_image") as translate,
+        ):
+            response = _post_image(self.client)
+
+        self.assertEqual(response.status_code, 429)
+        self.assertEqual(response.json()["error"]["code"], PERIOD_QUOTA_EXCEEDED)
+        self.assertEqual(response.json()["error"]["details"]["metric"], "image_translation.jobs")
+        translate.assert_not_called()
+        self.register_quota.assert_not_called()
 
     def test_valid_identity_issues_no_new_cookie(self) -> None:
         def fake_translate_image(**kwargs: object):
@@ -270,6 +301,13 @@ class ImageTranslationRouteTests(unittest.TestCase):
         self.record_owner.assert_called_once()
         self.assertEqual(self.record_owner.call_args.args[:2], (PRINCIPAL, OPERATION_ID))
         self.assertEqual(retranslate.call_args.kwargs["operation_id"], OPERATION_ID)
+        self.assertTrue(callable(retranslate.call_args.kwargs["lifecycle_handler"]))
+        self.reserve_job.assert_called_once_with(
+            PRINCIPAL,
+            ENABLED,
+            OPERATION_ID,
+            action="retranslate",
+        )
         self.admit.assert_called_with(PRINCIPAL, ENABLED, OPERATION_ID)
 
     def test_rerender_is_admitted_for_the_resolved_principal(self) -> None:
@@ -290,6 +328,7 @@ class ImageTranslationRouteTests(unittest.TestCase):
         self.assertEqual(self.record_owner.call_args.args[:2], (PRINCIPAL, OPERATION_ID))
         self.assertEqual(rerender.call_args.kwargs["operation_id"], OPERATION_ID)
         self.admit.assert_called_with(PRINCIPAL, ENABLED, OPERATION_ID)
+        self.reserve_job.assert_not_called()
 
     def test_other_owner_cannot_retranslate(self) -> None:
         self.require_owner.side_effect = SaasError(
@@ -315,6 +354,7 @@ class ImageTranslationRouteTests(unittest.TestCase):
         with (
             patch("app.router.resolve_request_context", return_value=(PRINCIPAL, ENABLED, None)),
             patch("app.router.get_image_request", return_value=envelope) as get_request,
+            patch("app.router.handle_image_operation_lifecycle") as settle,
         ):
             response = self.client.get(f"/api/image-translation/requests/{OPERATION_ID}")
 
@@ -322,6 +362,7 @@ class ImageTranslationRouteTests(unittest.TestCase):
         self.assertEqual(response.json(), envelope)
         self.require_owner.assert_called_once_with(PRINCIPAL, OPERATION_ID)
         get_request.assert_called_once_with(OPERATION_ID)
+        settle.assert_called_once_with(OPERATION_ID, envelope)
 
     def test_recovered_artifact_is_private_and_owner_checked(self) -> None:
         with (
@@ -346,7 +387,7 @@ class ImageTranslationRouteTests(unittest.TestCase):
         with (
             patch("app.router.resolve_request_context", return_value=(PRINCIPAL, ENABLED, None)),
             patch("app.router.cancel_image_request", return_value=envelope) as cancel,
-            patch("app.router.handle_image_quota_lifecycle") as settle,
+            patch("app.router.handle_image_operation_lifecycle") as settle,
         ):
             response = self.client.post(
                 f"/api/image-translation/requests/{OPERATION_ID}/cancel"
@@ -412,6 +453,31 @@ class BridgeCeilingTests(unittest.TestCase):
     def test_metered_request_asks_service_to_pause_before_translation(self) -> None:
         request = json.loads(self._run_bridge(1500, quota_authorization_required=True))
         self.assertTrue(request["quota_authorization_required"])
+
+    def test_retranslate_forwards_the_lifecycle_handler(self) -> None:
+        handler = lambda _envelope: None
+        with (
+            patch(
+                "app.image_translation_bridge._submit_reentry",
+                return_value=OPERATION_ID,
+            ),
+            patch("app.image_translation_bridge._await_completion") as await_completion,
+            patch(
+                "app.image_translation_bridge._fetch_rendered",
+                return_value=(PNG_BYTES, "image/png"),
+            ),
+        ):
+            retranslate_image(
+                operation_id=OPERATION_ID,
+                source_request_id="source-request",
+                target_language="German",
+                lifecycle_handler=handler,
+            )
+
+        await_completion.assert_called_once_with(
+            OPERATION_ID,
+            lifecycle_handler=handler,
+        )
 
 
 class TerminalErrorMappingTests(unittest.TestCase):

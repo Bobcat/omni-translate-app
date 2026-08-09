@@ -10,7 +10,6 @@ import { currentLane } from '../domain/lanes.js';
 import { normalizeLanguageName, codeForLanguage } from '../domain/languages.js';
 import { renderLifecycle } from '../ui/render-status.js';
 import { updateActionButtons } from '../ui/action-buttons.js';
-import { refreshImageUsageCopy } from './usage.js';
 import {
   createImageOperationRecovery,
   imageOperationOwnerKey,
@@ -176,7 +175,6 @@ function resetImageTranslationState({ cancelPending = true } = {}) {
   renderImageTranslation();
   renderLifecycle();
   updateActionButtons();
-  refreshImageUsageCopy();
 }
 
 export function renderImageTranslation() {
