@@ -1,0 +1,465 @@
+.voice-output-main {
+  display: grid;
+  gap: 8px;
+}
+
+.voice-output-main + .tuning-settings-groups {
+  margin-top: 8px;
+}
+
+.tuning-settings-groups {
+  display: grid;
+  gap: 8px;
+}
+
+.tuning-group {
+  padding: 0;
+  overflow: hidden;
+}
+
+.tuning-group-toggle {
+  width: 100%;
+  min-height: 46px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-strong);
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 700;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tuning-group-toggle:hover,
+.tuning-group-toggle:focus {
+  background: var(--surface-soft);
+  outline: none;
+}
+
+.tuning-group-title {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.tuning-group-icon {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.tuning-group-icon {
+  width: 14px;
+  height: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+.tuning-group-icon::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(-45deg);
+}
+
+.tuning-group.is-expanded .tuning-group-icon::before {
+  transform: rotate(45deg);
+}
+
+.tuning-group-body {
+  display: grid;
+  gap: 8px;
+  padding: 0 12px 10px;
+}
+
+.tuning-group-body[hidden] {
+  display: none;
+}
+
+.tuning-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(112px, 156px);
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  color: var(--text);
+  font-size: 0.78rem;
+  line-height: 1.25;
+}
+
+.tuning-row:not(:has(.tuning-meta)) {
+  grid-template-columns: minmax(0, 1fr) minmax(140px, 200px);
+}
+
+.tuning-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.tuning-meta {
+  min-width: 44px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.tuning-value-wrap {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.tuning-row input,
+.tuning-row select {
+  min-width: 0;
+  width: 100%;
+  min-height: 30px;
+  max-width: 100%;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+
+.tuning-row select {
+  padding-right: 26px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tuning-row input[type="checkbox"] {
+  justify-self: end;
+  width: 16px;
+  height: 16px;
+  min-height: 16px;
+  padding: 0;
+}
+
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 36px;
+  height: 20px;
+  flex-shrink: 0;
+  justify-self: end;
+}
+
+.switch input[type="checkbox"] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  appearance: none;
+  -webkit-appearance: none;
+  opacity: 0;
+  cursor: pointer;
+  z-index: 1;
+  justify-self: stretch;
+}
+
+.switch-track {
+  position: absolute;
+  inset: 0;
+  background: var(--border);
+  border-radius: 999px;
+  transition: background 0.18s ease;
+}
+
+.switch-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  background: #fff;
+  border-radius: 50%;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  transition: transform 0.18s ease;
+}
+
+.switch input:checked ~ .switch-track {
+  background: var(--accent);
+}
+
+.switch input:checked ~ .switch-thumb {
+  transform: translateX(16px);
+}
+
+.switch input:focus-visible ~ .switch-track {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.switch input:disabled ~ .switch-track,
+.switch input:disabled ~ .switch-thumb {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.tuning-unit {
+  min-width: 20px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.tuning-row input:disabled,
+.tuning-row select:disabled {
+  color: var(--muted);
+  cursor: default;
+  opacity: 0.55;
+}
+
+.voice-library-help {
+  margin: 0 0 8px;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  background: var(--surface-soft);
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+#settingsSheet .bottom-sheet:has(#settingsVoiceLibraryPage:not([hidden])) {
+  height: 100dvh;
+  max-height: 100dvh;
+}
+
+#settingsSheet .bottom-sheet:has(#settingsAudioPage:not([hidden])) {
+  /* Only lift the height cap; don't force full height, so short
+     content keeps a short sheet without empty bottom space. */
+  max-height: 100dvh;
+}
+
+.voice-library-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.voice-library-status {
+  display: grid;
+  grid-template-columns: minmax(0, 100px) 1fr;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.voice-library-status-value {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.voice-library-status-text {
+  flex: 1 1 auto;
+}
+
+.voice-library-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.voice-library-actions .tts-inspect-button {
+  flex: 1 1 auto;
+}
+
+.voice-library-action-replay {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.voice-library-action-icon {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.voice-library-decision {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-soft);
+}
+
+.voice-library-decision-label {
+  flex: 1 1 auto;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.voice-library-decision .tts-inspect-button {
+  flex: 0 0 auto;
+  width: auto;
+  padding: 0 14px;
+}
+
+.voice-library-decision-keep {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.voice-library-group .select-row {
+  grid-template-columns: minmax(0, 100px) 1fr;
+}
+
+.voice-library-group .select-row select {
+  width: 100%;
+}
+
+.select-row select option {
+  color: var(--text);
+  background: var(--surface);
+}
+
+.tts-stable-status {
+  color: var(--muted);
+  font-size: 0.78rem;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tts-inspect-button {
+  width: 100%;
+  min-height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.tts-inspect-button:disabled {
+  color: var(--muted);
+  cursor: default;
+  opacity: 0.55;
+}
+
+.tts-play-button {
+  width: 28px;
+  height: 28px;
+  padding: 5px;
+  background: transparent;
+  border: 0;
+  border-radius: 50%;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.tts-play-button:hover,
+.tts-play-button:focus-visible {
+  background: var(--surface);
+  color: var(--text);
+  outline: none;
+}
+
+.tts-play-button:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+.tts-play-button svg {
+  width: 100%;
+  height: 100%;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.tts-prompt-preview {
+  display: grid;
+  gap: 5px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-soft);
+}
+
+.tts-prompt-preview-label {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.tts-prompt-preview code {
+  color: var(--text);
+  font-family: inherit;
+  font-size: 0.74rem;
+  line-height: 1.35;
+  white-space: pre-wrap;
+}
+
+.audio-reset-button,
+.settings-start-button {
+  min-height: 38px;
+  padding: 0 10px;
+  font-size: 0.9rem;
+  font-weight: 500;
+  line-height: 1.2;
+}
+
+.audio-reset-button:disabled,
+.settings-start-button:disabled {
+  cursor: default;
+  opacity: 0.48;
+}
+
+.audio-reset-button.is-flashing {
+  background-color: var(--border);
+}
+
+.storage-reset-button {
+  color: var(--danger);
+}
+
+.setting-group {
+  display: grid;
+  gap: 8px;
+}
+
+.link-row {
+  width: 100%;
+  justify-content: flex-start;
+  color: var(--accent);
+  font-weight: 700;
+  text-align: left;
+}
