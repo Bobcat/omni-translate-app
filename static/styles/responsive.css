@@ -1,0 +1,37 @@
+@media (min-width: 721px) {
+  .text-panels {
+    grid-template-rows: none;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    align-items: stretch;
+  }
+
+  .app.is-image-translation .text-panels {
+    grid-template-columns: 1fr;
+  }
+
+  .pane {
+    height: 100%;
+  }
+}
+
+@media (max-width: 720px) {
+  .app.is-setup .setup-start-panel {
+    padding: 14px;
+  }
+}
+
+@media (max-width: 390px) {
+  .language-pill {
+    width: auto;
+  }
+
+  .settings-button {
+    min-width: 28px;
+    padding: 0 2px;
+  }
+
+  .vad-badge {
+    padding: 2px 6px;
+    font-size: 0.64rem;
+  }
+}

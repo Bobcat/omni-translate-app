@@ -41,7 +41,7 @@
 }
 
 /* Setup pills: their --setup-mode-pill-* vars are defined on the element
-   itself in styles.css, so overriding them needs element-level scope. */
+   itself in styles/shell.css, so overriding them needs element-level scope. */
 :root[data-theme="light"][data-palette="warm"] .setup-mode-pill {
   --setup-mode-pill-accent: #23201a;
   --setup-mode-pill-bg: #fefdf9;
