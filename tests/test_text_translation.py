@@ -50,7 +50,7 @@ class TextTranslationRouteTests(unittest.TestCase):
         self.assertEqual(captured["text"], "Hallo wereld")
         bridge = captured["bridge"]
         self.assertEqual((bridge.source_language, bridge.target_language), ("Dutch", "English"))
-        self.assertEqual(bridge.quality, "fast")
+        self.assertEqual(bridge.quality, "best")
 
     def test_empty_text_rejected(self) -> None:
         response = _post(self.client, text="   ")

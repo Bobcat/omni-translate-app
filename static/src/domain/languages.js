@@ -1,6 +1,6 @@
 export const languages = [
   { name: 'English', asr: 'en', bcp47: 'en', kokoro: true },
-  { name: 'British English', asr: 'en', bcp47: 'en-gb', kokoro: true, flag: '🇬🇧' },
+  { name: 'British English', asr: 'en', bcp47: 'en-gb', kokoro: true },
   { name: 'Dutch', asr: 'nl', bcp47: 'nl' },
   { name: 'German', asr: 'de', bcp47: 'de' },
   { name: 'French', asr: 'fr', bcp47: 'fr', kokoro: true },
@@ -8,7 +8,7 @@ export const languages = [
   { name: 'Hindi', asr: 'hi', bcp47: 'hi', kokoro: true },
   { name: 'Italian', asr: 'it', bcp47: 'it', kokoro: true },
   { name: 'Portuguese', asr: 'pt', bcp47: 'pt-pt', kokoro: true },
-  { name: 'Brazilian Portuguese', asr: 'pt', bcp47: 'pt-br', kokoro: true, flag: '🇧🇷' },
+  { name: 'Brazilian Portuguese', asr: 'pt', bcp47: 'pt-br', kokoro: true },
   { name: 'Polish', asr: 'pl', bcp47: 'pl' },
   { name: 'Ukrainian', asr: 'uk', bcp47: 'uk' },
   { name: 'Turkish', asr: 'tr', bcp47: 'tr' },
@@ -42,48 +42,6 @@ export const languages = [
   { name: 'Slovak', asr: 'sk', bcp47: 'sk' },
 ];
 
-export const LANGUAGE_FLAGS = {
-  af: '🇿🇦',
-  ar: '🇸🇦',
-  bg: '🇧🇬',
-  bn: '🇧🇩',
-  cs: '🇨🇿',
-  da: '🇩🇰',
-  de: '🇩🇪',
-  el: '🇬🇷',
-  en: '🇬🇧',
-  es: '🇪🇸',
-  fa: '🇮🇷',
-  fi: '🇫🇮',
-  fr: '🇫🇷',
-  he: '🇮🇱',
-  hi: '🇮🇳',
-  hr: '🇭🇷',
-  hu: '🇭🇺',
-  id: '🇮🇩',
-  it: '🇮🇹',
-  ja: '🇯🇵',
-  ko: '🇰🇷',
-  ms: '🇲🇾',
-  nl: '🇳🇱',
-  no: '🇳🇴',
-  pl: '🇵🇱',
-  pt: '🇵🇹',
-  ro: '🇷🇴',
-  ru: '🇷🇺',
-  sk: '🇸🇰',
-  sv: '🇸🇪',
-  sw: '🇰🇪',
-  ta: '🇮🇳',
-  th: '🇹🇭',
-  tl: '🇵🇭',
-  tr: '🇹🇷',
-  uk: '🇺🇦',
-  ur: '🇵🇰',
-  vi: '🇻🇳',
-  zh: '🇨🇳',
-};
-
 export function bcp47ForLanguageName(name) {
   const text = String(name || '').trim();
   if (!text) return '';
@@ -107,11 +65,6 @@ export function normalizeLanguageName(value) {
   const fallback = languages[0]?.name || 'English';
   const text = String(value || '').trim();
   return languages.some((item) => item.name === text) ? text : fallback;
-}
-
-export function flagForLanguage(name) {
-  const match = languages.find((item) => item.name === name);
-  return match?.flag || LANGUAGE_FLAGS[match?.asr] || '';
 }
 
 export function guessSetupLanguages() {

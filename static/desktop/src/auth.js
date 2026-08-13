@@ -100,7 +100,7 @@ export async function renderGoogleButton(element) {
     gis.accounts.id.renderButton(element, {
       type: 'standard',
       theme,
-      size: 'large',
+      size: 'medium',
       shape: 'pill',
       text: 'continue_with',
       width: GOOGLE_BUTTON_WIDTH,

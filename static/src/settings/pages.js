@@ -37,7 +37,7 @@ export function setSettingsPage(page) {
 
 export function renderSettingsPage() {
   const page = state.settingsPage;
-  const home = page === 'home';
+  const root = page === state.settingsRootPage;
   els.settingsHomePage.hidden = page !== 'home';
   els.settingsAccountPage.hidden = page !== 'account';
   els.settingsAppearancePage.hidden = page !== 'appearance';
@@ -48,10 +48,11 @@ export function renderSettingsPage() {
   els.settingsTuningPage.hidden = page !== 'tuning';
   els.settingsVoiceLibraryPage.hidden = page !== 'voice-library';
   els.settingsImageRenderPage.hidden = page !== 'image-render';
-  els.settingsBackButton.classList.toggle('is-sheet-close', home);
-  els.settingsBackButton.classList.toggle('is-subpage-back', !home);
-  els.settingsBackButton.setAttribute('aria-label', home ? 'Close settings' : 'Back');
-  els.settingsBackButton.title = home ? 'Close settings' : 'Back';
+  els.settingsBackButton.classList.toggle('is-sheet-close', root);
+  els.settingsBackButton.classList.toggle('is-subpage-back', !root);
+  const closeLabel = page === 'home' ? 'Close settings' : `Close ${page}`;
+  els.settingsBackButton.setAttribute('aria-label', root ? closeLabel : 'Back');
+  els.settingsBackButton.title = root ? 'Close' : 'Back';
   if (page === 'microphone') {
     els.settingsSheetTitle.textContent = 'Microphone';
   } else if (page === 'account') {

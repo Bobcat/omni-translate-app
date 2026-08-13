@@ -35,7 +35,13 @@
           "max_jobs_per_minute": 3,
           "max_jobs_per_hour": 12
         },
-        "pdf_translation": { "enabled": false },
+        "pdf_translation": {
+          "enabled": true,
+          "pages_per_period": 6,
+          "period": "month",
+          "max_pages_per_job": 2,
+          "preview_first_pages": true
+        },
         "document_persistence": { "enabled": false },
         "translation_editing": { "enabled": false },
         "rerender": { "enabled": true, "consumes_translation_quota": false }
@@ -108,7 +114,7 @@
     "keepalive_expiry_s": 60
   },
   "text_translation": {
-    "quality": "fast",
+    "quality": "best",
     "success_cache_ttl_s": 30,
     "success_cache_max_entries": 512
   },

@@ -1,0 +1,118 @@
+/* Palette axis for desktop Appearance. tokens.css supplies Light + Warm and
+   dark.css supplies Dark + Cool; these selectors complete the other two
+   combinations without duplicating layout or component rules. */
+
+:root[data-theme="light"][data-palette="cool"] {
+  --bg: #f5f7fa;
+  --panel: #ffffff;
+  --border: rgba(36, 48, 66, 0.14);
+  --muted: #667085;
+  --text-color: #202633;
+  --primary: #252b36;
+  --hover-bg: rgba(36, 48, 66, 0.055);
+  --active-bg: rgba(36, 48, 66, 0.09);
+  --active-text: #202633;
+  --sidebar-bg: #f1f4f8;
+  --sidebar-toggle-color: #778195;
+
+  --chrome-bg: #f5f7fa;
+  --app-canvas: var(--bg);
+  --surface: #ffffff;
+  --surface-soft: #f7f9fc;
+  --surface-muted: #edf1f6;
+  --surface-hover: #e5eaf1;
+  --surface-translucent: rgba(255, 255, 255, 0.92);
+  --surface-translucent-soft: rgba(255, 255, 255, 0.58);
+  --surface-inverse: #202633;
+
+  --text: var(--text-color);
+  --text-strong: #151a24;
+  --text-muted: var(--muted);
+  --text-subtle: #778195;
+  --text-quiet: var(--text-subtle);
+  --text-inverse: #f7f9fc;
+  --text-inverse-muted: #d7dce5;
+
+  --border-soft: rgba(36, 48, 66, 0.16);
+  --border-subtle: rgba(36, 48, 66, 0.1);
+  --border-control: rgba(36, 48, 66, 0.27);
+  --border-control-hover: rgba(36, 48, 66, 0.4);
+  --field-border: rgba(36, 48, 66, 0.36);
+  --border-strong: rgba(36, 48, 66, 0.32);
+
+  --action-primary: #252b36;
+  --action-primary-hover: #394252;
+  --action-primary-soft: rgba(37, 43, 54, 0.06);
+  --accent: hsl(224, 60%, 55%);
+  --accent-strong: hsl(224, 65%, 46%);
+  --focus: hsl(224, 60%, 55%);
+  --focus-ring: hsla(224, 60%, 55%, 0.28);
+
+  --control-track: #d7dce5;
+  --media-placeholder: #edf1f6;
+  --media-label-bg: rgba(32, 38, 51, 0.72);
+  --tooltip-bg: #252b36;
+  --shadow-soft: 0 1px 2px rgba(24, 35, 52, 0.07);
+  --shadow-control: 0 1px 2px rgba(24, 35, 52, 0.16);
+  --shadow-tooltip: 0 2px 10px rgba(24, 35, 52, 0.28);
+  --replay-glow-primary: hsla(224, 60%, 55%, 0.09);
+  --replay-glow-secondary: rgba(37, 43, 54, 0.05);
+  --shell-brand-color: #202633;
+  --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='%23667085' d='M1.2.3 5 4.1 8.8.3 10 1.5 5 6 0 1.5z'/%3E%3C/svg%3E");
+}
+
+:root[data-theme="dark"][data-palette="warm"] {
+  --bg: hsl(30, 9%, 8%);
+  --panel: hsl(30, 8%, 15%);
+  --border: rgba(240, 232, 220, 0.14);
+  --muted: hsl(30, 6%, 54%);
+  --text-color: hsl(35, 8%, 88%);
+  --primary: #c690ac;
+  --hover-bg: rgba(240, 232, 220, 0.07);
+  --active-bg: rgba(240, 232, 220, 0.1);
+  --active-text: hsl(35, 10%, 95%);
+  --sidebar-bg: hsl(30, 10%, 6.5%);
+  --sidebar-toggle-color: hsl(30, 6%, 64%);
+
+  --chrome-bg: hsl(30, 10%, 7%);
+  --app-canvas: var(--bg);
+  --surface: hsl(30, 8%, 15%);
+  --surface-soft: hsl(30, 8%, 13%);
+  --surface-muted: hsl(30, 7%, 19%);
+  --surface-hover: hsl(30, 7%, 24%);
+  --surface-translucent: hsla(30, 8%, 15%, 0.92);
+  --surface-translucent-soft: hsla(30, 8%, 15%, 0.68);
+  --surface-inverse: hsl(35, 8%, 88%);
+
+  --text: var(--text-color);
+  --text-strong: hsl(35, 10%, 95%);
+  --text-muted: var(--muted);
+  --text-subtle: hsl(30, 6%, 64%);
+  --text-quiet: var(--text-subtle);
+  --text-inverse: #1b1719;
+  --text-inverse-muted: hsl(30, 6%, 42%);
+
+  --border-soft: rgba(240, 232, 220, 0.16);
+  --border-subtle: rgba(240, 232, 220, 0.1);
+  --border-control: rgba(240, 232, 220, 0.26);
+  --border-control-hover: rgba(240, 232, 220, 0.38);
+  --field-border: rgba(240, 232, 220, 0.4);
+  --border-strong: rgba(240, 232, 220, 0.3);
+
+  --accent: #c690ac;
+  --accent-strong: #d5a5bf;
+  --focus: #c690ac;
+  --focus-ring: rgba(198, 144, 172, 0.35);
+
+  --control-track: hsl(30, 7%, 30%);
+  --media-placeholder: hsl(30, 7%, 19%);
+  --media-label-bg: rgba(15, 12, 13, 0.72);
+  --tooltip-bg: hsl(30, 10%, 5%);
+  --shadow-soft: 0 1px 2px rgba(0, 0, 0, 0.22);
+  --shadow-control: 0 1px 2px rgba(0, 0, 0, 0.32);
+  --shadow-tooltip: 0 2px 10px rgba(0, 0, 0, 0.52);
+  --replay-glow-primary: rgba(198, 144, 172, 0.11);
+  --replay-glow-secondary: rgba(240, 232, 220, 0.05);
+  --shell-brand-color: hsl(35, 10%, 92%);
+  --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='%23958d86' d='M1.2.3 5 4.1 8.8.3 10 1.5 5 6 0 1.5z'/%3E%3C/svg%3E");
+}

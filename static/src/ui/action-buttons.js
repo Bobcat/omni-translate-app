@@ -55,9 +55,9 @@ function updateMicToggleButton() {
   els.micToggleButton.disabled = !enabled;
   els.micToggleButton.classList.toggle('is-mic-listening-action', micListening);
   els.micToggleButton.classList.toggle('is-mic-on-action', micOff);
-  const label = micListening ? 'Turn microphone off' : 'Turn microphone on';
+  const label = micListening ? 'Stop recording' : 'Start recording';
   els.micToggleButton.setAttribute('aria-label', label);
-  els.micToggleButton.title = micListening ? 'Mic off' : 'Mic on';
+  els.micToggleButton.title = label;
 }
 
 function updatePcExportButton() {

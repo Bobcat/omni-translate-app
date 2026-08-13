@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, File, Form, Header, HTTPException, Request, UploadFile
@@ -33,12 +33,16 @@ from app.live_settings import normalize_live_settings_delta
 from app.operation_ids import normalize_operation_id
 from app.operation_ids import operation_payload_hash
 from app.pdf_quota import finalize_pdf_reservation
+from app.pdf_quota import attach_pdf_preview
 from app.pdf_quota import require_pdf_request_owner
 from app.pdf_quota import submit_pdf_with_quota
+from app.pdf_ownership import record_pdf_rerender_owner
+from app.pdf_render_options import PdfRenderOptions
 from app.pdf_translation_bridge import PdfTranslationError
 from app.pdf_translation_bridge import cancel_pdf_request
 from app.pdf_translation_bridge import get_pdf_artifact
 from app.pdf_translation_bridge import get_pdf_request
+from app.pdf_translation_bridge import rerender_pdf_request
 from app.protocol import PROTOCOL_VERSION
 from app.saas_setup import resolve_request_context
 from app.sessions import SESSIONS
@@ -87,6 +91,7 @@ async def health() -> dict[str, str]:
 
 @api_router.get("/config")
 async def config() -> dict[str, Any]:
+    account_plan = get_str("saas.auth.user_plan", "free")
     return {
         "protocol_version": PROTOCOL_VERSION,
         "audio_input": {
@@ -104,6 +109,16 @@ async def config() -> dict[str, Any]:
             "stable": stable_voice_library_status(),
         },
         "auth": _auth_client_config(),
+        "pdf_translation": {
+            "account_plan": {
+                "pages_per_period": get_int(
+                    f"saas.plans.{account_plan}.pdf_translation.pages_per_period"
+                ),
+                "max_pages_per_job": get_int(
+                    f"saas.plans.{account_plan}.pdf_translation.max_pages_per_job"
+                ),
+            },
+        },
     }
 
 
@@ -366,6 +381,14 @@ def post_pdf_translation_request(
     request: Request,
     document_file: UploadFile = File(...),
     target_language: str = Form(...),
+    page_layout_mode: Literal["fit", "typeset"] = Form("typeset"),
+    page_scale: float = Form(0.9, ge=0.5, le=1.0),
+    render_size_mode: Literal["min", "median"] = Form("median"),
+    erase_fill_mode: Literal["flat", "inpaint"] = Form("inpaint"),
+    width_fit_mode: Literal["footprint", "extend_to_margin"] = Form("footprint"),
+    size_metric_mode: Literal["extent", "band", "fill"] = Form("extent"),
+    size_cohort_mode: Literal["off", "vlm"] = Form("vlm"),
+    pdf_structure_mode: Literal["source_only", "always"] = Form("source_only"),
     operation_id: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> dict[str, Any]:
     operation_id = normalize_operation_id(operation_id)
@@ -381,6 +404,16 @@ def post_pdf_translation_request(
         )
     if not content:
         raise HTTPException(status_code=400, detail="empty document upload")
+    render_options = PdfRenderOptions(
+        page_layout_mode=page_layout_mode,
+        page_scale=page_scale,
+        render_size_mode=render_size_mode,
+        erase_fill_mode=erase_fill_mode,
+        width_fit_mode=width_fit_mode,
+        size_metric_mode=size_metric_mode,
+        size_cohort_mode=size_cohort_mode,
+        pdf_structure_mode=pdf_structure_mode,
+    )
     try:
         envelope, _ = submit_pdf_with_quota(
             request,
@@ -389,21 +422,58 @@ def post_pdf_translation_request(
             content_type=document_file.content_type or "application/pdf",
             target_language=target_language,
             operation_id=operation_id,
+            render_options=render_options.model_dump(),
         )
     except PdfTranslationError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc))
     return envelope
 
 
+@api_router.post("/pdf-translation/requests/{source_request_id}/rerender")
+def post_pdf_translation_rerender(
+    request: Request,
+    source_request_id: str,
+    render_options: PdfRenderOptions,
+    operation_id: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict[str, Any]:
+    operation_id = normalize_operation_id(operation_id)
+    source_event = require_pdf_request_owner(request, source_request_id)
+    principal, entitlements, _ = resolve_request_context(request)
+    entitlements.require_enabled("pdf_translation.enabled")
+    payload = render_options.model_dump()
+    payload_hash = operation_payload_hash(
+        "pdf_rerender",
+        parameters={
+            "source_request_id": str(source_request_id),
+            **{key: str(value) for key, value in payload.items()},
+        },
+    )
+    record_pdf_rerender_owner(principal, operation_id, payload_hash)
+    try:
+        envelope = rerender_pdf_request(
+            source_request_id,
+            operation_id=operation_id,
+            render_options=payload,
+        )
+    except PdfTranslationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc))
+    if str(envelope.get("request_id") or "") != operation_id:
+        raise HTTPException(
+            status_code=502,
+            detail="translation-services returned an unexpected request_id",
+        )
+    return attach_pdf_preview(envelope, source_event)
+
+
 @api_router.get("/pdf-translation/requests/{request_id}")
 def get_pdf_translation_request(request: Request, request_id: str) -> dict[str, Any]:
-    require_pdf_request_owner(request, request_id)
+    event = require_pdf_request_owner(request, request_id)
     try:
         envelope = get_pdf_request(request_id)
     except PdfTranslationError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc))
     finalize_pdf_reservation(envelope)
-    return envelope
+    return attach_pdf_preview(envelope, event)
 
 
 @api_router.get("/pdf-translation/requests/{request_id}/artifacts/{artifact_name}")
@@ -424,13 +494,13 @@ def get_pdf_translation_artifact(request: Request, request_id: str, artifact_nam
 
 @api_router.post("/pdf-translation/requests/{request_id}/cancel")
 def post_pdf_translation_cancel(request: Request, request_id: str) -> dict[str, Any]:
-    require_pdf_request_owner(request, request_id)
+    event = require_pdf_request_owner(request, request_id)
     try:
         envelope = cancel_pdf_request(request_id)
     except PdfTranslationError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc))
     finalize_pdf_reservation(envelope)
-    return envelope
+    return attach_pdf_preview(envelope, event)
 
 
 # One-shot text translation (typed/pasted text — the classic translator workflow).

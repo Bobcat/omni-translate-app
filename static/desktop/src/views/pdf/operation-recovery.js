@@ -2,6 +2,8 @@
 // Only recovery metadata is stored; the uploaded document never enters
 // localStorage.
 
+import { normalizePdfRenderOptions } from './render-options.js';
+
 const STORAGE_PREFIX = 'omni-translate.desktop.pdf-operation.';
 const RECORD_VERSION = 1;
 const TERMINAL_WITHOUT_ARTIFACT = new Set(['failed', 'cancelled']);
@@ -18,7 +20,26 @@ function normalizeRecord(value) {
   const targetLanguage = String(value.targetLanguage || '').slice(0, 80);
   const startedAt = String(value.startedAt || '');
   if (!OPERATION_ID_PATTERN.test(operationId) || !targetLanguage || !startedAt) return null;
-  return { version: RECORD_VERSION, operationId, fileName, targetLanguage, startedAt };
+  const sourcePages = Number(value.pdfPreview?.sourcePages || 0);
+  const translatedPages = Number(value.pdfPreview?.translatedPages || 0);
+  const pdfPreview = (
+    Number.isInteger(sourcePages)
+    && Number.isInteger(translatedPages)
+    && sourcePages > translatedPages
+    && translatedPages > 0
+  ) ? { sourcePages, translatedPages } : null;
+  const renderOptions = value.renderOptions && typeof value.renderOptions === 'object'
+    ? normalizePdfRenderOptions(value.renderOptions)
+    : null;
+  return {
+    version: RECORD_VERSION,
+    operationId,
+    fileName,
+    targetLanguage,
+    startedAt,
+    ...(pdfPreview ? { pdfPreview } : {}),
+    ...(renderOptions ? { renderOptions } : {}),
+  };
 }
 
 export function createPdfOperationRecovery({ storage, getRequest }) {
@@ -43,6 +64,8 @@ export function createPdfOperationRecovery({ storage, getRequest }) {
       fileName: details?.fileName,
       targetLanguage: details?.targetLanguage,
       startedAt: details?.startedAt,
+      pdfPreview: details?.pdfPreview,
+      renderOptions: details?.renderOptions,
     });
     if (!record) return false;
     try {

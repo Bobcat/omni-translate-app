@@ -149,7 +149,7 @@ async function imagePayload(response) {
 
 async function submitImageOperation(url, form, operationId) {
   const headers = authHeaders({ 'Idempotency-Key': String(operationId) });
-  await ensureAnonymousImagePrincipal(headers);
+  await ensureAnonymousPrincipal(headers);
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
       const response = await fetch(url, { method: 'POST', body: form, headers });
@@ -163,27 +163,30 @@ async function submitImageOperation(url, form, operationId) {
   throw new Error('Image submit retry failed');
 }
 
-let anonymousImagePrincipalReady = null;
+let anonymousPrincipalReady = null;
 
-async function ensureAnonymousImagePrincipal(headers) {
+async function ensureAnonymousPrincipal(headers) {
   if (headers.Authorization) return;
-  if (!anonymousImagePrincipalReady) {
-    anonymousImagePrincipalReady = fetch('/api/me', {
+  if (!anonymousPrincipalReady) {
+    anonymousPrincipalReady = fetch('/api/me', {
       headers: { ...headers, Accept: 'application/json' },
     }).then(async (response) => {
       await ensureOk(response);
     }).catch((err) => {
-      anonymousImagePrincipalReady = null;
+      anonymousPrincipalReady = null;
       throw err;
     });
   }
-  await anonymousImagePrincipalReady;
+  await anonymousPrincipalReady;
 }
 
-async function submitPdfOnce(file, { target, headers }) {
+async function submitPdfOnce(file, { target, renderOptions, headers }) {
   const form = new FormData();
   form.append('document_file', file);
   form.append('target_language', String(target || ''));
+  for (const [key, value] of Object.entries(renderOptions || {})) {
+    form.append(key, String(value));
+  }
   return fetch('/api/pdf-translation/requests', {
     method: 'POST',
     body: form,
@@ -191,15 +194,16 @@ async function submitPdfOnce(file, { target, headers }) {
   });
 }
 
-export async function submitPdf(file, { target, operationId }) {
+export async function submitPdf(file, { target, operationId, renderOptions = {} }) {
   if (!operationId) throw new Error('PDF operation id missing');
   // One operation belongs to the account that started it. Pin its bearer
   // header so an account switch cannot move a retry or status lookup.
   const headers = authHeaders({ 'Idempotency-Key': String(operationId) });
+  await ensureAnonymousPrincipal(headers);
   for (let attempt = 0; attempt < 2; attempt += 1) {
     let response;
     try {
-      response = await submitPdfOnce(file, { target, headers });
+      response = await submitPdfOnce(file, { target, renderOptions, headers });
     } catch (err) {
       // The request may have reached the app before the connection failed. One
       // replay with the same operation id is safe across quota and GPU work.
@@ -214,6 +218,36 @@ export async function submitPdf(file, { target, operationId }) {
     return response.json();
   }
   throw new Error('PDF submit retry failed');
+}
+
+export async function rerenderPdf(sourceRequestId, { operationId, renderOptions = {} }) {
+  if (!operationId) throw new Error('PDF operation id missing');
+  const safeSourceId = encodeURIComponent(String(sourceRequestId || ''));
+  if (!safeSourceId) throw new Error('PDF source request id missing');
+  const headers = authHeaders({
+    'Idempotency-Key': String(operationId),
+    'Content-Type': 'application/json',
+    Accept: 'application/json',
+  });
+  await ensureAnonymousPrincipal(headers);
+  const url = `/api/pdf-translation/requests/${safeSourceId}/rerender`;
+  const body = JSON.stringify(renderOptions || {});
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    let response;
+    try {
+      response = await fetch(url, { method: 'POST', headers, body });
+    } catch (err) {
+      if (attempt === 0) continue;
+      return getPdfRequestWithHeaders(operationId, headers);
+    }
+    if (response.status === 408 || response.status >= 500) {
+      if (attempt === 0) continue;
+      return getPdfRequestWithHeaders(operationId, headers);
+    }
+    await ensureOk(response);
+    return response.json();
+  }
+  throw new Error('PDF rerender retry failed');
 }
 
 async function getPdfRequestWithHeaders(requestId, headers) {

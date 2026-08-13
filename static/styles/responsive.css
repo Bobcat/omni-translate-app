@@ -22,7 +22,7 @@
 
 @media (max-width: 390px) {
   .language-pill {
-    width: auto;
+    width: min(35vw, 136px);
   }
 
   .settings-button {

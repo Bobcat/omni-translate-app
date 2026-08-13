@@ -1,4 +1,4 @@
-/* Warm palette (Claude-like calm) — one of the two palette axes, applied via
+/* Warm palette — one of the two palette axes, applied via
    data-palette="warm" on <html> (the default; "cool" is the plain palette, no
    overrides). The light block restyles the full token set; the dark block only
    warms the neutral surfaces, so the theme and palette axes stay independent.
@@ -24,12 +24,12 @@
   --border: rgba(63, 57, 44, 0.14);
   --border-hover: rgba(63, 57, 44, 0.28);
 
-  /* Primary carries no color (near-black), terracotta is the accent. */
+  /* Primary carries no color (near-black), aubergine is the accent. */
   --primary: #23201a;
   --primary-pressed: #3b362b;
   --primary-rgb: 35, 32, 26;
   --on-primary: #faf7f0;
-  --accent: #cf6b4a;
+  --accent: #9b5779;
 
   /* Depth. */
   --scrim: rgba(62, 56, 43, 0.32);
@@ -57,8 +57,7 @@
   border-radius: 12px;
 }
 
-/* Claude-style serif wordmark (Anthropic Serif is proprietary; Georgia
-   ships on Windows/macOS/iOS, other platforms fall back to a serif). */
+/* Quiet editorial wordmark; the rest of the interface stays system sans. */
 :root[data-theme="light"][data-palette="warm"] .app-title {
   font-family: 'Cormorant Garamond', Georgia, 'Times New Roman', serif;
   font-size: 1.5rem;
@@ -70,8 +69,7 @@
   color: var(--accent);
 }
 
-/* Warm dark: only the neutrals shift (cool blue-grey 220 -> warm brown-grey
-   ~30, same lightness/saturation family). Accents stay as dark.css has them. */
+/* Warm dark shifts both its neutral surfaces and accent family. */
 :root[data-theme="dark"][data-palette="warm"] {
   --bg: hsl(30, 9%, 8%);
   --panels-bg: hsl(30, 9%, 7%);
@@ -86,6 +84,12 @@
 
   --border: hsl(30, 8%, 26%);
   --border-hover: hsl(30, 8%, 35%);
+
+  --primary: #c690ac;
+  --primary-pressed: #ab728f;
+  --primary-rgb: 198, 144, 172;
+  --on-primary: #1b1719;
+  --accent: #c690ac;
 
   --level-bg: hsl(30, 8%, 18%);
   --scrim: hsla(30, 15%, 4%, 0.6);

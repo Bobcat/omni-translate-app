@@ -36,18 +36,19 @@ export function createImageView() {
   container.className = 'view image-view';
   container.innerHTML = `
     <div class="view-toolbar">
-      <div class="field">
-        <span>Target</span>
-        <button type="button" id="imageTarget"></button>
+      <div class="language-pair">
+        <button type="button" class="language-trigger" value="auto" aria-label="Source language: Detect language" disabled>Detect language</button>
+        <span class="language-arrow" aria-hidden="true">${iconMarkup('arrow-right')}</span>
+        <button type="button" id="imageTarget" aria-label="Choose target language"></button>
       </div>
-      <label class="field switch-field">
-        <span>Show original</span>
-        <span class="switch">
-          <input type="checkbox" id="imageShowOriginal" checked>
-          <span class="switch-slider"></span>
-        </span>
-      </label>
       <div class="toolbar-actions">
+        <label class="field switch-field">
+          <span>Show original</span>
+          <span class="switch">
+            <input type="checkbox" id="imageShowOriginal" checked>
+            <span class="switch-slider"></span>
+          </span>
+        </label>
         <label class="zoom-field" id="imageZoomField" title="Image size" hidden>
           <input type="range" id="imageZoom" min="25" max="200" step="5" value="100">
           <output id="imageZoomValue">100%</output>

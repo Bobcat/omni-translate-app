@@ -19,53 +19,57 @@ import { createTranslationRunner } from './translation-runner.js';
 const DEBOUNCE_MS = 350;
 const CEILING_MS = 1750;
 const MIN_CHARS = 3;
+const MIN_PANE_HEIGHT = 280;
+const TRAILING_BLANK_LINES = 4;
+const VIEWPORT_BOTTOM_MARGIN = 12;
+const RESIZE_CORNER_SIZE = 24;
 
 export function createTextView() {
   const container = document.createElement('div');
   container.className = 'view text-view';
   container.innerHTML = `
     <div class="view-toolbar">
-      <div class="field">
-        <span>Source</span>
-        <button type="button" id="textSource"></button>
-      </div>
-      <button type="button" class="language-swap" id="textSwapLanguages" aria-label="Swap direction" title="Swap direction">
-        ${iconMarkup('swap')}
-      </button>
-      <div class="field">
-        <span>Target</span>
-        <button type="button" id="textTarget"></button>
-      </div>
-      <div class="toolbar-actions">
-        <button type="button" class="icon-square-btn" id="textCopy" title="Copy translation" aria-label="Copy translation" hidden>
-          ${iconMarkup('copy')}
+      <div class="language-pair">
+        <button type="button" id="textSource" aria-label="Choose source language"></button>
+        <button type="button" class="language-swap" id="textSwapLanguages" aria-label="Swap direction" title="Swap direction">
+          ${iconMarkup('swap')}
         </button>
-        <button type="button" class="browse-btn" id="textTranslateNow" title="Translate now (Ctrl+Enter)" disabled>Translate</button>
+        <button type="button" id="textTarget" aria-label="Choose target language"></button>
       </div>
     </div>
-    <div class="text-panes">
+    <div class="text-panes" id="textPanes">
       <article class="pane text-pane">
-        <div class="pane-header" id="textPaneSourceLabel"></div>
         <textarea class="text-input" id="textInput" placeholder="Type or paste text to translate" aria-label="Source text"></textarea>
+        <div class="text-pane-actions">
+          <output class="text-character-count" id="textCharacterCount" for="textInput" hidden></output>
+        </div>
       </article>
       <article class="pane text-pane">
-        <div class="pane-header" id="textPaneTargetLabel"></div>
         <div class="text-output" id="textOutput" data-empty="Translation appears here"></div>
+        <div class="text-pane-actions">
+          <button type="button" class="icon-square-btn" id="textCopy" title="Copy translation" aria-label="Copy translation" hidden>
+            ${iconMarkup('copy')}
+          </button>
+        </div>
       </article>
     </div>
     <div class="status-line" id="textStatus" role="status"></div>
+    <div class="text-height-measure" id="textSourceHeightMeasure" aria-hidden="true"></div>
+    <div class="text-height-measure" id="textTargetHeightMeasure" aria-hidden="true"></div>
   `;
 
   const sourceSelect = container.querySelector('#textSource');
   const targetSelect = container.querySelector('#textTarget');
   const swapBtn = container.querySelector('#textSwapLanguages');
   const copyBtn = container.querySelector('#textCopy');
-  const translateBtn = container.querySelector('#textTranslateNow');
-  const paneSourceLabel = container.querySelector('#textPaneSourceLabel');
-  const paneTargetLabel = container.querySelector('#textPaneTargetLabel');
+  const panes = container.querySelector('#textPanes');
+  const paneElements = [...container.querySelectorAll('.text-pane')];
   const inputEl = container.querySelector('#textInput');
   const outputEl = container.querySelector('#textOutput');
   const statusEl = container.querySelector('#textStatus');
+  const characterCountEl = container.querySelector('#textCharacterCount');
+  const sourceHeightMeasure = container.querySelector('#textSourceHeightMeasure');
+  const targetHeightMeasure = container.querySelector('#textTargetHeightMeasure');
 
   const initialLanguages = loadSetupLanguages() || guessSetupLanguages();
   populateLanguageSelect(sourceSelect, initialLanguages.source);
@@ -74,6 +78,9 @@ export function createTextView() {
   let debounceTimer = null;
   let ceilingTimer = null;
   let lastFireAt = 0;
+  let defaultPaneHeight = null;
+  let preferredPaneHeight = null;
+  let paneHeightFrame = null;
 
   const runner = createTranslationRunner({
     minChars: MIN_CHARS,
@@ -85,6 +92,7 @@ export function createTextView() {
     translate: translateText,
     onResult: (result) => {
       outputEl.textContent = String(result.translated_text || '');
+      schedulePaneHeightSync();
       setStatus('');
     },
     onError: (err) => {
@@ -110,14 +118,106 @@ export function createTextView() {
   function setStatus(message, isError = false) {
     statusEl.textContent = message || '';
     statusEl.classList.toggle('is-error', !!isError);
+    schedulePaneHeightSync();
   }
 
   function updateControls() {
-    const hasText = inputEl.value.trim().length >= MIN_CHARS;
-    translateBtn.disabled = runner.isInFlight() || !hasText;
+    const characterCount = Array.from(inputEl.value).length;
+    characterCountEl.textContent = String(characterCount);
+    characterCountEl.hidden = characterCount === 0;
+    characterCountEl.setAttribute(
+      'aria-label', `${characterCount} ${characterCount === 1 ? 'character' : 'characters'}`,
+    );
     copyBtn.hidden = !outputEl.textContent;
-    paneSourceLabel.textContent = sourceSelect.value;
-    paneTargetLabel.textContent = targetSelect.value;
+  }
+
+  function contentHeight(content, measure, text) {
+    const style = window.getComputedStyle(content);
+    const lineHeight = Number.parseFloat(style.lineHeight) || 24;
+    measure.style.width = `${content.clientWidth}px`;
+    // The trailing zero-width character makes a final newline measurable.
+    measure.textContent = `${text}\u200b`;
+    return {
+      content: Math.ceil(measure.getBoundingClientRect().height),
+      trailing: lineHeight * TRAILING_BLANK_LINES,
+    };
+  }
+
+  function requiredPaneHeight(pane, content, measure, text) {
+    const paneStyle = window.getComputedStyle(pane);
+    const actions = pane.querySelector('.text-pane-actions');
+    const heights = contentHeight(content, measure, text);
+    const padding = Number.parseFloat(paneStyle.paddingTop) + Number.parseFloat(paneStyle.paddingBottom);
+    const gap = Number.parseFloat(paneStyle.rowGap || paneStyle.gap) || 0;
+    return Math.ceil(padding + heights.content + heights.trailing + actions.offsetHeight + gap);
+  }
+
+  function availablePaneHeight() {
+    const viewStyle = window.getComputedStyle(container);
+    const viewRect = container.getBoundingClientRect();
+    const paneRect = panes.getBoundingClientRect();
+    const paneTop = paneRect.top - viewRect.top + container.scrollTop;
+    const viewGap = Number.parseFloat(viewStyle.rowGap || viewStyle.gap) || 0;
+    const bottomPadding = Number.parseFloat(viewStyle.paddingBottom) || 0;
+    const reserved = viewGap + statusEl.offsetHeight + bottomPadding + VIEWPORT_BOTTOM_MARGIN;
+    return Math.max(MIN_PANE_HEIGHT, Math.floor(container.clientHeight - paneTop - reserved));
+  }
+
+  function syncPaneHeight() {
+    paneHeightFrame = null;
+    if (!panes.isConnected || window.matchMedia('(max-width: 720px)').matches) return;
+    if (defaultPaneHeight == null) {
+      defaultPaneHeight = Math.max(MIN_PANE_HEIGHT, Math.round(panes.getBoundingClientRect().height));
+    }
+    const sourceRequired = requiredPaneHeight(
+      paneElements[0], inputEl, sourceHeightMeasure, inputEl.value,
+    );
+    const targetRequired = requiredPaneHeight(
+      paneElements[1], outputEl, targetHeightMeasure, outputEl.textContent,
+    );
+    const baseline = preferredPaneHeight ?? defaultPaneHeight;
+    const required = Math.max(MIN_PANE_HEIGHT, baseline, sourceRequired, targetRequired);
+    const available = availablePaneHeight();
+    const next = Math.min(required, available);
+    panes.style.setProperty('--text-pane-max-height', `${available}px`);
+    panes.style.setProperty('--text-panes-height', `${Math.ceil(next)}px`);
+    panes.classList.toggle('is-height-capped', required > available);
+  }
+
+  function schedulePaneHeightSync() {
+    if (paneHeightFrame != null) return;
+    paneHeightFrame = requestAnimationFrame(syncPaneHeight);
+  }
+
+  const paneResizeObserver = new ResizeObserver((entries) => {
+    if (window.matchMedia('(max-width: 720px)').matches) return;
+    const resized = entries.find((entry) => entry.target.style.height);
+    if (resized) {
+      preferredPaneHeight = Math.max(MIN_PANE_HEIGHT, Math.round(resized.target.getBoundingClientRect().height));
+    }
+    schedulePaneHeightSync();
+  });
+  paneResizeObserver.observe(container);
+  for (const pane of paneElements) {
+    paneResizeObserver.observe(pane);
+    pane.addEventListener('pointerdown', (event) => {
+      if (event.button !== 0) return;
+      const rect = pane.getBoundingClientRect();
+      const inResizeCorner = event.clientX >= rect.right - RESIZE_CORNER_SIZE
+        && event.clientY >= rect.bottom - RESIZE_CORNER_SIZE;
+      if (!inResizeCorner) return;
+      for (const item of paneElements) item.style.removeProperty('height');
+      const finishResize = () => {
+        window.removeEventListener('pointerup', finishResize);
+        window.removeEventListener('pointercancel', finishResize);
+        requestAnimationFrame(() => {
+          for (const item of paneElements) item.style.removeProperty('height');
+          schedulePaneHeightSync();
+        });
+      };
+      window.addEventListener('pointerup', finishResize);
+      window.addEventListener('pointercancel', finishResize);
+    });
   }
 
   function cancelTimers() {
@@ -135,11 +235,13 @@ export function createTextView() {
   // ceiling since the previous dispatch — that is what keeps a translation
   // trickling in while the user keeps typing.
   function scheduleTranslation({ immediate = false } = {}) {
+    schedulePaneHeightSync();
     updateControls();
     if (inputEl.value.trim().length < MIN_CHARS) {
       cancelTimers();
       runner.invalidate();
       outputEl.textContent = '';
+      schedulePaneHeightSync();
       setStatus('');
       updateControls();
       return;
@@ -205,7 +307,6 @@ export function createTextView() {
     scheduleTranslation({ immediate: true });
   });
   swapBtn.addEventListener('click', swapLanguages);
-  translateBtn.addEventListener('click', fireTranslation);
   copyBtn.addEventListener('click', async () => {
     try {
       await navigator.clipboard.writeText(outputEl.textContent);
@@ -214,7 +315,7 @@ export function createTextView() {
       setStatus('Copy failed.', true);
     }
   });
-
+  schedulePaneHeightSync();
   updateControls();
   return container;
 }

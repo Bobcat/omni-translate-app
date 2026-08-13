@@ -22,17 +22,18 @@ let _settingsSheetDepth = 0;
 let _settingsSheetPopstateSkip = 0;
 let _settingsSheetPopstateSkipTimer = null;
 
-export function openSettingsSheet() {
+export function openSettingsSheet(rootPage = 'home') {
   if (!els.settingsSheet.hidden) return;
   els.settingsSheet.hidden = false;
-  setSettingsPage('home');
+  state.settingsRootPage = rootPage;
+  setSettingsPage(rootPage);
   renderAppearanceSettings();
   renderAccountSettings();
   renderAudioSettings();
   renderTuningSettings();
   renderTtsSettings();
   renderHistorySettings();
-  history.pushState({ view: 'settingsSheet', page: 'home' }, '');
+  history.pushState({ view: 'settingsSheet', page: state.settingsPage }, '');
   _settingsSheetDepth = 1;
 }
 
@@ -72,11 +73,9 @@ export function navigateSettingsPage(page) {
 }
 
 export function handleSettingsBack() {
-  // On home: button is in "close" mode — collapse the whole sheet at
-  // once (pops every settings history entry, regardless of how we got
-  // here). On a sub-page: button is "back" — pop one level so popstate
-  // can swap the page back.
-  if (state.settingsPage === 'home') {
+  // On the entry page, the button closes the sheet. On a nested page it goes
+  // back one level so popstate can restore the previous settings page.
+  if (state.settingsPage === state.settingsRootPage) {
     closeSettingsSheet();
     return;
   }

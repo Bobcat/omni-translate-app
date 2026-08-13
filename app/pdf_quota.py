@@ -11,14 +11,16 @@ may already exist.
 from __future__ import annotations
 
 import io
+import json
 import logging
 import uuid
 from typing import Any, Mapping
 
 from fastapi import Request
-from pypdf import PdfReader
+from pypdf import PdfReader, PdfWriter
 
 from app.operation_ids import normalize_operation_id
+from app.pdf_ownership import PDF_RERENDER_RESOURCE
 from app.pdf_translation_bridge import PdfTranslationError
 from app.pdf_translation_bridge import submit_pdf
 from app.saas_setup import get_saas_context, resolve_request_context
@@ -41,6 +43,10 @@ _TECHNICAL_FAILURE_CODES = {
     "REQUEST_INTERRUPTED_BY_RESTART",
 }
 
+_SOURCE_PAGES_METADATA = "pdf_source_pages"
+_TRANSLATED_PAGES_METADATA = "pdf_translated_pages"
+_PREVIEW_METADATA = "pdf_preview"
+
 
 def count_pdf_pages(document_bytes: bytes) -> int:
     """Page count of an uploaded PDF. Raises INVALID_UPLOAD (400) when the
@@ -55,6 +61,71 @@ def count_pdf_pages(document_bytes: bytes) -> int:
         ) from exc
 
 
+def prepare_pdf_submission(
+    document_bytes: bytes,
+    *,
+    max_pages: int,
+    preview_first_pages: bool,
+) -> tuple[bytes, int, int]:
+    """Return ``(submitted_bytes, source_pages, translated_pages)``.
+
+    A preview-enabled plan submits only the first ``max_pages`` pages. Other
+    plans retain the existing hard per-job rejection. The derived document is
+    created before quota reservation or upstream work.
+    """
+    try:
+        reader = PdfReader(io.BytesIO(document_bytes))
+        source_pages = len(reader.pages)
+        if source_pages < 1:
+            raise ValueError("PDF contains no pages")
+        if source_pages <= max_pages:
+            return document_bytes, source_pages, source_pages
+        if not preview_first_pages or max_pages < 1:
+            raise SaasError(
+                PAGE_LIMIT_PER_JOB_EXCEEDED,
+                f"This PDF has {source_pages} pages; the limit is {max_pages} pages per job.",
+                status_code=422,
+                details={"pages": source_pages, "max_pages_per_job": max_pages},
+            )
+        writer = PdfWriter()
+        for page_index in range(max_pages):
+            writer.add_page(reader.pages[page_index])
+        output = io.BytesIO()
+        writer.write(output)
+        return output.getvalue(), source_pages, max_pages
+    except SaasError:
+        raise
+    except Exception as exc:  # pypdf raises several types for malformed input
+        raise SaasError(
+            INVALID_UPLOAD,
+            "the uploaded file is not a readable PDF",
+            status_code=400,
+        ) from exc
+
+
+def attach_pdf_preview(envelope: dict, event: Mapping[str, Any] | None) -> dict:
+    """Add app-owned preview metadata from the durable usage event."""
+    if event is None:
+        return envelope
+    try:
+        metadata = json.loads(str(event["metadata"] or "{}"))
+        if not isinstance(metadata, dict) or not bool(metadata.get(_PREVIEW_METADATA)):
+            return envelope
+        source_pages = int(metadata.get(_SOURCE_PAGES_METADATA) or 0)
+        translated_pages = int(metadata.get(_TRANSLATED_PAGES_METADATA) or 0)
+    except (KeyError, TypeError, ValueError):
+        return envelope
+    if source_pages < 1 or translated_pages < 1 or translated_pages >= source_pages:
+        return envelope
+    return {
+        **envelope,
+        "pdf_preview": {
+            "source_pages": source_pages,
+            "translated_pages": translated_pages,
+        },
+    }
+
+
 def submit_pdf_with_quota(
     request: Request,
     *,
@@ -63,6 +134,7 @@ def submit_pdf_with_quota(
     content_type: str,
     target_language: str,
     operation_id: str,
+    render_options: Mapping[str, Any],
 ) -> tuple[dict, str | None]:
     """Gate, reserve and submit a PDF translation.
 
@@ -76,40 +148,44 @@ def submit_pdf_with_quota(
     operation_id = normalize_operation_id(operation_id)
     principal, entitlements, identity_token = resolve_request_context(request)
     entitlements.require_enabled("pdf_translation.enabled")
-    page_count = count_pdf_pages(document_bytes)
     max_pages = entitlements.get_int("pdf_translation.max_pages_per_job")
-    if page_count > max_pages:
-        raise SaasError(
-            PAGE_LIMIT_PER_JOB_EXCEEDED,
-            f"This PDF has {page_count} pages; the limit is {max_pages} pages per job.",
-            status_code=422,
-            details={"pages": page_count, "max_pages_per_job": max_pages},
-        )
-    ctx.quota_service.reserve(
+    submitted_bytes, source_pages, translated_pages = prepare_pdf_submission(
+        document_bytes,
+        max_pages=max_pages,
+        preview_first_pages=entitlements.is_enabled("pdf_translation.preview_first_pages"),
+    )
+    reservation = ctx.quota_service.reserve(
         principal,
         metric=PAGES_METRIC,
-        quantity=page_count,
+        quantity=translated_pages,
         limit=entitlements.get_int("pdf_translation.pages_per_period"),
         period_kind=entitlements.get_str("pdf_translation.period", "month"),
         job_id=operation_id,
         idempotency_key=f"pdf-submit:{operation_id}",
+        metadata={
+            _SOURCE_PAGES_METADATA: source_pages,
+            _TRANSLATED_PAGES_METADATA: translated_pages,
+            _PREVIEW_METADATA: translated_pages < source_pages,
+        },
     )
     envelope = submit_pdf(
-        document_bytes=document_bytes,
+        document_bytes=submitted_bytes,
         filename=filename,
         content_type=content_type,
         target_language=target_language,
         operation_id=operation_id,
+        render_options=render_options,
     )
     request_id = str(envelope.get("request_id") or "")
     if request_id != operation_id:
         # Acceptance is uncertain, so keep the reservation. Releasing it could
         # make an already-started upstream job free.
         raise PdfTranslationError("translation-services returned an unexpected request_id")
-    return envelope, identity_token
+    event = ctx.store.get_usage_event(reservation.id)
+    return attach_pdf_preview(envelope, event), identity_token
 
 
-def require_pdf_request_owner(request: Request, request_id: str) -> None:
+def require_pdf_request_owner(request: Request, request_id: str) -> Mapping[str, Any] | None:
     """Hide every PDF request not owned by the resolved caller.
 
     The usage event is the MVP's durable app-side link between a principal and
@@ -129,12 +205,21 @@ def require_pdf_request_owner(request: Request, request_id: str) -> None:
         and event["owner_kind"] == principal.kind
         and event["owner_id"] == str(principal.id)
     )
-    if not owned:
-        raise SaasError(
-            RESOURCE_NOT_FOUND,
-            "PDF request not found",
-            status_code=404,
-        )
+    if owned:
+        return event
+    if ctx.store.resource_is_owned_by(
+        ctx.tenant,
+        PDF_RERENDER_RESOURCE,
+        str(request_id),
+        principal.kind,
+        principal.id,
+    ):
+        return None
+    raise SaasError(
+        RESOURCE_NOT_FOUND,
+        "PDF request not found",
+        status_code=404,
+    )
 
 
 def settle_pdf_usage_event(event: Mapping[str, Any], envelope: dict) -> str:

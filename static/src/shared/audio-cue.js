@@ -1,4 +1,4 @@
-// One-shot Web Audio chirp for UI feedback (mic auto-off). Generates the
+// One-shot Web Audio chirps for mic start/stop feedback. Generates the
 // tone with an oscillator + gain envelope so no asset file is needed.
 // The AudioContext is created lazily on first use and reused.
 
