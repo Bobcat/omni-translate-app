@@ -45,6 +45,7 @@ from app.pdf_translation_bridge import get_pdf_request
 from app.pdf_translation_bridge import rerender_pdf_request
 from app.protocol import PROTOCOL_VERSION
 from app.saas_setup import resolve_request_context
+from app.saas_setup import tts_fairness_key_for_principal
 from app.sessions import SESSIONS
 from app.text_translation_policy import admit_text_translation
 from app.text_translation_policy import success_cache as text_translation_success_cache
@@ -558,7 +559,7 @@ def post_text_translation(request: Request, payload: TextTranslationRequest) -> 
 
 
 @api_router.post("/voice-library/stable")
-async def post_stable_voice_sample(payload: GenerateStableVoiceSampleRequest) -> dict[str, Any]:
+def post_stable_voice_sample(request: Request, payload: GenerateStableVoiceSampleRequest) -> dict[str, Any]:
     tag = (payload.language or "").strip().lower()
     gender = (payload.gender or "").strip().lower()
     engine = (payload.engine or "").strip().lower()
@@ -568,8 +569,14 @@ async def post_stable_voice_sample(payload: GenerateStableVoiceSampleRequest) ->
         raise HTTPException(status_code=400, detail="gender_required")
     if not engine:
         raise HTTPException(status_code=400, detail="engine_required")
+    principal, _, _ = resolve_request_context(request)
     try:
-        info = generate_stable_sample(tag, gender, engine)
+        info = generate_stable_sample(
+            tag,
+            gender,
+            engine,
+            fairness_key=tts_fairness_key_for_principal(principal),
+        )
     except FileNotFoundError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except ValueError as exc:
@@ -618,11 +625,13 @@ async def create_session(request: Request, payload: CreateSessionRequest) -> dic
     tts_settings, tts_errors = tts_settings_snapshot(payload.tts_settings)
     if tts_errors:
         raise HTTPException(status_code=422, detail={"tts_settings": tts_errors})
+    principal, _, _ = resolve_request_context(request)
     session = SESSIONS.create_session(
         side_a_language=side_a_language,
         side_b_language=side_b_language,
         live_settings=live_settings,
         tts_settings=tts_settings,
+        tts_fairness_key=tts_fairness_key_for_principal(principal),
     )
     session_id = str(session["session_id"])
     ws_path = rooted_path(f"/ws/sessions/{session_id}")

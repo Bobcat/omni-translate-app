@@ -75,7 +75,11 @@ class ASRPCExportTests(unittest.TestCase):
 
     def test_session_close_writes_pc_export_file(self) -> None:
         manager = ConversationSessionManager()
-        session = manager.create_session(side_a_language="Dutch", side_b_language="English")
+        session = manager.create_session(
+            side_a_language="Dutch",
+            side_b_language="English",
+            tts_fairness_key="principal_test",
+        )
         session_id = session["session_id"]
         path = pc_export_path(session_id)
         try:

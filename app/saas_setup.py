@@ -11,6 +11,7 @@ uses, shared via one process-wide context.
 """
 from __future__ import annotations
 
+import hashlib
 import os
 import uuid
 from dataclasses import dataclass
@@ -163,3 +164,9 @@ def resolve_request_entitlements(request: Request) -> tuple[EntitlementSet, str 
     principal itself (e.g. a per-job ceiling without quota accounting)."""
     _, entitlements, token = resolve_request_context(request)
     return entitlements, token
+
+
+def tts_fairness_key_for_principal(principal: Principal) -> str:
+    """Return the stable opaque scheduler identity trusted by TTS-pool."""
+    source = f"{principal.tenant}:{principal.kind}:{principal.id}".encode("utf-8")
+    return f"principal_{hashlib.sha256(source).hexdigest()[:32]}"

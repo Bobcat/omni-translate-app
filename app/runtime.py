@@ -189,6 +189,7 @@ class ConversationRuntime:
         self.sample_width_bytes = 2
         self.side_a_language = session.side_a_language
         self.side_b_language = session.side_b_language
+        self.tts_fairness_key = session.tts_fairness_key
         self.live_settings = merge_live_settings(default_live_settings(), session.live_settings or {})
         self.tts_settings = dict(session.tts_settings or tts_settings_snapshot()[0])
         self.asr_bridge = LiveASRPoolBridge(
@@ -751,6 +752,7 @@ class ConversationRuntime:
                 session_id=self.session_id,
                 text=text,
                 language=lane.target_language,
+                fairness_key=self.tts_fairness_key,
                 settings=self.tts_settings,
                 reference_wav_path=reference_wav_path,
             )
@@ -798,6 +800,7 @@ class ConversationRuntime:
                 session_id=self.session_id,
                 text=text,
                 language=lane.target_language,
+                fairness_key=self.tts_fairness_key,
                 settings=self.tts_settings,
                 reference_wav_path=reference_wav_path,
                 reference_prompt_text=reference_prompt_text,

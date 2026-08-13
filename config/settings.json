@@ -89,7 +89,10 @@
     "token": ""
   },
   "tts_pool": {
-    "base_url": "http://127.0.0.1:8020",
+    "control_base_url": "http://127.0.0.1:8020",
+    "grpc_target": "127.0.0.1:8021",
+    "grpc_max_receive_message_bytes": 16777216,
+    "grpc_max_send_message_bytes": 16777216,
     "timeout_s": 300
   },
   "image_translation": {

@@ -36,7 +36,7 @@ class FastTTS:
         self.count = 0
         self.settings: list[dict | None] = []
 
-    def synthesize(self, *, session_id: str, text: str, language: str, settings: dict | None = None, reference_wav_path: str | None = None, reference_prompt_text: str | None = None, source_audio_duration_ms: int | None = None) -> dict:
+    def synthesize(self, *, session_id: str, text: str, language: str, fairness_key: str, settings: dict | None = None, reference_wav_path: str | None = None, reference_prompt_text: str | None = None, source_audio_duration_ms: int | None = None) -> dict:
         self.count += 1
         self.settings.append(settings)
         return {
@@ -51,7 +51,7 @@ class FastTTS:
 class SlowTTS:
     enabled = True
 
-    def synthesize(self, *, session_id: str, text: str, language: str, settings: dict | None = None, reference_wav_path: str | None = None, reference_prompt_text: str | None = None, source_audio_duration_ms: int | None = None) -> dict:
+    def synthesize(self, *, session_id: str, text: str, language: str, fairness_key: str, settings: dict | None = None, reference_wav_path: str | None = None, reference_prompt_text: str | None = None, source_audio_duration_ms: int | None = None) -> dict:
         time.sleep(0.2)
         return {
             "artifact_id": "late_artifact",
@@ -90,6 +90,7 @@ class TurnStateMachineTests(unittest.IsolatedAsyncioTestCase):
             expires_unix=time.time() + 60,
             side_a_language="Dutch",
             side_b_language="English",
+            tts_fairness_key="principal_test",
             tts_settings=tts_settings_snapshot({"enabled": True})[0],
         )
         websocket = FakeWebSocket()
@@ -263,6 +264,7 @@ class TurnStateMachineTests(unittest.IsolatedAsyncioTestCase):
         session_payload = SESSIONS.create_session(
             side_a_language="Dutch",
             side_b_language="English",
+            tts_fairness_key="principal_test",
         )
         session_id = session_payload["session_id"]
         session = SESSIONS.open_websocket(session_id)
