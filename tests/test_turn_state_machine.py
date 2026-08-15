@@ -35,10 +35,12 @@ class FastTTS:
     def __init__(self) -> None:
         self.count = 0
         self.settings: list[dict | None] = []
+        self.fairness_keys: list[str] = []
 
     def synthesize(self, *, session_id: str, text: str, language: str, fairness_key: str, settings: dict | None = None, reference_wav_path: str | None = None, reference_prompt_text: str | None = None, source_audio_duration_ms: int | None = None) -> dict:
         self.count += 1
         self.settings.append(settings)
+        self.fairness_keys.append(fairness_key)
         return {
             "artifact_id": f"artifact_{self.count}",
             "url": f"/fake/{self.count}.wav",
@@ -95,7 +97,7 @@ class TurnStateMachineTests(unittest.IsolatedAsyncioTestCase):
         )
         websocket = FakeWebSocket()
         runtime = ConversationRuntime(websocket=websocket, session=session)
-        runtime.tts_bridge = tts or FastTTS()
+        runtime.tts_delivery.bridge = tts or FastTTS()
         runtime.current_turn.parts.append(
             TurnPart(
                 part_id="turn_1_part_1",
@@ -120,7 +122,7 @@ class TurnStateMachineTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(runtime._current_lane().pending_tts)
         self.assertTrue(any(event["type"] == "tts_clip_ready" for event in websocket.sent))
 
-        await runtime._tts_playback_complete(
+        await runtime.tts_delivery.playback_complete(
             {
                 "lane_id": "a_to_b",
                 "turn_id": runtime.current_turn.turn_id,
@@ -135,6 +137,17 @@ class TurnStateMachineTests(unittest.IsolatedAsyncioTestCase):
         next_part = runtime._current_writable_part()
         self.assertEqual(next_part.part_id, "turn_1_part_2")
         self.assertEqual(len(runtime.current_turn.parts), 2)
+
+    async def test_replay_uses_session_fairness_key(self) -> None:
+        tts = FastTTS()
+        runtime, websocket = self.make_runtime(tts)
+
+        await runtime.tts_delivery.replay({"lane_id": "a_to_b", "text": "Test"})
+
+        self.assertEqual(tts.fairness_keys, ["principal_test"])
+        replay = next(item for item in websocket.sent if item["type"] == "tts_replay_ready")
+        self.assertEqual(replay["text"], "Test")
+        self.assertEqual(replay["tts"]["artifact_id"], "artifact_1")
 
     async def test_speak_now_accepts_visible_preview_text(self) -> None:
         runtime, websocket = self.make_runtime(FastTTS())
@@ -307,7 +320,7 @@ class TurnStateMachineTests(unittest.IsolatedAsyncioTestCase):
 
         await runtime._next_turn(lane_id="b_to_a")
         await asyncio.sleep(0.3)
-        await runtime._tts_playback_complete(
+        await runtime.tts_delivery.playback_complete(
             {
                 "lane_id": "a_to_b",
                 "turn_id": old_turn_id,
