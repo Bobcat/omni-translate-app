@@ -1,16 +1,19 @@
 # Omni Translate
 
-Omni Translate is a mobile-first FastAPI and browser app for live translation
-workflows. It supports speech translation, translated speech playback, image
-translation, and app-managed voice-reference samples.
+Omni Translate is a self-hosted translation app for typed text, live voice,
+images, and PDFs. It combines a FastAPI backend with separate desktop and mobile
+browser interfaces. Model inference runs in dedicated ASR, LLM, TTS, and
+document-processing services.
 
-This repository is the app layer. It serves the web UI, owns visible workflow
-state, coordinates short-lived sessions, and proxies model work to separate ASR,
-translation, TTS, and image-translation services.
+This repository contains the application layer. It owns the user workflows,
+short-lived voice sessions, resumable document operations, authentication and
+anonymous identity handling, entitlements, usage accounting, and service
+orchestration.
 
 ## Index
 
 - [What It Does](#what-it-does)
+- [Web Interfaces](#web-interfaces)
 - [Repository Role](#repository-role)
 - [Related Repositories And Services](#related-repositories-and-services)
 - [Code Map](#code-map)
@@ -19,195 +22,250 @@ translation, TTS, and image-translation services.
 - [Configuration](#configuration)
 - [Development](#development)
 - [Tests](#tests)
+- [Build And Deploy](#build-and-deploy)
 - [Acknowledgments](#acknowledgments)
 - [License](#license)
 
 ## What It Does
 
-- Provides a mobile-first UI for a two-language live conversation.
-- Captures browser microphone audio and streams PCM chunks to the backend.
-- Runs live ASR through `realtime-asr-engine` and an ASR pool service.
-- Runs source-to-target translation through `realtime-translation-engine` and an
-  LLM pool service.
-- Sends translated text to a TTS pool, stores received WAV artifacts, and plays
-  speech in the browser.
-- Supports image translation from file upload or camera capture, with
-  original/translated image toggling and target-language retranslation.
-- Provides TTS settings for Kokoro, VoxCPM2, and NanoVLLM VoxCPM-style engines.
-- Manages a stable generated voice library: generate, preview, keep, discard,
-  and serve per-language voice-reference WAV samples.
-- Exposes ASR tuning, microphone, TTS, history, voice library, and developer
-  controls through settings sheets.
-- Exports `.pc` transcript/debug files for offline review.
+- Translates typed or pasted text with explicit source and target languages.
+- Runs turn-based voice translation: browser audio to ASR, translated text, and
+  optional spoken output.
+- Translates text inside PNG, JPEG, and WebP images and renders the translation
+  back into the image.
+- Translates born-digital, scanned, and mixed PDFs while preserving page
+  structure as far as the source permits.
+- Shows progress for image and PDF jobs and supports cancellation, retranslation,
+  rerendering, and result downloads where applicable.
+- Recovers pending image and PDF operations after a reload by storing an
+  operation reference, not the uploaded document bytes, in the browser.
+- Supports optional Google sign-in through Supabase. Without configured auth,
+  the app uses a signed anonymous browser identity.
+- Applies plan entitlements and workflow-specific limits. Image and PDF
+  operations also use quota reservations and usage accounting.
+
+## Web Interfaces
+
+The same URL serves two plain-JavaScript frontends:
+
+- **Desktop** — a workbench-style sidebar app with separate text, voice, image,
+  PDF, account, settings, and information views.
+- **Mobile** — a turn-focused conversation interface with image translation and
+  settings sheets for the smaller screen.
+
+The server selects the interface from the user agent. `?desktop` and `?mobile`
+force a variant. `/desktop/` remains available as a direct desktop path.
+
+There is no frontend framework build step. The desktop app uses a vendored copy
+of `spa-foundation`; both interfaces use browser-native ES modules.
 
 ## Repository Role
 
-This repo owns app-level behavior:
+This repository owns:
 
-- FastAPI app setup, HTTP routes, and WebSocket session lifecycle
-- browser UI, responsive workflow state, and settings screens
-- setup, speech-session, and image-translation modes
-- two-lane conversation state, active direction, visible transcript, and playback state
-- bridges to ASR, translation, TTS, and image-translation services/packages
-- local TTS artifacts, generated voice-library samples, and `.pc` exports
-- app-level tests for runtime behavior and integration boundaries
+- FastAPI composition, HTTP routes, and the live-session WebSocket
+- desktop and mobile workflow state and rendering
+- text, voice, image, and PDF orchestration
+- operation identity, ownership checks, cancellation, and recovery metadata
+- application-level authentication, principals, entitlements, quotas, and usage
+- local voice-reference samples, temporary TTS artifacts, and transcript exports
+- tests for app behavior and upstream integration boundaries
 
-This repo does not own model serving. ASR, LLM, TTS, and image translation are
-implemented by separate packages or services.
+It does not serve inference models or implement the document translation
+pipeline itself. Those responsibilities remain in the pool and translation
+services listed below.
+
+The `saas/` package is intentionally domain-free. It contains reusable principal,
+entitlement, quota, usage-ledger, and resource-ownership primitives. Omni
+Translate-specific wiring belongs in `app/saas_setup.py` and
+`config/settings.json`.
 
 ## Related Repositories And Services
 
-- [`asr-pool-api`](https://github.com/Bobcat/asr-pool-api): ASR pool client
-  package used by the app bridge.
-- [`realtime-asr-engine`](https://github.com/Bobcat/realtime-asr-engine):
-  rolling audio state, VAD, ASR pacing, and transcript commit logic.
-- [`realtime-translation-engine`](https://github.com/Bobcat/realtime-translation-engine):
-  live source/target transcript state and LLM dispatch logic.
-- [`asr-pool`](https://github.com/Bobcat/asr-pool): speech-recognition service.
-- [`llm-pool`](https://github.com/Bobcat/llm-pool): translation model service.
-- [`tts-pool`](https://github.com/Bobcat/tts-pool): speech-synthesis service.
-- `translation-services`: image OCR, translation, and rendered-image service.
+- [`asr-pool-api`](https://github.com/Bobcat/asr-pool-api) — typed client for the
+  speech-recognition pool.
+- [`realtime-asr-engine`](https://github.com/Bobcat/realtime-asr-engine) — live
+  audio ingest, ASR scheduling, and transcript state.
+- [`realtime-translation-engine`](https://github.com/Bobcat/realtime-translation-engine)
+  — incremental translation scheduling and live translation state.
+- [`asr-pool`](https://github.com/Bobcat/asr-pool) — queued WhisperX speech
+  recognition.
+- [`llm-pool`](https://github.com/Bobcat/llm-pool) — local and OpenAI-compatible
+  language-model inference.
+- [`tts-pool`](https://github.com/Bobcat/tts-pool) — queued speech synthesis and
+  model management.
+- `translation-services` — text translation plus OCR, layout analysis,
+  translation, and rendering for images and PDFs.
 
 ## Code Map
 
 ```text
-app/main.py                    FastAPI app, static serving, startup warmup
-app/router.py                  HTTP API routes
-app/routes.py                  WebSocket session entrypoint
-app/runtime.py                 live conversation runtime and transcript state machine
-app/asr_bridge.py              ASR pool integration
-app/translation_bridge.py      translation engine / LLM pool integration
-app/tts_bridge.py              TTS pool integration, artifacts, TTS settings
-app/image_translation_bridge.py image-translation service proxy
-app/voice_library.py           generated stable voice-reference sample library
-app/live_settings.py           runtime ASR tuning schema and validation
-app/asr_pc_export.py           `.pc` transcript/debug export formatting
-app/sessions.py                short-lived in-memory session registry
-app/protocol.py                protocol version and event helper
+app/main.py                     FastAPI composition, frontend selection, static serving
+app/router.py                   application HTTP endpoints
+app/routes.py                   live-session WebSocket endpoint
+app/runtime.py                  live conversation runtime and transcript state
+app/voice/                      voice-session tasks, lifecycle, and TTS delivery
+app/asr_bridge.py               ASR pool integration
+app/translation_bridge.py       live LLM and text-translation integration
+app/tts_bridge.py               TTS settings and artifact handling
+app/image_translation_bridge.py image-operation client
+app/pdf_translation_bridge.py   PDF-operation client
+app/image_*                     image validation, admission, ownership, and quota handling
+app/pdf_*                       PDF options, ownership, quota, and reconciliation
+app/upstreams/                  shared HTTP client and generated TTS gRPC client
+app/saas_setup.py               host-specific SaaS composition
 
-static/index.html              browser shell and settings sheet markup
-static/src/app.js              frontend composition root
-static/src/image/              image-translation workflow
-static/src/session/            speech-session lifecycle, actions, messages
-static/src/settings/           audio, ASR tuning, TTS, voice library, dev tools
-static/src/ui/                 rendering and sheet helpers
-static/src/domain/             lanes, languages, storage, transcript helpers
-static/src/shared/             capture, playback, cue, constants, utilities
+saas/                           principals, entitlements, admission, quota, and usage ledger
 
-config/settings.json           public defaults
-config/local.json              ignored machine-local overrides
-config/voice_reference_texts/  seed text for generated voice samples
-data/                          local artifacts and generated samples
-tests/                         backend unit tests
+static/desktop/                 desktop sidebar application
+static/src/                     mobile application modules
+static/shared/                  browser modules shared by both interfaces
+static/foundation/              vendored spa-foundation package
+static/styles/                  mobile styles
+
+config/settings.json            checked-in defaults and plan definitions
+config/local.json               ignored machine-local overrides
+config/voice_reference_texts/   seed text for generated voice samples
+data/                           ignored runtime state and generated artifacts
+
+tests/                          Python backend tests
+tests/js/                       DOM-independent frontend tests
 ```
 
 ## Runtime Model
 
-The backend serves the static frontend and exposes a JSON/HTTP API plus one
-WebSocket per live speech session. Sessions are short-lived and stored in memory.
-The frontend creates a session, opens the WebSocket, sends PCM audio chunks, and
-drives explicit actions such as translate now, speak now, mic on/off, direction
-swap, continue, and finish.
+### Text
 
-Each live session has two fixed language lanes. Each lane has its own ASR runner,
-translation runner, transcript state, and pending TTS state. The frontend chooses
-the active lane; the backend applies commands to that lane.
+Typed text translation is a stateless request-response workflow. The browser
+sends the complete current text to `POST /api/text-translation` and ensures that
+only the newest result reaches the screen. The backend applies entitlement,
+length, rate, and concurrency checks before calling `translation-services`.
 
-TTS is out-of-process. The app posts synthesis requests to `tts-pool`, stores
-generated WAV files under `data/tts`, and provides artifact URLs to the browser.
-For VoxCPM-family backends, the app can use generated stable samples or recent
-speech as reference audio, depending on the active TTS settings.
+### Voice
 
-Image translation is a separate mode, not a WebSocket session. The frontend sends
-the selected image to `/api/image-translation`; the backend submits the request
-to `translation-services`, waits for completion, and provides the rendered image.
-Changing the target language can retranslate the same source request.
+A voice workflow starts an in-memory session and opens one WebSocket. The browser
+sends PCM audio and explicit turn actions. Each language lane has its own ASR,
+translation, transcript, and pending-TTS state.
 
-The frontend persists some user-facing preferences in `localStorage`, including
-recent languages, global TTS choices, per-language VoxCPM voice configuration,
-developer-tool visibility, and setup languages. The server owns generated voice
-library WAVs and metadata.
+ASR work goes to `asr-pool`; live translation goes through
+`realtime-translation-engine` and `llm-pool`. TTS is submitted to `tts-pool` over
+gRPC. The app stores the returned WAV temporarily and serves it back to the
+browser.
+
+### Images And PDFs
+
+Image and PDF translation use operation IDs and separate upstream jobs in
+`translation-services`. The app validates ownership before status, artifact,
+retranslation, rerender, or cancellation requests.
+
+The frontends retain one pending operation reference per account identity. A
+reload can resume polling without storing or re-uploading the original file.
+Generated documents are temporary; users should download completed results.
+
+PDF quota reservations are settled from the upstream terminal state. A
+background reconciler handles operations that outlive the browser request.
+
+### Identity And Usage
+
+Principal resolution follows this order:
+
+1. a valid bearer token from the configured external auth provider;
+2. a signed anonymous identity cookie.
+
+Plan definitions live in `config/settings.json`. The current implementation
+stores principals, ownership records, quota reservations, and usage events in
+SQLite. Auth is optional; when it is not configured, account controls stay
+hidden and the anonymous path remains available.
 
 ## API Surface
 
-HTTP:
+Core:
 
 - `GET /api/health`
 - `GET /api/config`
+- `POST /api/text-translation`
+
+Image operations:
+
 - `POST /api/image-translation`
+- `GET /api/image-translation/requests/{operation_id}`
+- `GET /api/image-translation/requests/{operation_id}/artifact`
+- `POST /api/image-translation/requests/{operation_id}/cancel`
 - `POST /api/image-translation/{source_request_id}/retranslate`
 - `POST /api/image-translation/{source_request_id}/rerender`
+
+PDF operations:
+
+- `POST /api/pdf-translation/requests`
+- `GET /api/pdf-translation/requests/{request_id}`
+- `GET /api/pdf-translation/requests/{request_id}/artifacts/{artifact_name}`
+- `POST /api/pdf-translation/requests/{request_id}/cancel`
+- `POST /api/pdf-translation/requests/{source_request_id}/rerender`
+
+Identity and usage:
+
+- `GET /api/me`
+- `GET /api/entitlements`
+- `GET /api/usage`
+
+Voice and voice library:
+
+- `POST /api/sessions`
+- `GET /api/sessions/{session_id}/tts/{artifact_id}`
+- `GET /api/sessions/{session_id}/transcript.pc`
 - `POST /api/voice-library/stable`
 - `POST /api/voice-library/stable/{language}/{gender}/keep-pending`
 - `POST /api/voice-library/stable/{language}/{gender}/discard-pending`
 - `GET /api/voice-library/stable/{language}/{gender}/audio.wav`
 - `GET /api/voice-library/stable/{language}/{gender}/audio.pending.wav`
-- `POST /api/sessions`
-- `GET /api/sessions/{session_id}/tts/{artifact_id}`
-- `GET /api/sessions/{session_id}/transcript.pc`
 
 WebSocket:
 
 - `/ws/sessions/{session_id}`
 
-Static frontend:
-
-- `/`
-
-The WebSocket event schema is versioned with
+The WebSocket event schema uses
 `protocol_version = "asr_translate_tts_v1"`.
 
 ## Configuration
 
-Defaults live in `config/settings.json`. Machine-local values belong in ignored
-`config/local.json`.
+Defaults live in `config/settings.json`. Put machine-local URLs, credentials,
+and auth-provider settings in ignored `config/local.json`.
 
-Important settings:
+Important configuration groups:
 
-- `service.root_path`: optional mount prefix for reverse-proxy deployments
-- `asr_pool.base_url` / `asr_pool.token`: ASR pool connection
-- `tts_pool.base_url` / `tts_pool.timeout_s`: TTS pool connection
-- `image_translation.base_url`: translation-services base URL
-- `image_translation.request_timeout_s`: image request timeout
-- `image_translation.poll_interval_s`: image request polling interval
-- `live.session_ttl_s`: in-memory session lifetime
-- `live.audio.*`: browser audio format expected by the backend
-- `live.asr.*`: ASR backend and decode parameters
-- `live.rolling.*`: ASR dispatch, commit, VAD, and speech-gate tuning
-- `translation.model`: LLM pool model id
-- `translation.request_format`: translation payload format
-- `translation.source_language` / `translation.target_language`: default setup
-  languages
-- `translation.preview.*`: optional translation preview thresholds
-- `tts.enabled`: enables or disables TTS
-- `tts.backend`: selected TTS engine exposed by `tts-pool`
-- `tts.voxcpm2.ultimate_cloning.*`: reference-audio source behavior for
-  VoxCPM-family backends
-- `config/voice_reference_texts/*.txt`: source text used when generating stable
-  voice-library samples
+- `service.*` — reverse-proxy mount path
+- `saas.auth.*` — optional external JWT and browser sign-in configuration
+- `saas.plans.*` / `saas.usage_metrics` — entitlements and usage limits
+- `asr_pool.*` — speech-recognition service
+- `tts_pool.*` — TTS control API, gRPC target, and message limits
+- `translation_services.*` — typed-text translation client
+- `image_translation.*` — image service URL, polling, and reconciliation
+- `pdf_translation.*` — PDF service URL and reconciliation
+- `upstream_http.*` — shared HTTP connection limits
+- `text_translation.*` — quality profile and short-lived success cache
+- `live.*` — session lifetime, audio, ASR, VAD, and turn timing
+- `translation.*` — live translation defaults
+- `tts.*` — selected speech backend and reference-audio behavior
 
-Example `config/local.json`:
+Minimal local service overrides can look like this:
 
 ```json
 {
-  "live": {
-    "rolling": {
-      "vad": {
-        "enabled": true,
-        "venv": "/path/to/vad-venv"
-      }
-    }
+  "asr_pool": {
+    "base_url": "http://127.0.0.1:8090"
   },
   "tts_pool": {
-    "base_url": "http://127.0.0.1:8020",
-    "timeout_s": 300
+    "control_base_url": "http://127.0.0.1:8020",
+    "grpc_target": "127.0.0.1:8021"
+  },
+  "translation_services": {
+    "base_url": "http://127.0.0.1:8030"
   },
   "image_translation": {
     "base_url": "http://127.0.0.1:8030"
   },
-  "tts": {
-    "enabled": true,
-    "backend": "nanovllm_voxcpm"
+  "pdf_translation": {
+    "base_url": "http://127.0.0.1:8030"
   }
 }
 ```
@@ -221,7 +279,7 @@ python3 -m venv .venv
 ./.venv/bin/python -m pip install -e .
 ```
 
-Install the local component packages used by the app:
+Install the local component packages used by live voice translation:
 
 ```bash
 ./.venv/bin/python -m pip install -e ../asr-pool-api
@@ -235,30 +293,37 @@ Start the app:
 ./.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8003
 ```
 
-Open:
+Open `http://127.0.0.1:8003/`. Add `?desktop` or `?mobile` to force an
+interface.
 
-```text
-http://127.0.0.1:8003/
-```
-
-ASR, translation, TTS, and image-translation workflows require their component
-services to be running and reachable from the configured URLs.
+Only the workflows whose upstream services are running will be functional.
 
 ## Tests
 
-Run the app tests:
+Run the backend and frontend suites:
 
 ```bash
 ./.venv/bin/python -m unittest discover -s tests
+node --test tests/js/
 ```
 
-Syntax and patch checks commonly used during development:
+Syntax and patch checks used during development:
 
 ```bash
 node --input-type=module --check < static/src/app.js
 ./.venv/bin/python -m py_compile app/main.py
 git diff --check
 ```
+
+## Build And Deploy
+
+There is no JavaScript build step. FastAPI serves the checked-in HTML, CSS,
+JavaScript modules, icons, and manifest directly.
+
+Run one application worker. The current per-principal rate and concurrency
+controllers are process-local; they have not yet moved to a shared store.
+Public deployments should place the app behind a TLS reverse proxy and keep
+model services on trusted network interfaces.
 
 ## Acknowledgments
 

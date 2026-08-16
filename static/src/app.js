@@ -161,7 +161,8 @@ async function init() {
   els.translateNowButton.addEventListener('click', translateNow);
   els.speakNowButton.addEventListener('click', speakNow);
   els.swapButton.addEventListener('click', swapDirection);
-  els.settingsButton.addEventListener('click', openSettingsSheet);
+  els.settingsButton.addEventListener('click', () => openSettingsSheet());
+  els.accountButton.addEventListener('click', () => openSettingsSheet('account'));
   els.titlebarBackButton.addEventListener('click', () => {
     if (finishImageTranslation()) return;
     finishSession();
@@ -175,7 +176,6 @@ async function init() {
   els.settingsVoiceLibraryNav.addEventListener('click', () => navigateSettingsPage('voice-library'));
   els.settingsImageRenderNav.addEventListener('click', () => navigateSettingsPage('image-render'));
   els.settingsAppearanceNav.addEventListener('click', () => navigateSettingsPage('appearance'));
-  els.settingsAccountNav.addEventListener('click', () => navigateSettingsPage('account'));
   bindImageRenderControls();
   bindAppearanceSettings();
   els.voiceLibraryControls.addEventListener('change', handleVoiceLibraryChange);
@@ -213,7 +213,7 @@ async function init() {
     sheet: els.settingsSheet.querySelector('.bottom-sheet'),
     scrollContainer: els.settingsSheet.querySelector('.settings-views'),
     onClose: closeSettingsSheet,
-    isAllowed: () => state.settingsPage === 'home',
+    isAllowed: () => state.settingsPage === state.settingsRootPage,
   });
   if (history.state?.view === 'live_recording' || history.state?.view === 'image_translation') {
     history.replaceState({}, '');

@@ -98,6 +98,15 @@ class EntitlementTests(unittest.TestCase):
         self.assertGreater(translation["characters_per_period"], 0)
         self.assertEqual(translation["period"], "month")
 
+    def test_shipped_anonymous_plan_has_configurable_pdf_preview(self) -> None:
+        settings = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
+        pdf = settings["saas"]["plans"]["anonymous"]["pdf_translation"]
+        self.assertTrue(pdf["enabled"])
+        self.assertEqual(pdf["pages_per_period"], 6)
+        self.assertEqual(pdf["period"], "month")
+        self.assertEqual(pdf["max_pages_per_job"], 2)
+        self.assertTrue(pdf["preview_first_pages"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,15 +1,15 @@
 // Language picker for the desktop translation views. The list itself is the
 // app's single source of truth (static/src/domain/languages.js, shared with
-// the mobile app). Flag emoji follows the LLM Workbench pattern.
+// the mobile app).
 //
 // UI-wise this is the desktop adaptation of the mobile language bottom sheet
 // (search field, "Recent" section, A-Z group headers, check on the active
-// language), presented as a centered modal instead of a sheet. It replaces
+// language), presented as an anchored popover instead of a sheet. It replaces
 // the native <select>: Chromium renders that popup with fixed theme colors,
 // which made the MRU divider unthemable. The picker exposes just enough of
 // the <select> API for the views: host.value and 'change' events.
 
-import { languages, flagForLanguage, normalizeLanguageName } from '../../../src/domain/languages.js';
+import { languages, normalizeLanguageName } from '../../../src/domain/languages.js';
 import { iconMarkup } from './icons.js';
 
 const MRU_STORAGE_KEY = 'omni-translate.desktop.language-mru';
@@ -38,9 +38,11 @@ export function recordLanguageMru(name) {
   }
 }
 
-function labelFor(name) {
-  const flag = flagForLanguage(name);
-  return flag ? `${flag} ${name}` : name;
+function renderTrigger(state) {
+  const label = document.createElement('span');
+  label.textContent = String(state.value || '');
+  state.host.replaceChildren(label);
+  state.host.insertAdjacentHTML('beforeend', iconMarkup('chevron-down', 'language-trigger-chevron'));
 }
 
 function sectionHeader(label) {
@@ -57,7 +59,10 @@ function languageRow(name, currentName, onPick) {
   row.className = `language-option-row${isActive ? ' is-active' : ''}`;
   row.setAttribute('role', 'option');
   row.setAttribute('aria-selected', isActive ? 'true' : 'false');
-  row.innerHTML = `<span>${labelFor(name)}</span>${isActive ? iconMarkup('check', 'language-option-check') : ''}`;
+  const label = document.createElement('span');
+  label.textContent = String(name || '');
+  row.appendChild(label);
+  if (isActive) row.insertAdjacentHTML('beforeend', iconMarkup('check', 'language-option-check'));
   row.addEventListener('click', () => onPick(name));
   return row;
 }
@@ -99,19 +104,25 @@ function openDialog(state) {
   const scrim = document.createElement('div');
   scrim.className = 'language-dialog-scrim';
   scrim.innerHTML = `
-    <div class="language-dialog" role="dialog" aria-modal="true" aria-label="Target language">
+    <div class="language-dialog" role="dialog" aria-modal="true">
       <div class="language-dialog-header">
-        <span class="language-dialog-title">Target language</span>
+        <span class="language-dialog-title"></span>
         <button type="button" class="icon-square-btn language-dialog-close" aria-label="Close">${iconMarkup('x')}</button>
       </div>
-      <input type="text" class="language-dialog-search" placeholder="Search languages" aria-label="Search languages">
+      <label class="language-dialog-search-wrap">
+        ${iconMarkup('search')}
+        <input type="search" class="language-dialog-search" placeholder="Search languages" aria-label="Search languages" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false">
+      </label>
       <div class="language-dialog-list" role="listbox"></div>
     </div>`;
   document.body.appendChild(scrim);
   state.dialog = scrim;
+  state.host.setAttribute('aria-expanded', 'true');
 
   // Anchor the dialog to the trigger, like a popover.
   const dialog = scrim.querySelector('.language-dialog');
+  dialog.setAttribute('aria-label', state.title);
+  scrim.querySelector('.language-dialog-title').textContent = state.title;
   const rect = state.host.getBoundingClientRect();
   dialog.style.top = `${rect.bottom + 6}px`;
   dialog.style.left = `${Math.min(rect.left, window.innerWidth - dialog.offsetWidth - 16)}px`;
@@ -126,7 +137,7 @@ function openDialog(state) {
   };
   const pick = (name) => {
     state.value = name;
-    state.host.textContent = labelFor(name);
+    renderTrigger(state);
     closeDialog(state);
     state.host.dispatchEvent(new Event('change', { bubbles: true }));
   };
@@ -147,6 +158,7 @@ function closeDialog(state) {
   if (!state.dialog) return;
   state.dialog.remove();
   state.dialog = null;
+  state.host.setAttribute('aria-expanded', 'false');
   document.removeEventListener('keydown', state.onKeyDown, true);
   state.host.focus();
 }
@@ -160,11 +172,14 @@ export function populateLanguageSelect(host, selectedName) {
   if (!state) {
     host.classList.add('language-trigger');
     host.setAttribute('aria-haspopup', 'dialog');
-    state = { host, value: normalized, dialog: null, onKeyDown: null };
+    host.setAttribute('aria-expanded', 'false');
+    const rawTitle = String(host.getAttribute('aria-label') || 'Language').replace(/^Choose\s+/i, '');
+    const title = rawTitle.charAt(0).toUpperCase() + rawTitle.slice(1);
+    state = { host, value: normalized, title, dialog: null, onKeyDown: null };
     Object.defineProperty(host, 'value', { get: () => states.get(host).value });
     host.addEventListener('click', () => openDialog(state));
     states.set(host, state);
   }
   state.value = normalized;
-  host.textContent = labelFor(normalized);
+  renderTrigger(state);
 }

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import base64
 import copy
 import io
 import json
@@ -21,6 +20,7 @@ from app.config import get_float
 from app.config import get_setting
 from app.config import get_str
 from app.config import rooted_path
+from app.upstreams.tts_pool.client import synthesize_tts
 from app.upstreams.http import get_upstream_http_client
 
 
@@ -243,6 +243,7 @@ class TTSBridge:
         session_id: str,
         text: str,
         language: str,
+        fairness_key: str,
         settings: dict[str, Any] | None = None,
         reference_wav_path: str | None = None,
         reference_prompt_text: str | None = None,
@@ -265,23 +266,20 @@ class TTSBridge:
             source_audio_duration_ms=source_audio_duration_ms,
         )
         request_started = time.perf_counter()
-        response = _post_json(
-            f"{_tts_pool_base_url()}/v1/responses",
+        response = synthesize_tts(
             request_payload,
+            fairness_key=fairness_key,
             timeout_s=_tts_pool_timeout_s(),
         )
         request_wall_ms = (time.perf_counter() - request_started) * 1000.0
-        audio_payload = response.get("audio")
-        if not isinstance(audio_payload, dict):
-            raise ValueError("tts_pool_response_missing_audio")
-        audio_bytes = _decode_audio_payload(audio_payload)
+        audio_bytes = response.wav_bytes()
 
         write_started = time.perf_counter()
         path.write_bytes(audio_bytes)
         artifact_write_ms = (time.perf_counter() - write_started) * 1000.0
         total_wall_ms = (time.perf_counter() - call_started) * 1000.0
 
-        metrics = _numeric_dict(response.get("metrics"))
+        metrics = _numeric_dict(response.metrics)
         metrics.update(request_metrics)
         metrics.update(
             {
@@ -289,23 +287,23 @@ class TTSBridge:
                 "tts_artifact_write_ms": artifact_write_ms,
                 "tts_total_wall_ms": total_wall_ms,
                 "input_chars": float(len(safe_text)),
-                "output_audio_seconds": float(audio_payload.get("duration_ms") or 0) / 1000.0,
+                "output_audio_seconds": float(response.duration_ms) / 1000.0,
             }
         )
-        metadata = dict(response.get("metadata") or {})
+        metadata = dict(response.metadata)
         metadata.update(request_metadata)
         metadata.update(
             {
-                "tts_pool_response_id": str(response.get("id") or ""),
-                "tts_pool_model": str(response.get("model") or request_payload["model"]),
+                "tts_pool_response_id": response.response_id,
+                "tts_pool_model": response.model or str(request_payload["model"]),
             }
         )
         payload = {
             "artifact_id": artifact_id,
             "url": rooted_path(f"/api/sessions/{_safe_token(session_id)}/tts/{artifact_id}"),
-            "mime_type": str(audio_payload.get("mime_type") or "audio/wav"),
-            "sample_rate_hz": audio_payload.get("sample_rate_hz"),
-            "duration_ms": audio_payload.get("duration_ms"),
+            "mime_type": "audio/wav",
+            "sample_rate_hz": response.sample_rate_hz,
+            "duration_ms": response.duration_ms,
             "metrics": metrics,
             "metadata": metadata,
             "chars": len(safe_text),
@@ -443,8 +441,6 @@ def _tts_pool_request_payload(
         "input": text,
         "language": str(language or ""),
         "voice": voice,
-        "format": {"type": "wav"},
-        "stream": False,
     }, request_metrics, request_metadata
 
 
@@ -586,7 +582,7 @@ def _reference_audio_payload(
     prepare_wall_ms = (time.perf_counter() - started) * 1000.0
     reference_audio: dict[str, Any] = {
         "mime_type": "audio/wav",
-        "data_base64": base64.b64encode(audio_bytes).decode("ascii"),
+        "data": audio_bytes,
         "max_duration_s": float(effective_max_duration_s),
     }
     if safe_prompt_text:
@@ -653,29 +649,6 @@ def _copy_wav_tail_to_bytes(source_path: Path, *, max_duration_s: float) -> tupl
     return buffer.getvalue(), int((keep_frames / framerate) * 1000)
 
 
-def _post_json(url: str, payload: dict[str, Any], *, timeout_s: float) -> dict[str, Any]:
-    data = json.dumps(payload, ensure_ascii=True).encode("utf-8")
-    try:
-        response = get_upstream_http_client().post(
-            url,
-            content=data,
-            headers={
-                "accept": "application/json",
-                "content-type": "application/json",
-            },
-            timeout=timeout_s,
-        )
-    except httpx.RequestError as exc:
-        raise RuntimeError(f"tts_pool_unreachable: {exc}") from exc
-    if response.is_error:
-        detail = _http_error_detail(response)
-        raise RuntimeError(f"tts_pool_http_{response.status_code}: {detail}")
-    payload = response.json()
-    if not isinstance(payload, dict):
-        raise ValueError("tts_pool_response_must_be_object")
-    return payload
-
-
 def _get_json(url: str, *, timeout_s: float) -> dict[str, Any]:
     try:
         response = get_upstream_http_client().get(
@@ -711,13 +684,6 @@ def _http_error_detail(response: httpx.Response) -> str:
     return body.strip() or f"HTTP {response.status_code}"
 
 
-def _decode_audio_payload(audio_payload: dict[str, Any]) -> bytes:
-    data = str(audio_payload.get("data_base64") or "")
-    if not data:
-        raise ValueError("tts_pool_response_missing_audio_data")
-    return base64.b64decode(data, validate=True)
-
-
 def _numeric_dict(value: Any) -> dict[str, float]:
     if not isinstance(value, dict):
         return {}
@@ -732,8 +698,11 @@ def _numeric_dict(value: Any) -> dict[str, float]:
     return metrics
 
 
-def _tts_pool_base_url() -> str:
-    return (get_str("tts_pool.base_url", "http://127.0.0.1:8020").strip() or "http://127.0.0.1:8020").rstrip("/")
+def _tts_pool_control_base_url() -> str:
+    return (
+        get_str("tts_pool.control_base_url", "http://127.0.0.1:8020").strip()
+        or "http://127.0.0.1:8020"
+    ).rstrip("/")
 
 
 def _tts_pool_timeout_s() -> float:
@@ -747,7 +716,7 @@ def _tts_pool_models_timeout_s() -> float:
 def _tts_pool_loaded_models() -> set[str]:
     try:
         payload = _get_json(
-            f"{_tts_pool_base_url()}/v1/models",
+            f"{_tts_pool_control_base_url()}/v1/models",
             timeout_s=_tts_pool_models_timeout_s(),
         )
     except (RuntimeError, ValueError, json.JSONDecodeError) as exc:

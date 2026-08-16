@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from typing import Any, Mapping
 from urllib.parse import quote
 
 import httpx
@@ -40,6 +41,7 @@ def submit_pdf(
     content_type: str,
     target_language: str,
     operation_id: str,
+    render_options: Mapping[str, Any],
 ) -> dict:
     """Submit ``document_bytes`` for translation and return the lifecycle envelope.
 
@@ -61,9 +63,30 @@ def submit_pdf(
             "priority": "normal",
             "source_lang_code": "auto",
             "target_lang_code": target_code,
+            **dict(render_options),
         }
     )
     return _submit_multipart(request_json, document_bytes, filename or "document.pdf", content_type or "application/pdf")
+
+
+def rerender_pdf_request(
+    source_request_id: str,
+    *,
+    operation_id: str,
+    render_options: Mapping[str, Any],
+) -> dict:
+    """Rerender one owned completed PDF from its cached translations."""
+    safe_id = quote(str(source_request_id or "").strip(), safe="")
+    if not safe_id:
+        raise PdfTranslationError("source request_id is required", status_code=400)
+    payload = {"request_id": str(operation_id), **dict(render_options)}
+    return _read_json(
+        "POST",
+        f"{_base_url()}/v1/requests/{safe_id}/rerender",
+        content=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json", "Accept": "application/json"},
+        timeout=_submit_timeout_s(),
+    )
 
 
 def get_pdf_request(request_id: str) -> dict:

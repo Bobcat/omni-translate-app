@@ -5,13 +5,14 @@
 // orchestration). App.js registers the handler at init.
 
 import { els } from '../els.js';
-import { languages, flagForLanguage } from '../domain/languages.js';
+import { languages } from '../domain/languages.js';
 import { getRecentLanguages, pushRecentLanguage } from '../domain/storage.js';
 import { currentLane } from '../domain/lanes.js';
 
 let _languageSheetSide = 'source';
 let _skipLanguagePopstate = false;
 let _onLanguagePick = () => {};
+const _languagesByName = [...languages].sort((a, b) => a.name.localeCompare(b.name, 'en'));
 
 export function setLanguagePickHandler(handler) {
   _onLanguagePick = typeof handler === 'function' ? handler : () => {};
@@ -89,7 +90,7 @@ function renderLanguageSheetList(currentLang, query) {
   const q = query.toLowerCase();
 
   if (q) {
-    const filtered = languages.filter((l) => l.name.toLowerCase().includes(q));
+    const filtered = _languagesByName.filter((l) => l.name.toLowerCase().includes(q));
     if (!filtered.length) {
       const empty = document.createElement('div');
       empty.className = 'language-option-empty';
@@ -108,7 +109,7 @@ function renderLanguageSheetList(currentLang, query) {
       }
     }
     const groups = {};
-    for (const item of languages) {
+    for (const item of _languagesByName) {
       const letter = item.name[0].toUpperCase();
       (groups[letter] = groups[letter] || []).push(item);
     }
@@ -133,7 +134,14 @@ function _languageRow(item, currentLang) {
   const row = document.createElement('button');
   row.className = `language-option-row${isActive ? ' is-active' : ''}`;
   row.type = 'button';
-  row.innerHTML = `<span>${flagForLanguage(item.name)} ${item.name}</span>${isActive ? '<svg class="language-option-check" viewBox="0 0 24 24" aria-hidden="true"><polyline points="20 6 9 17 4 12"></polyline></svg>' : ''}`;
+  row.setAttribute('role', 'option');
+  row.setAttribute('aria-selected', isActive ? 'true' : 'false');
+  const label = document.createElement('span');
+  label.textContent = item.name;
+  row.appendChild(label);
+  if (isActive) {
+    row.insertAdjacentHTML('beforeend', '<svg class="language-option-check" viewBox="0 0 24 24" aria-hidden="true"><polyline points="20 6 9 17 4 12"></polyline></svg>');
+  }
   row.addEventListener('click', () => {
     pushRecentLanguage(item.name);
     _onLanguagePick(_languageSheetSide, item.name);

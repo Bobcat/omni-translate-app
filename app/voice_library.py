@@ -7,13 +7,11 @@ from pathlib import Path
 from typing import Any
 
 from app.config import REPO_ROOT
+from app.upstreams.tts_pool.client import synthesize_tts
 from app.tts_bridge import (
     LANGUAGE_BCP47_BY_NAME,
     _bcp47_tag_for_language_name,
-    _decode_audio_payload,
     _is_voxcpm_family_backend,
-    _post_json,
-    _tts_pool_base_url,
     _tts_pool_timeout_s,
 )
 
@@ -149,7 +147,13 @@ def _reference_text_for_tag(tag: str) -> str:
     return text
 
 
-def generate_stable_sample(language_tag: str, gender: str, engine: str) -> dict[str, Any]:
+def generate_stable_sample(
+    language_tag: str,
+    gender: str,
+    engine: str,
+    *,
+    fairness_key: str,
+) -> dict[str, Any]:
     tag = str(language_tag or "").strip().lower()
     if tag not in _KNOWN_TAGS:
         raise ValueError("unsupported_language_tag")
@@ -169,18 +173,13 @@ def generate_stable_sample(language_tag: str, gender: str, engine: str) -> dict[
         "input": text,
         "language": language_name,
         "voice": {"instructions": instructions},
-        "format": {"type": "wav"},
-        "stream": False,
     }
-    response = _post_json(
-        f"{_tts_pool_base_url()}/v1/responses",
+    response = synthesize_tts(
         request_payload,
+        fairness_key=fairness_key,
         timeout_s=_tts_pool_timeout_s(),
     )
-    audio_payload = response.get("audio")
-    if not isinstance(audio_payload, dict):
-        raise ValueError("tts_pool_response_missing_audio")
-    audio_bytes = _decode_audio_payload(audio_payload)
+    audio_bytes = response.wav_bytes()
     sample_dir = (STABLE_VOICE_LIBRARY_ROOT / tag / gender_key).resolve()
     sample_dir.mkdir(parents=True, exist_ok=True)
     # Two-slot model: the new generation goes into audio.pending.wav

@@ -1,7 +1,7 @@
 // Voice session state machine for the desktop view. Trimmed port of the
 // mobile session flow (static/src/session/lifecycle.js + messages.js +
 // audio-queue.js): same protocol against the same backend, minus the
-// mobile-only concerns (tuning/live-settings, mic auto-off, audio cues,
+// mobile-only concerns (tuning/live-settings, mic auto-off,
 // PC export, history stack). Live/TTS settings are left at the server
 // defaults — the desktop app has no tuning UI.
 //
@@ -12,6 +12,7 @@
 
 import { SessionSocket } from '../../../../src/api-client.js';
 import { AudioCapture } from '../../../../src/shared/audio-capture.js';
+import { playMicOffCue, playMicOnCue } from '../../../../src/shared/audio-cue.js';
 import { AudioQueue } from '../../../../src/shared/audio-playback.js';
 import { guessSetupLanguages, normalizeLanguageName } from '../../../../src/domain/languages.js';
 import { loadSetupLanguages, persistSetupLanguages } from '../../../../src/domain/storage.js';
@@ -104,7 +105,7 @@ export function visibleText(committed, preview) {
 
 // `resumeButton` is owned by the view: the AudioQueue unhides it when
 // autoplay is blocked so the user can start playback manually.
-export function createVoiceSession({ onChange, resumeButton }) {
+export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
   const initialLanguages = loadSetupLanguages() || guessSetupLanguages();
 
   const state = {
@@ -244,6 +245,8 @@ export function createVoiceSession({ onChange, resumeButton }) {
       state.socket.startListening();
       state.capture = capture;
       state.micState = MIC_STATES.LISTENING;
+      onMicLevel?.(0, true);
+      safePlayMicOnCue();
       state.live = true;
       publishViewBusy('voice', true);
       state.status = 'listening';
@@ -282,6 +285,7 @@ export function createVoiceSession({ onChange, resumeButton }) {
     state.capture?.stop();
     state.capture = null;
     state.micState = MIC_STATES.OFF;
+    onMicLevel?.(0, false);
     resetToSetup();
     emit();
   }
@@ -290,6 +294,7 @@ export function createVoiceSession({ onChange, resumeButton }) {
     state.capture?.stop();
     state.capture = null;
     state.micState = MIC_STATES.OFF;
+    onMicLevel?.(0, false);
     state.captureMutedForPlayback = false;
     state.speakInflightFilter = null;
     hideVadHint();
@@ -303,6 +308,7 @@ export function createVoiceSession({ onChange, resumeButton }) {
   function resetToSetup() {
     state.live = false;
     state.micState = MIC_STATES.OFF;
+    onMicLevel?.(0, false);
     resetTranscript();
     publishViewBusy('voice', false);
     if (state.status !== 'error') state.status = 'idle';
@@ -341,12 +347,15 @@ export function createVoiceSession({ onChange, resumeButton }) {
       state.capture = capture;
       state.socket.startListening();
       state.micState = MIC_STATES.LISTENING;
+      onMicLevel?.(0, true);
+      safePlayMicOnCue();
       state.captureMutedForPlayback = false;
       state.status = 'listening';
     } catch (error) {
       state.capture?.stop();
       state.capture = null;
       state.micState = MIC_STATES.OFF;
+      onMicLevel?.(0, false);
       state.status = 'error';
       state.statusMessage = error?.message || 'Microphone unavailable.';
     } finally {
@@ -361,6 +370,8 @@ export function createVoiceSession({ onChange, resumeButton }) {
     state.capture?.stop();
     state.capture = null;
     state.micState = MIC_STATES.OFF;
+    onMicLevel?.(0, false);
+    safePlayMicOffCue();
     if (state.currentTurn.canTranslateNow) {
       state.socket?.translateNow();
     }
@@ -381,6 +392,7 @@ export function createVoiceSession({ onChange, resumeButton }) {
       onChunk: (buffer) => {
         if (shouldSendMicrophoneAudio()) state.socket?.sendAudio(buffer);
       },
+      onLevel: (level) => onMicLevel?.(level, state.micState === MIC_STATES.LISTENING),
     });
   }
 
@@ -716,4 +728,20 @@ export function createVoiceSession({ onChange, resumeButton }) {
     swap,
     setLanguage,
   };
+}
+
+function safePlayMicOnCue() {
+  try {
+    return playMicOnCue();
+  } catch {
+    return false;
+  }
+}
+
+function safePlayMicOffCue() {
+  try {
+    return playMicOffCue();
+  } catch {
+    return false;
+  }
 }

@@ -55,6 +55,7 @@ export const state = {
   viewMode: 'turn',
   captureMutedForPlayback: false,
   settingsPage: 'home',
+  settingsRootPage: 'home',
   vadHintTimer: null,
   audioSettings: {
     preGain: DEFAULT_AUDIO_SETTINGS.preGain,

@@ -1,19 +1,43 @@
-// Settings view — UI shell only. Lean user-facing groups (microphone, speech)
-// with placeholder controls; wiring and the real option set come later. The
-// Account group at the top is live: it is the desktop sign-in surface. Auth
-// init may not have settled when this view is created (a reload landing on
-// #settings runs the factory ahead of the /api/config response), so the
-// group starts hidden and the first auth state reveals it — on a deployment
-// without an auth provider no state ever arrives and it stays hidden.
+// Desktop settings. Appearance is live and local; microphone and speech stay
+// as the existing UI-only previews until their backend wiring is requested.
 
-import { isEnabled, onAuthChange, signOut } from '../../auth.js';
-import { getMe } from '../../shared/api.js';
-import { createSignInCard } from '../../shared/signin-card.js';
+import {
+  getDesktopAppearance,
+  setDesktopAppearance,
+} from '../../shared/appearance.js';
+
+function renderAppearance(container) {
+  const current = getDesktopAppearance();
+  for (const input of container.querySelectorAll('input[name="desktopAppearanceTheme"]')) {
+    input.checked = input.value === current.theme;
+  }
+  for (const input of container.querySelectorAll('input[name="desktopAppearancePalette"]')) {
+    input.checked = input.value === current.palette;
+  }
+}
 
 export function createSettingsView() {
   const container = document.createElement('div');
   container.className = 'view settings-view';
   container.innerHTML = `
+    <section class="settings-group appearance-settings" aria-labelledby="appearanceSettingsTitle">
+      <h3 id="appearanceSettingsTitle">Appearance</h3>
+      <div class="appearance-setting">
+        <span class="appearance-setting-label">Theme</span>
+        <div class="appearance-segmented" role="radiogroup" aria-label="Theme">
+          <label><input type="radio" name="desktopAppearanceTheme" value="system"><span>System</span></label>
+          <label><input type="radio" name="desktopAppearanceTheme" value="light"><span>Light</span></label>
+          <label><input type="radio" name="desktopAppearanceTheme" value="dark"><span>Dark</span></label>
+        </div>
+      </div>
+      <div class="appearance-setting">
+        <span class="appearance-setting-label">Palette</span>
+        <div class="appearance-segmented" role="radiogroup" aria-label="Palette">
+          <label><input type="radio" name="desktopAppearancePalette" value="warm"><span>Warm</span></label>
+          <label><input type="radio" name="desktopAppearancePalette" value="cool"><span>Cool</span></label>
+        </div>
+      </div>
+    </section>
     <section class="settings-group" aria-label="Microphone">
       <h3>Microphone</h3>
       <label class="setting-row">
@@ -43,76 +67,19 @@ export function createSettingsView() {
         </select>
       </label>
     </section>
-    <p class="preview-note">UI preview — not wired to the backend yet.</p>
+    <p class="preview-note">Microphone and speech settings are UI previews and are not wired yet.</p>
   `;
-
-  const accountGroup = document.createElement('section');
-  accountGroup.className = 'settings-group';
-  accountGroup.setAttribute('aria-label', 'Account');
-  accountGroup.hidden = true;
-  container.prepend(accountGroup);
-  initAccountGroup(accountGroup);
-
-  return container;
-}
-
-// Signed out: the sign-in card. Signed in: email, plan label and a sign-out
-// button. Revealed and re-rendered on every auth-state change.
-function initAccountGroup(accountGroup) {
-  let planFetchToken = 0;
-
-  onAuthChange((authState) => {
-    accountGroup.hidden = !isEnabled();
-    if (!accountGroup.hidden) render(authState);
-  });
-
-  function render(authState) {
-    accountGroup.replaceChildren();
-    if (!authState.signedIn) {
-      accountGroup.appendChild(createSignInCard('You are currently not signed in.'));
+  renderAppearance(container);
+  container.addEventListener('change', (event) => {
+    const input = event.target;
+    if (input.name === 'desktopAppearanceTheme') {
+      setDesktopAppearance({ theme: input.value });
+    } else if (input.name === 'desktopAppearancePalette') {
+      setDesktopAppearance({ palette: input.value });
+    } else {
       return;
     }
-    const title = document.createElement('h3');
-    title.textContent = 'Account';
-    const emailRow = document.createElement('div');
-    emailRow.className = 'setting-row';
-    const emailText = document.createElement('span');
-    emailText.textContent = authState.email;
-    emailRow.appendChild(emailText);
-    const planRow = document.createElement('div');
-    planRow.className = 'setting-row';
-    const planCaption = document.createElement('span');
-    planCaption.textContent = 'Plan';
-    const planValue = document.createElement('span');
-    planRow.append(planCaption, planValue);
-    const signOutButton = document.createElement('button');
-    signOutButton.type = 'button';
-    signOutButton.className = 'link-btn';
-    signOutButton.textContent = 'Sign out';
-    signOutButton.addEventListener('click', async () => {
-      signOutButton.disabled = true;
-      try {
-        await signOut();
-      } catch (err) {
-        console.warn('Sign out failed:', err);
-        signOutButton.textContent = 'Could not sign out — retry';
-        signOutButton.disabled = false;
-      }
-    });
-    accountGroup.append(title, emailRow, planRow, signOutButton);
-    fillPlanLabel(planValue);
-  }
-
-  // The plan comes from /api/me (called with the bearer token). The token
-  // guard drops a stale response that lands after sign-out.
-  async function fillPlanLabel(planValue) {
-    const token = ++planFetchToken;
-    try {
-      const me = await getMe();
-      if (token !== planFetchToken) return;
-      planValue.textContent = me?.principal?.plan === 'free' ? 'Free plan' : 'Anonymous';
-    } catch {
-      // A failed fetch leaves the plan blank rather than showing a wrong label.
-    }
-  }
+    renderAppearance(container);
+  });
+  return container;
 }

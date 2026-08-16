@@ -57,6 +57,47 @@ test('an active recovered operation remains stored', async () => {
   assert.equal(recovery.load('user-a').operationId, OPERATION_A);
 });
 
+test('preview page metadata survives recovery without storing PDF bytes', () => {
+  const storage = memoryStorage();
+  const recovery = createPdfOperationRecovery({ storage, getRequest: async () => ({}) });
+
+  recovery.remember('anonymous', {
+    operationId: OPERATION_A,
+    fileName: 'source.pdf',
+    targetLanguage: 'English',
+    startedAt: STARTED_AT,
+    pdfPreview: { sourcePages: 12, translatedPages: 2 },
+  });
+
+  assert.deepEqual(recovery.load('anonymous').pdfPreview, {
+    sourcePages: 12,
+    translatedPages: 2,
+  });
+  assert.equal([...storage.values.values()][0].includes('%PDF'), false);
+});
+
+test('render choices survive operation recovery', () => {
+  const storage = memoryStorage();
+  const recovery = createPdfOperationRecovery({ storage, getRequest: async () => ({}) });
+
+  recovery.remember('anonymous', {
+    operationId: OPERATION_A,
+    fileName: 'source.pdf',
+    targetLanguage: 'English',
+    startedAt: STARTED_AT,
+    renderOptions: {
+      page_layout_mode: 'fit',
+      page_scale: 0.82,
+      width_fit_mode: 'extend_to_margin',
+    },
+  });
+
+  const options = recovery.load('anonymous').renderOptions;
+  assert.equal(options.page_layout_mode, 'fit');
+  assert.equal(options.page_scale, 0.82);
+  assert.equal(options.width_fit_mode, 'extend_to_margin');
+});
+
 test('a failed recovered operation is removed', async () => {
   const storage = memoryStorage();
   const recovery = createPdfOperationRecovery({

@@ -5,6 +5,7 @@
 import { state } from '../state.js';
 import { els } from '../els.js';
 import { APP_MODES, MIC_STATES } from '../shared/constants.js';
+import { micHaloVisual } from '../shared/mic-level-visual.js';
 import { currentLane } from '../domain/lanes.js';
 import { updateActionButtons } from './action-buttons.js';
 
@@ -45,7 +46,7 @@ export function renderLifecycle() {
     'aria-label',
     imageTranslation ? 'Detected source language to target language' : 'Switch selected languages',
   );
-  els.languageDirectionButton.title = imageTranslation ? 'Auto detect to target language' : 'Switch selected languages';
+  els.languageDirectionButton.title = imageTranslation ? 'Detect language to target language' : 'Switch selected languages';
   els.turnModeButton?.classList.toggle('is-active', state.viewMode === 'turn');
   els.turnModeButton?.setAttribute('aria-pressed', state.viewMode === 'turn' ? 'true' : 'false');
   els.conversationModeButton?.classList.toggle('is-active', state.viewMode === 'conversation');
@@ -78,56 +79,26 @@ export function renderLanguageControls() {
   const isConnecting = state.status === 'connecting';
   const imageBusy = Boolean(state.imageTranslation.busy);
   const canRetranslateImage = imageTranslation && Boolean(state.imageTranslation.requestId) && !imageBusy;
-  els.sourceLanguagePillText.textContent = imageTranslation ? 'Auto detect' : lane.sourceLanguage;
+  els.sourceLanguagePillText.textContent = imageTranslation ? 'Detect language' : lane.sourceLanguage;
   els.targetLanguagePillText.textContent = lane.targetLanguage;
   els.sourceLanguagePill.hidden = !(setup || imageTranslation);
   els.targetLanguagePill.hidden = !(setup || imageTranslation);
   els.sourceLanguagePill.disabled = imageTranslation || isConnecting;
   els.targetLanguagePill.disabled = isConnecting || (imageTranslation && !canRetranslateImage);
-  els.sourceLanguagePill.setAttribute('aria-label', imageTranslation ? 'Source language: Auto detect' : `Source language: ${lane.sourceLanguage}`);
+  els.sourceLanguagePill.setAttribute('aria-label', imageTranslation ? 'Source language: Detect language' : `Source language: ${lane.sourceLanguage}`);
   els.targetLanguagePill.setAttribute('aria-label', `Target language: ${lane.targetLanguage}`);
 }
 
 export function renderMicLevel(value) {
-  const level = normalizeLevel(value);
+  const halo = micHaloVisual(value, { listening: state.micState === MIC_STATES.LISTENING });
+  const { level } = halo;
   state.audioSettings.inputLevel = level;
   const percent = Math.round(level * 100);
   els.micLevelFill.style.transform = `scaleX(${level.toFixed(3)})`;
   els.micLevel.setAttribute('aria-valuenow', String(percent));
   els.micLevel.classList.toggle('is-hot', level >= 0.9);
-  // Baseline halo when listening (always-visible mic-ready indicator); audio
-  // level adds on top so any sound is reflected even at quiet levels.
-  const BASELINE_HALO = 0.4;
-  const haloLevel = state.micState === MIC_STATES.LISTENING
-    ? Math.min(1, BASELINE_HALO + (1 - BASELINE_HALO) * levelToHaloUnit(level))
-    : 0;
-  const clipRisk = state.micState === MIC_STATES.LISTENING && level >= 0.95;
-  const hot = level >= 0.85;
-  els.micToggleButton.classList.toggle('is-clip-risk', clipRisk);
-  const r = clipRisk ? 185 : hot ? 245 : 59;
-  const g = clipRisk ? 28 : hot ? 158 : 130;
-  const b = clipRisk ? 28 : hot ? 11 : 246;
-  const alpha = haloLevel ? 0.08 + haloLevel * (clipRisk ? 0.42 : hot ? 0.36 : 0.3) : 0;
-  const scale = 1 + haloLevel * 0.55;
-  els.micToggleButton.style.setProperty('--mic-toggle-halo-scale', scale.toFixed(3));
-  els.micToggleButton.style.setProperty(
-    '--mic-toggle-halo-color',
-    haloLevel ? `rgba(${r}, ${g}, ${b}, ${alpha.toFixed(3)})` : 'transparent',
-  );
+  els.micToggleButton.classList.toggle('is-clip-risk', halo.clipRisk);
+  els.micToggleButton.style.setProperty('--mic-toggle-halo-scale', halo.scale);
+  els.micToggleButton.style.setProperty('--mic-toggle-halo-color', halo.color);
   els.micToggleButton.style.boxShadow = '';
-}
-
-function levelToHaloUnit(level) {
-  // Visual-only gain so the halo stays responsive on devices that hand back
-  // very low raw peaks (older iPhones, web audio with internal AGC).
-  const visual = Math.min(1, level * 8);
-  if (visual <= 0) return 0;
-  // dB mapping (-50 dB → 0, 0 dB → 1) spreads quiet→loud across the range.
-  const db = 20 * Math.log10(visual);
-  return Math.max(0, Math.min(1, (db + 50) / 50));
-}
-
-function normalizeLevel(value) {
-  const numeric = Number(value);
-  return Number.isFinite(numeric) ? Math.max(0, Math.min(1, numeric)) : 0;
 }

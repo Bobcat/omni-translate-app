@@ -1,5 +1,6 @@
 import { iconMarkup } from '../../shared/icons.js';
 import { populateLanguageSelect, recordLanguageMru } from '../../shared/languages.js';
+import { micHaloVisual } from '../../../../src/shared/mic-level-visual.js';
 import { createVoiceSession, visibleText } from './session.js';
 
 // Voice translation view, wired to the same backend session flow as the
@@ -13,24 +14,26 @@ export function createVoiceView() {
   const container = document.createElement('div');
   container.className = 'view voice-view';
   container.innerHTML = `
-    <div class="voice-languagebar">
-      <button type="button" class="language-pill" id="voiceSourceLanguage"></button>
-      <button type="button" class="language-swap" id="voiceSwapLanguages" aria-label="Swap direction" title="Swap direction">
-        ${iconMarkup('swap')}
-      </button>
-      <button type="button" class="language-pill" id="voiceTargetLanguage"></button>
-      <span class="vad-badge" id="voiceVadBadge" hidden>Speech detected</span>
-      <button type="button" class="icon-square-btn" id="voiceEndSession" aria-label="End session" title="End session" hidden>
-        ${iconMarkup('x')}
-      </button>
+    <div class="view-toolbar voice-languagebar">
+      <div class="language-pair">
+        <button type="button" id="voiceSourceLanguage" aria-label="Choose source language"></button>
+        <button type="button" class="language-swap" id="voiceSwapLanguages" aria-label="Swap direction" title="Swap direction">
+          ${iconMarkup('swap')}
+        </button>
+        <button type="button" id="voiceTargetLanguage" aria-label="Choose target language"></button>
+      </div>
+      <div class="toolbar-actions">
+        <span class="vad-badge" id="voiceVadBadge" hidden>Speech detected</span>
+        <button type="button" class="icon-square-btn" id="voiceEndSession" aria-label="End session" title="End session" hidden>
+          ${iconMarkup('x')}
+        </button>
+      </div>
     </div>
     <div class="voice-panes">
       <article class="pane source-pane">
-        <div class="pane-header" id="voicePaneSourceLabel"></div>
         <div class="text-stream" id="voiceSourceText" data-empty="No speech recognized yet"></div>
       </article>
       <article class="pane target-pane">
-        <div class="pane-header" id="voicePaneTargetLabel"></div>
         <div class="text-stream" id="voiceTargetText" data-empty="No translation yet"></div>
       </article>
     </div>
@@ -38,8 +41,9 @@ export function createVoiceView() {
       <button type="button" class="action-round" id="voiceTranslateNow" aria-label="Translate now" title="Translate now" disabled>
         ${iconMarkup('languages')}
       </button>
-      <button type="button" class="action-round primary" id="voiceMicToggle" aria-label="Start microphone" title="Start microphone">
-        ${iconMarkup('mic')}
+      <button type="button" class="action-round primary voice-mic-toggle" id="voiceMicToggle" aria-label="Start recording" title="Start recording">
+        ${iconMarkup('mic', 'voice-mic-icon voice-mic-start-icon')}
+        ${iconMarkup('stop-square', 'voice-mic-icon voice-mic-stop-icon')}
       </button>
       <button type="button" class="action-round" id="voiceSpeakNow" aria-label="Speak now" title="Speak now" disabled>
         ${iconMarkup('volume-2')}
@@ -56,8 +60,6 @@ export function createVoiceView() {
   const swapBtn = container.querySelector('#voiceSwapLanguages');
   const vadBadge = container.querySelector('#voiceVadBadge');
   const endSessionBtn = container.querySelector('#voiceEndSession');
-  const paneSourceLabel = container.querySelector('#voicePaneSourceLabel');
-  const paneTargetLabel = container.querySelector('#voicePaneTargetLabel');
   const sourceText = container.querySelector('#voiceSourceText');
   const targetText = container.querySelector('#voiceTargetText');
   const translateNowBtn = container.querySelector('#voiceTranslateNow');
@@ -66,7 +68,11 @@ export function createVoiceView() {
   const statusEl = container.querySelector('#voiceStatus');
   const resumeBtn = container.querySelector('#voiceResumeAudio');
 
-  const session = createVoiceSession({ onChange: render, resumeButton: resumeBtn });
+  const session = createVoiceSession({
+    onChange: render,
+    onMicLevel: renderMicLevel,
+    resumeButton: resumeBtn,
+  });
 
   setupAutoFollow(sourceText);
   setupAutoFollow(targetText);
@@ -120,19 +126,16 @@ export function createVoiceView() {
 
   function renderLanguageBar() {
     const { state } = session;
-    const lane = session.currentLane();
     populateLanguageSelect(sourcePill, state.sideALanguage);
     populateLanguageSelect(targetPill, state.sideBLanguage);
     // Language choice is a setup-time decision; during a live session the
-    // pills just label the pair (the pane headers follow the active lane).
+    // controls label the pair but stay locked.
     const locked = state.live || state.starting;
     sourcePill.disabled = locked;
     targetPill.disabled = locked;
     sourcePill.setAttribute('aria-label', `Source language: ${state.sideALanguage}`);
     targetPill.setAttribute('aria-label', `Target language: ${state.sideBLanguage}`);
     swapBtn.disabled = state.starting;
-    paneSourceLabel.textContent = lane.sourceLanguage;
-    paneTargetLabel.textContent = lane.targetLanguage;
     vadBadge.hidden = !state.vadVisible;
     endSessionBtn.hidden = !state.live;
   }
@@ -238,9 +241,9 @@ export function createVoiceView() {
 
     micToggleBtn.disabled = state.starting || (state.live && !state.socket?.isOpen());
     micToggleBtn.classList.toggle('is-listening', state.micState === 'listening');
-    let micLabel = 'Start microphone';
+    let micLabel = 'Start recording';
     if (state.starting && !state.live) micLabel = 'Connecting';
-    else if (state.live) micLabel = state.micState === 'listening' ? 'Turn microphone off' : 'Turn microphone on';
+    else if (state.live) micLabel = state.micState === 'listening' ? 'Stop recording' : 'Start recording';
     micToggleBtn.setAttribute('aria-label', micLabel);
     micToggleBtn.title = micLabel;
 
@@ -257,6 +260,12 @@ export function createVoiceView() {
     else if (canPlayAudio) speakLabel = 'Play audio';
     speakNowBtn.setAttribute('aria-label', speakLabel);
     speakNowBtn.title = speakLabel;
+  }
+
+  function renderMicLevel(value, listening) {
+    const halo = micHaloVisual(value, { listening });
+    micToggleBtn.style.setProperty('--mic-toggle-halo-scale', halo.scale);
+    micToggleBtn.style.setProperty('--mic-toggle-halo-color', halo.color);
   }
 
   function renderStatus() {

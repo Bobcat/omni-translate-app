@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import logging
-import shutil
 import time
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -35,18 +33,11 @@ from app.protocol import event
 from app.sessions import ConversationSession
 from app.sessions import SESSIONS
 from app.translation_bridge import TranslationBridge
-from app.tts_bridge import TTS_ROOT
-from app.tts_bridge import TtsReferenceUnavailableError
-from app.tts_bridge import _safe_token as _tts_safe_token
-from app.tts_bridge import get_tts_bridge
 from app.tts_bridge import tts_settings_enabled
 from app.tts_bridge import tts_settings_snapshot
-from app.tts_bridge import tts_uses_asr_reference_wav
 from app.voice.session_lifecycle import ConversationLifecycle
 from app.voice.tasks import cancel_task
-
-
-LOGGER = logging.getLogger("asr_translate_tts.runtime")
+from app.voice.tts_delivery import TtsDelivery
 
 
 _ASR_LANGUAGE_CODES = {
@@ -189,6 +180,7 @@ class ConversationRuntime:
         self.sample_width_bytes = 2
         self.side_a_language = session.side_a_language
         self.side_b_language = session.side_b_language
+        self.tts_fairness_key = session.tts_fairness_key
         self.live_settings = merge_live_settings(default_live_settings(), session.live_settings or {})
         self.tts_settings = dict(session.tts_settings or tts_settings_snapshot()[0])
         self.asr_bridge = LiveASRPoolBridge(
@@ -197,7 +189,6 @@ class ConversationRuntime:
             channels=self.channels,
             live_settings=self.live_settings,
         )
-        self.tts_bridge = get_tts_bridge()
         self.lanes = {
             "a_to_b": self._build_lane(
                 lane_id="a_to_b",
@@ -214,6 +205,7 @@ class ConversationRuntime:
         self.current_turn = self._new_turn(lane_id="a_to_b")
         self.closed_turns: list[ConversationTurn] = []
         self.lifecycle = ConversationLifecycle(self)
+        self.tts_delivery = TtsDelivery(self, part_target_text=_part_target_text)
 
     async def run(self) -> None:
         await self.lifecycle.run()
@@ -251,7 +243,7 @@ class ConversationRuntime:
             self._discard_inflight()
             return True
         if msg_type == "replay_tts":
-            await self._replay_tts(payload)
+            await self.tts_delivery.replay(payload)
             return True
         if msg_type == "update_live_settings":
             await self._update_live_settings(payload)
@@ -260,7 +252,7 @@ class ConversationRuntime:
             await self._update_tts_settings(payload)
             return True
         if msg_type == "tts_playback_complete":
-            await self._tts_playback_complete(payload)
+            await self.tts_delivery.playback_complete(payload)
             return True
         await self.lifecycle.send(event("error", self.session_id, code="unsupported_control", message=msg_type))
         return True
@@ -356,8 +348,7 @@ class ConversationRuntime:
             lane.last_asr_request_id = str(result.request_id or job.request_id)
             lane.last_asr_backend = result_backend
             lane.last_asr_wav_path = str(job.wav_path)
-            if _last_speech_quality_score(lane.last_asr_segments, lane.last_asr_wav_path) >= LAST_SPEECH_QUALITY_THRESHOLD:
-                lane.last_qualifying_asr_wav_path = lane.last_asr_wav_path
+            self.tts_delivery.record_asr_reference(lane)
             apply = lane.asr_runner.apply_result(
                 ASRResult(
                     sequence_id=self._sequence_from_request(job.request_id),
@@ -658,44 +649,12 @@ class ConversationRuntime:
         self._refresh_turn_state()
         await self._send_turn_update(reason=reason)
         lane.tts_task = asyncio.create_task(
-            self._run_speak_sequence(lane.lane_id, turn.turn_id, list(speaking_part_ids))
+            self.tts_delivery.run_speak_sequence(
+                lane.lane_id,
+                turn.turn_id,
+                list(speaking_part_ids),
+            )
         )
-
-    async def _run_speak_sequence(
-        self,
-        lane_id: str,
-        turn_id: str,
-        part_ids: list[str],
-    ) -> None:
-        # Per-bubble TTS pipelined sequentially: dispatch one pool call,
-        # wait for the WAV (which emits tts_clip_ready to the browser),
-        # then dispatch the next. The browser's audio queue plays them in
-        # order; by the time clip N ends, clip N+1 has typically already
-        # arrived, so the audible gap is just the audio-element swap.
-        lane = self.lanes[lane_id]
-        current_task = asyncio.current_task()
-        try:
-            for part_id in part_ids:
-                if self.current_turn.turn_id != turn_id:
-                    return
-                target = next((p for p in self.current_turn.parts if p.part_id == part_id), None)
-                if target is None or target.speech_state == "spoken":
-                    continue
-                text = _part_target_text(target)
-                if not text:
-                    continue
-                sub_task = asyncio.create_task(
-                    self._run_tts(lane.lane_id, turn_id, text, [part_id])
-                )
-                try:
-                    await sub_task
-                except asyncio.CancelledError:
-                    if not sub_task.done():
-                        sub_task.cancel()
-                    raise
-        finally:
-            if lane.tts_task is current_task:
-                lane.tts_task = None
 
     async def _translate_now(self) -> None:
         lane = self._current_lane()
@@ -733,155 +692,6 @@ class ConversationRuntime:
             asr_debug=asr_debug,
             pc_reason="translate_now",
         )
-
-    async def _replay_tts(self, payload: dict[str, Any]) -> None:
-        lane_id = str(payload.get("lane_id") or "").strip()
-        text = str(payload.get("text") or "").strip()
-        if not text:
-            return
-        lane = self.lanes.get(lane_id) if lane_id else self._current_lane()
-        if lane is None:
-            return
-        if not tts_settings_enabled(self.tts_settings):
-            return
-        reference_wav_path = self._replay_reference_wav_path(lane, text)
-        try:
-            tts_payload = await asyncio.to_thread(
-                self.tts_bridge.synthesize,
-                session_id=self.session_id,
-                text=text,
-                language=lane.target_language,
-                settings=self.tts_settings,
-                reference_wav_path=reference_wav_path,
-            )
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            await self.lifecycle.send(
-                event(
-                    "error",
-                    self.session_id,
-                    code="tts_replay_failed",
-                    message=str(exc),
-                    lane_id=lane.lane_id,
-                )
-            )
-            return
-        await self.lifecycle.send(
-            event(
-                "tts_replay_ready",
-                self.session_id,
-                lane_id=lane.lane_id,
-                text=text,
-                tts=tts_payload,
-            )
-        )
-
-    async def _run_tts(self, lane_id: str, turn_id: str, text: str, speaking_part_ids: list[str]) -> None:
-        lane = self.lanes[lane_id]
-        current_task = asyncio.current_task()
-        reference_wav_path, low_quality = _last_speech_reference_choice(lane, self.tts_settings)
-        if reference_wav_path is None and not tts_uses_asr_reference_wav(
-            lane.target_language,
-            settings=self.tts_settings,
-        ):
-            # Non-last_speech mode (stable_generated / description); the bridge
-            # picks its own reference and we don't need to snapshot.
-            pass
-        else:
-            self._snapshot_part_reference_wav(speaking_part_ids, reference_wav_path, low_quality=low_quality)
-        reference_prompt_text = _last_speech_prompt_text(lane, reference_wav_path)
-        source_audio_duration_ms = _source_bubble_duration_ms(lane)
-        try:
-            tts_payload = await asyncio.to_thread(
-                self.tts_bridge.synthesize,
-                session_id=self.session_id,
-                text=text,
-                language=lane.target_language,
-                settings=self.tts_settings,
-                reference_wav_path=reference_wav_path,
-                reference_prompt_text=reference_prompt_text,
-                source_audio_duration_ms=source_audio_duration_ms,
-            )
-        except asyncio.CancelledError:
-            raise
-        except TtsReferenceUnavailableError as exc:
-            LOGGER.warning(
-                "tts skipped (reference unavailable) lane=%s turn=%s lang=%s: %s",
-                lane.lane_id, turn_id, lane.target_language, exc,
-            )
-            if self.current_turn.turn_id == turn_id and self.current_turn.state == TurnState.OPEN_SPEAKING:
-                for part in self.current_turn.parts:
-                    if part.part_id in speaking_part_ids and part.speech_state == "speaking":
-                        part.speech_state = "spoken"
-                self._refresh_turn_state()
-                await self._send_turn_update(reason="tts_skipped")
-            return
-        except Exception as exc:
-            if self.current_turn.turn_id == turn_id and self.current_turn.state == TurnState.OPEN_SPEAKING:
-                for part in self.current_turn.parts:
-                    if part.part_id in speaking_part_ids and part.speech_state == "speaking":
-                        part.speech_state = "pending"
-                self._refresh_turn_state()
-                await self._send_turn_update(reason="tts_failed")
-            await self.lifecycle.send(
-                event(
-                    "error",
-                    self.session_id,
-                    code="tts_failed",
-                    message=str(exc),
-                    lane_id=lane.lane_id,
-                    turn_id=turn_id,
-                )
-            )
-            return
-        finally:
-            if lane.tts_task is current_task:
-                lane.tts_task = None
-
-        if self.current_turn.turn_id != turn_id or self.current_turn.state != TurnState.OPEN_SPEAKING:
-            return
-        artifact_id = str(tts_payload.get("artifact_id") or "").strip()
-        if artifact_id:
-            lane.pending_tts[artifact_id] = {
-                "turn_id": turn_id,
-                "artifact_id": artifact_id,
-                "text": text,
-                "part_ids": list(speaking_part_ids),
-                "tts": dict(tts_payload),
-            }
-        await self.lifecycle.send(
-            event(
-                "tts_clip_ready",
-                self.session_id,
-                lane_id=lane.lane_id,
-                turn_id=turn_id,
-                tts=tts_payload,
-            )
-        )
-
-    async def _tts_playback_complete(self, payload: dict[str, Any]) -> None:
-        lane_id = str(payload.get("lane_id") or "").strip()
-        turn_id = str(payload.get("turn_id") or "").strip()
-        artifact_id = str(payload.get("artifact_id") or "").strip()
-        lane = self.lanes.get(lane_id)
-        if lane is None:
-            return
-        if turn_id != self.current_turn.turn_id:
-            return
-        if not artifact_id:
-            return
-        pending = lane.pending_tts.pop(artifact_id, None)
-        if pending is None:
-            return
-        if turn_id != str(pending.get("turn_id") or ""):
-            return
-        part_ids = {str(part_id) for part_id in pending.get("part_ids", [])}
-        for part in self.current_turn.parts:
-            if part.part_id in part_ids and part.speech_state == "speaking":
-                part.speech_state = "spoken"
-        self._refresh_turn_state()
-        await self._send_turn_update(reason="tts_playback_complete")
 
     async def _source_event(
         self,
@@ -1112,69 +922,11 @@ class ConversationRuntime:
         lane.tts_task = None
         lane.pending_tts.clear()
         for part in turn.parts:
-            self._discard_part_reference_wav(part)
+            self.tts_delivery.discard_part_reference_wav(part)
         turn.state = TurnState.CLOSED
         self.closed_turns.append(turn)
         self.turn_counter += 1
         return turn
-
-    def _snapshot_part_reference_wav(
-        self,
-        speaking_part_ids: list[str],
-        source_path: str | None,
-        *,
-        low_quality: bool = False,
-    ) -> None:
-        if not source_path:
-            return
-        src = Path(source_path)
-        if not src.is_file():
-            return
-        for part in self.current_turn.parts:
-            if part.part_id not in speaking_part_ids:
-                continue
-            dst = self._part_reference_wav_target(part.part_id)
-            if dst is None:
-                continue
-            try:
-                dst.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(src, dst)
-            except OSError as exc:
-                LOGGER.warning("ref-WAV snapshot failed part=%s: %s", part.part_id, exc)
-                continue
-            part.reference_wav_path = str(dst)
-            part.low_quality_reference = low_quality
-
-    def _replay_reference_wav_path(self, lane: ConversationLane, text: str) -> str | None:
-        # Reuse the snapshot from the original TTS so replays of the same bubble
-        # use the same voice reference even if newer speech has arrived since.
-        if self.current_turn.lane_id == lane.lane_id:
-            for part in self.current_turn.parts:
-                if _part_target_text(part) != text:
-                    continue
-                stored = part.reference_wav_path or ""
-                if stored and Path(stored).is_file():
-                    return stored
-                break
-        return _tts_reference_wav_path(lane, self.tts_settings)
-
-    def _discard_part_reference_wav(self, part: TurnPart) -> None:
-        path = part.reference_wav_path
-        if not path:
-            return
-        part.reference_wav_path = ""
-        try:
-            Path(path).unlink()
-        except OSError:
-            pass
-
-    def _part_reference_wav_target(self, part_id: str) -> Path | None:
-        try:
-            session_token = _tts_safe_token(self.session_id)
-            part_token = _tts_safe_token(part_id)
-        except ValueError:
-            return None
-        return (TTS_ROOT / session_token / "refs" / f"{part_token}.wav").resolve()
 
     def _reset_lane_text_scope(self, lane: ConversationLane) -> None:
         # NB: deliberately does NOT touch lane.pending_tts. TTS lifecycle
@@ -1460,124 +1212,6 @@ def _live_settings_asr_backend(live_settings: dict[str, Any] | None) -> str:
     if not isinstance(asr, dict):
         return ""
     return str(asr.get("backend") or "")
-
-
-def _tts_reference_wav_path(lane: ConversationLane, tts_settings: dict[str, Any]) -> str | None:
-    if not tts_uses_asr_reference_wav(lane.target_language, settings=tts_settings):
-        return None
-    path = str(lane.last_asr_wav_path or "").strip()
-    if not path:
-        return None
-    return path if Path(path).exists() else None
-
-
-# Quality heuristic for last_speech reference selection. See
-# docs/voxcpm-options-redesign.md → "Last speech fragment — quality heuristic".
-LAST_SPEECH_QUALITY_THRESHOLD = 0.7
-
-
-def _wav_duration_ms(path: str) -> int:
-    try:
-        import wave
-        with wave.open(path, "rb") as wf:
-            frames = wf.getnframes()
-            rate = wf.getframerate()
-            if rate <= 0:
-                return 0
-            return int((frames / rate) * 1000)
-    except (OSError, EOFError, Exception):  # noqa: BLE001 — wave.Error subclasses Exception
-        return 0
-
-
-def _last_speech_quality_score(segments: list[dict[str, Any]], wav_path: str) -> float:
-    if not wav_path:
-        return 0.0
-    duration_ms = _wav_duration_ms(wav_path)
-    if duration_ms <= 0:
-        return 0.0
-    if not segments:
-        return 0.0
-    speech_ms = 0
-    sorted_segs = sorted(
-        (
-            (int(max(0, s.get("t0_ms") or 0)), int(max(0, s.get("t1_ms") or 0)))
-            for s in segments
-        ),
-        key=lambda pair: pair[0],
-    )
-    max_gap_ms = 0
-    prev_end = None
-    for t0, t1 in sorted_segs:
-        if t1 > t0:
-            speech_ms += t1 - t0
-        if prev_end is not None:
-            gap = t0 - prev_end
-            if gap > max_gap_ms:
-                max_gap_ms = gap
-        prev_end = t1
-    duration_s = duration_ms / 1000.0
-    coverage = min(1.0, speech_ms / duration_ms)
-    silence_penalty = max(0.0, 1.0 - (max_gap_ms / 1000.0))
-    return min(min(1.0, duration_s / 3.0), coverage, silence_penalty)
-
-
-def _last_speech_prompt_text(lane: ConversationLane, reference_wav_path: str | None) -> str | None:
-    """Build the transcript paired with the just-chosen last_speech WAV
-    for ultimate-cloning. Only safe to return when the WAV matches the
-    *latest* ASR result — the segments stored on the lane line up with
-    that WAV only. When the holdover (last_qualifying_asr_wav_path) is
-    picked instead, we have no matching transcript snapshot, so return
-    None and let the bridge fall back to reference-only mode.
-    """
-    if not reference_wav_path:
-        return None
-    current = (lane.last_asr_wav_path or "").strip()
-    if not current or current != reference_wav_path:
-        return None
-    parts = []
-    for segment in lane.last_asr_segments or []:
-        if not isinstance(segment, dict):
-            continue
-        text = str(segment.get("text") or "").strip()
-        if text:
-            parts.append(text)
-    joined = " ".join(parts).strip()
-    return joined or None
-
-
-def _source_bubble_duration_ms(lane: ConversationLane) -> int | None:
-    """Duration of the WAV the most recent ASR commit was based on.
-    Used by the TTS bridge's trim_to_source clamp."""
-    path = (lane.last_asr_wav_path or "").strip()
-    if not path or not Path(path).is_file():
-        return None
-    try:
-        return _wav_duration_ms(path)
-    except Exception:
-        return None
-
-
-def _last_speech_reference_choice(lane: ConversationLane, tts_settings: dict[str, Any]) -> tuple[str | None, bool]:
-    """Pick the last_speech reference WAV. Returns (path, low_quality).
-
-    - If the most recent fragment scores >= threshold → use it (low_quality=False).
-    - Else fall back to the most recent previously qualifying fragment if any.
-    - Else use the latest fragment regardless and flag it as low quality, so
-      the UI can indicate that voice quality was uncertain.
-    """
-    if not tts_uses_asr_reference_wav(lane.target_language, settings=tts_settings):
-        return None, False
-    current = (lane.last_asr_wav_path or "").strip()
-    qualifying = (lane.last_qualifying_asr_wav_path or "").strip()
-    if current and Path(current).is_file():
-        score = _last_speech_quality_score(lane.last_asr_segments, current)
-        if score >= LAST_SPEECH_QUALITY_THRESHOLD:
-            return current, False
-    if qualifying and Path(qualifying).is_file():
-        return qualifying, False
-    if current and Path(current).is_file():
-        return current, True
-    return None, False
 
 
 def _segment_span(segments: tuple[TranscriptSegment, ...]) -> tuple[int, int]:

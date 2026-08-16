@@ -1,6 +1,5 @@
 // Sign-in card (DeepL-inspired): short heading, one-line reason and Google's
-// own rendered sign-in button. Shared by the settings view's Account group
-// and the pdf view's anonymous gate.
+// own rendered sign-in button. Used by the Account view.
 
 import { renderGoogleButton } from '../auth.js';
 

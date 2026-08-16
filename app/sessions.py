@@ -25,6 +25,7 @@ class ConversationSession:
     expires_unix: float
     side_a_language: str
     side_b_language: str
+    tts_fairness_key: str
     state: str = "created"
     ws_connected: bool = False
     closed: bool = False
@@ -45,6 +46,7 @@ class ConversationSessionManager:
         *,
         side_a_language: str,
         side_b_language: str,
+        tts_fairness_key: str,
         live_settings: dict[str, Any] | None = None,
         tts_settings: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
@@ -57,6 +59,7 @@ class ConversationSessionManager:
             expires_unix=now + ttl_s,
             side_a_language=str(side_a_language or "Dutch"),
             side_b_language=str(side_b_language or "English"),
+            tts_fairness_key=str(tts_fairness_key or ""),
             live_settings=dict(live_settings or default_live_settings()),
             tts_settings=dict(tts_settings or {}),
         )

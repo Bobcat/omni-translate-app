@@ -42,17 +42,24 @@
     <link rel="stylesheet" href="/themes/tokens.css?v=20260518-theme-6">
     <link rel="stylesheet" href="/themes/light.css?v=20260730-appearance-1">
     <link rel="stylesheet" href="/themes/dark.css?v=20260730-appearance-1">
-    <link rel="stylesheet" href="/themes/warm.css?v=20260730-appearance-1">
-    <link rel="stylesheet" href="/styles/shell.css?v=20260809-mobile-css-split-1">
+    <link rel="stylesheet" href="/themes/warm.css?v=20260811-warm-palette-2">
+    <link rel="stylesheet" href="/styles/shell.css?v=20260812-language-bar-1">
     <link rel="stylesheet" href="/styles/image.css?v=20260809-mobile-css-split-1">
     <link rel="stylesheet" href="/styles/voice.css?v=20260809-mobile-css-split-1">
     <link rel="stylesheet" href="/styles/settings/sheet.css?v=20260809-mobile-css-split-1">
     <link rel="stylesheet" href="/styles/settings/voice.css?v=20260809-mobile-css-split-1">
-    <link rel="stylesheet" href="/styles/responsive.css?v=20260809-mobile-css-split-1">
+    <link rel="stylesheet" href="/styles/responsive.css?v=20260812-language-bar-1">
   </head>
   <body>
     <main class="app is-setup">
       <header class="app-titlebar">
+        <button class="settings-button titlebar-account-button" id="accountButton" type="button" aria-label="Open account" title="Account" hidden>
+          <svg id="accountButtonIcon" viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="8" r="3.5"></circle>
+            <path d="M5 21a7 7 0 0 1 14 0"></path>
+          </svg>
+          <span class="account-button-initials" id="accountButtonInitials" hidden></span>
+        </button>
         <button class="settings-button titlebar-back-button" id="titlebarBackButton" type="button" aria-label="Back" title="Back">
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M19 12H5"></path>
@@ -180,6 +187,7 @@
         <div class="dock-center">
           <button class="language-pill" id="sourceLanguagePill" type="button" aria-label="Choose source language">
             <span class="language-pill-text"></span>
+            <svg class="language-pill-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 9 5 5 5-5"></path></svg>
           </button>
           <button class="language-direction-button" id="languageDirectionButton" type="button" aria-label="Switch selected languages" title="Switch selected languages" hidden>
             <svg class="language-direction-icon language-direction-swap-icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -195,6 +203,7 @@
           </button>
           <button class="language-pill" id="targetLanguagePill" type="button" aria-label="Choose target language">
             <span class="language-pill-text"></span>
+            <svg class="language-pill-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 9 5 5 5-5"></path></svg>
           </button>
           <button class="dock-action round-action pc-export-action" id="pcExportButton" type="button" aria-label="Export PC transcript" title="Export PC" disabled hidden>
             <span class="round-action-label">PC</span>
@@ -209,9 +218,9 @@
               <path d="M14 18h6"/>
             </svg>
           </button>
-          <button class="dock-action round-action mic-toggle-action is-mic-listening-action" id="micToggleButton" type="button" aria-label="Turn microphone off" title="Mic off" disabled hidden>
+          <button class="dock-action round-action mic-toggle-action is-mic-listening-action" id="micToggleButton" type="button" aria-label="Stop recording" title="Stop recording" disabled hidden>
             <svg class="round-action-icon mic-toggle-icon mic-toggle-off-icon" viewBox="0 0 24 24" aria-hidden="true">
-              <rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" stroke="none"></rect>
+              <rect x="7" y="7" width="10" height="10" rx="1.5"></rect>
             </svg>
             <svg class="round-action-icon mic-toggle-icon mic-toggle-on-icon" viewBox="0 0 24 24" aria-hidden="true">
               <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path>
@@ -248,12 +257,6 @@
           </header>
           <div class="settings-views">
             <div class="settings-page" id="settingsHomePage">
-              <button class="settings-nav-row" id="settingsAccountNav" type="button" hidden>
-                <span>
-                  <strong>Account</strong>
-                  <small>Sign in and plan</small>
-                </span>
-              </button>
               <button class="settings-nav-row" id="settingsAppearanceNav" type="button">
                 <span>
                   <strong>Appearance</strong>
@@ -532,11 +535,11 @@
           <div class="language-search-wrap">
             <input type="search" id="languageSearch" class="language-search" placeholder="Search languages…" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false">
           </div>
-          <div class="sheet-body language-sheet-body" id="languageSheetList"></div>
+          <div class="sheet-body language-sheet-body" id="languageSheetList" role="listbox" aria-labelledby="languageSheetTitle"></div>
         </div>
       </div>
 
     </main>
-    <script type="module" src="/src/app.js?v=20260808-mobile-quota-hidden-1"></script>
+    <script type="module" src="/src/app.js?v=20260812-language-bar-1"></script>
   </body>
 </html>

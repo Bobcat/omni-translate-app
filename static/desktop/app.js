@@ -7,19 +7,21 @@
 import {
   RouterCore,
   ShellState,
-  createShellPersistence,
   bindMobileSidebarDismiss,
 } from '../foundation/spa-foundation/index.js';
 import { iconMarkup } from './src/shared/icons.js';
 import { VIEW_BUSY_EVENT } from './src/shared/view-activity.js';
+import { accountInitials } from '../shared/account-display.js';
 import { cancelImage, getConfig, getImageRequest } from './src/shared/api.js';
-import { initAuth, onBeforeSignOut } from './src/auth.js';
+import { initAuth, onAuthChange, onBeforeSignOut } from './src/auth.js';
 import { registerImageSignOutCancellation } from '../shared/image-operation-recovery.js';
 import { createVoiceView } from './src/views/voice/index.js';
 import { createTextView } from './src/views/text/index.js';
 import { createImageView } from './src/views/image/index.js';
 import { createPdfView } from './src/views/pdf/index.js';
 import { createSettingsView } from './src/views/settings/index.js';
+import { createAccountView } from './src/views/account/index.js';
+import { initDesktopAppearance } from './src/shared/appearance.js';
 
 const STORAGE_KEY = 'omni-translate.desktop.shell';
 
@@ -34,15 +36,18 @@ const AUX_ITEMS = [
   { id: 'settings', route: 'settings', name: 'Settings', icon: 'settings' },
 ];
 
+const ACCOUNT_ITEM = { id: 'account', route: 'account', name: 'Account', icon: 'user' };
+
 const VIEW_FACTORIES = {
   voice: createVoiceView,
   text: createTextView,
   image: createImageView,
   pdf: createPdfView,
   settings: createSettingsView,
+  account: createAccountView,
 };
 
-const ALL_NAV_ITEMS = [...NAV_ITEMS, ...AUX_ITEMS];
+const ALL_NAV_ITEMS = [...NAV_ITEMS, ...AUX_ITEMS, ACCOUNT_ITEM];
 
 const byId = (id) => document.getElementById(id);
 
@@ -51,10 +56,8 @@ const sidebar = byId('sidebar');
 const sidebarToggle = byId('sidebarToggle');
 const sidebarToggleIcon = byId('sidebarToggleIcon');
 const navList = byId('navList');
+const accountNavList = byId('accountNavList');
 const presetStylesheet = byId('presetStylesheet');
-const themeToggle = byId('themeToggle');
-const themeToggleIcon = byId('themeToggleIcon');
-const themeToggleLabel = byId('themeToggleLabel');
 
 let operationStorage = null;
 try { operationStorage = window.localStorage; } catch {}
@@ -66,32 +69,17 @@ registerImageSignOutCancellation({
 });
 
 const initialShell = window.__OMNI_DESKTOP_INITIAL_SHELL__ || {};
-let activePreset = initialShell.preset === 'dark' ? 'dark' : 'modern';
 
 const shellState = new ShellState({
   sidebarOpen: typeof initialShell.sidebarOpen === 'boolean' ? initialShell.sidebarOpen : true,
 });
-const shellPersistence = createShellPersistence({
-  storageKey: STORAGE_KEY,
-  shellState,
-  getPreset: () => activePreset,
-  getRoundedSidebar: () => false,
-});
 
-function applyPreset(preset) {
-  activePreset = preset === 'dark' ? 'dark' : 'modern';
-  const dark = activePreset === 'dark';
-  document.documentElement.dataset.theme = dark ? 'dark' : 'light';
-  // Single preset stylesheet (same pattern as the LLM Workbench shell):
-  // swapping the href fetches the other preset once and applies it.
-  presetStylesheet.href = dark
-    ? presetStylesheet.dataset.darkHref
-    : presetStylesheet.dataset.modernHref;
-  const themeAction = dark ? 'Light theme' : 'Dark theme';
-  themeToggleIcon.innerHTML = iconMarkup(dark ? 'sun' : 'moon');
-  themeToggleLabel.textContent = themeAction;
-  themeToggle.setAttribute('aria-label', themeAction);
-  themeToggle.title = themeAction;
+function saveSidebarState() {
+  try {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      sidebarOpen: Boolean(shellState.getSnapshot().sidebarOpen),
+    }));
+  } catch {}
 }
 
 function renderNav() {
@@ -106,6 +94,29 @@ function renderNav() {
   const auxiliaryMarkup = AUX_ITEMS.map((item) => itemMarkup(item, 'sidebar-route-bottom')).join('');
 
   navList.innerHTML = `${mainMarkup}${auxiliaryMarkup}`;
+  accountNavList.innerHTML = `
+    <li data-route="account" data-tooltip="Account" role="button" tabindex="0" hidden>
+      <span class="sidebar-account-avatar" data-sidebar-account-avatar>${iconMarkup('user')}</span>
+      <span class="link-text">Account</span>
+    </li>
+  `;
+}
+
+function updateSidebarAccount(authState) {
+  const item = accountNavList.querySelector('[data-route="account"]');
+  const avatar = item?.querySelector('[data-sidebar-account-avatar]');
+  if (!item || !avatar) return;
+  item.hidden = false;
+  if (authState?.signedIn) {
+    const initials = document.createElement('span');
+    initials.className = 'sidebar-account-initials';
+    initials.textContent = accountInitials(authState.email);
+    avatar.replaceChildren(initials);
+    avatar.classList.add('has-initials');
+  } else {
+    avatar.innerHTML = iconMarkup('user');
+    avatar.classList.remove('has-initials');
+  }
 }
 
 const router = new RouterCore(appRoot, {
@@ -163,16 +174,11 @@ function updateSidebarUI(isOpen) {
 
 shellState.subscribe(({ next }) => {
   updateSidebarUI(next.sidebarOpen);
-  shellPersistence.save();
+  saveSidebarState();
 });
 
 sidebarToggle.addEventListener('click', () => {
   shellState.toggleSidebar('app.sidebarToggle');
-});
-
-themeToggle.addEventListener('click', () => {
-  applyPreset(activePreset === 'dark' ? 'modern' : 'dark');
-  shellPersistence.save();
 });
 
 // History URLs are built from the current path and query — never bare
@@ -197,10 +203,13 @@ function navigateFromNavList(event) {
 
 navList.addEventListener('click', navigateFromNavList);
 navList.addEventListener('keydown', navigateFromNavList);
+accountNavList.addEventListener('click', navigateFromNavList);
+accountNavList.addEventListener('keydown', navigateFromNavList);
+onAuthChange(updateSidebarAccount);
 
 function init() {
+  initDesktopAppearance(presetStylesheet);
   updateSidebarUI(shellState.getSnapshot().sidebarOpen);
-  applyPreset(activePreset);
   bindMobileSidebarDismiss(shellState, sidebar, 600);
   renderNav();
 
@@ -208,10 +217,9 @@ function init() {
     parseHash: ({ hash }) => (router.has(hash) ? { view: hash, data: null } : null),
   });
 
-  // Kick auth off before the first view mounts: the pdf view gates anonymous
-  // callers on /api/me with the bearer token, so the SDK session restore
-  // should already be underway. Fire and forget — first paint must not wait
-  // on the CDN-loaded SDK.
+  // Kick auth off before the first view mounts so account controls and bearer
+  // headers settle as early as possible. First paint does not wait on the
+  // CDN-loaded SDK.
   getConfig()
     .then((config) => initAuth(config?.auth || {}))
     .catch(() => {});

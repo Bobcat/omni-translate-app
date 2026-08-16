@@ -1,11 +1,11 @@
-/* Omni Translate desktop theme — warm neutral (Claude-like calm), light mode.
+/* Omni Translate desktop base — warm neutral light mode.
    Layered on top of the foundation preset: this file also overrides the
    preset's own vars (--bg, --panel, --border, ...) so every consumer warms
    up, including the foundation shell. Dark values live in themes/dark.css.
 
    Primary actions carry no color — near-black surfaces with cream text; the
-   single accent is a muted terracotta used sparingly (switch, focus, links,
-   spinner). */
+   single accent is a muted aubergine used sparingly (switch, focus, links,
+   spinner). Palette-specific overrides live in themes/palettes.css. */
 
 :root {
   /* Foundation preset overrides. */
@@ -57,10 +57,10 @@
   --action-primary-border: transparent;
 
   /* The single warm accent: switch, focus, links, spinner. */
-  --accent: #cf6b4a;
-  --accent-strong: #b0522f;
-  --focus: #c05f3e;
-  --focus-ring: rgba(207, 107, 74, 0.28);
+  --accent: #9b5779;
+  --accent-strong: #7f3f60;
+  --focus: #8f4f70;
+  --focus-ring: rgba(155, 87, 121, 0.3);
 
   --danger: #b3402f;
   --danger-bg: #fbeae5;
@@ -85,7 +85,7 @@
   --shadow-soft: 0 1px 2px rgba(45, 40, 30, 0.06);
   --shadow-control: 0 1px 2px rgba(45, 40, 30, 0.16);
   --shadow-tooltip: 0 2px 10px rgba(45, 40, 30, 0.3);
-  --replay-glow-primary: rgba(207, 107, 74, 0.08);
+  --replay-glow-primary: rgba(155, 87, 121, 0.1);
   --replay-glow-secondary: rgba(35, 32, 26, 0.06);
   --shell-brand-color: #201d17;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;

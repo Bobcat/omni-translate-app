@@ -19,6 +19,8 @@ from app.runtime import warm_asr_vad
 from app.saas_setup import build_saas_router
 from app.upstreams.http import close_upstream_http_client
 from app.upstreams.http import open_upstream_http_client
+from app.upstreams.tts_pool.client import close_tts_pool_channel
+from app.upstreams.tts_pool.client import open_tts_pool_channel
 from saas.errors import SaasError
 from saas.fastapi_glue import identity_cookie_middleware, saas_error_handler
 
@@ -32,6 +34,7 @@ root_path = get_str("service.root_path", "")
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     open_upstream_http_client()
+    open_tts_pool_channel()
     reconciliation_tasks: list[asyncio.Task] = []
     try:
         await asyncio.to_thread(warm_asr_vad)
@@ -53,6 +56,7 @@ async def lifespan(_app: FastAPI):
             with contextlib.suppress(asyncio.CancelledError):
                 await task
         close_upstream_http_client()
+        close_tts_pool_channel()
 
 
 class DevStaticFiles(StaticFiles):

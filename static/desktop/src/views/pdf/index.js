@@ -1,12 +1,33 @@
 import { iconMarkup } from '../../shared/icons.js';
 import { populateLanguageSelect, recordLanguageMru } from '../../shared/languages.js';
-import { submitPdf, getPdfRequest, cancelPdf, getPdfArtifact, getMe, getUsage } from '../../shared/api.js';
+import {
+  submitPdf,
+  rerenderPdf,
+  getPdfRequest,
+  cancelPdf,
+  getPdfArtifact,
+  getConfig,
+  getEntitlements,
+  getUsage,
+} from '../../shared/api.js';
 import { publishViewBusy } from '../../shared/view-activity.js';
-import { isEnabled as isAuthEnabled, onAuthChange, whenAuthReady } from '../../auth.js';
-import { createSignInCard } from '../../shared/signin-card.js';
+import { onAuthChange, whenAuthReady } from '../../auth.js';
 import { createAccountChangeGuard } from '../../shared/account-state.js';
 import { waitForCancellationSettlement } from './cancellation.js';
 import { createPdfOperationRecovery } from './operation-recovery.js';
+import {
+  configuredPdfPreviewLimit,
+  pdfPreviewFromEnvelope,
+  pdfPreviewNotice,
+  translatedPdfFilename,
+} from './preview.js';
+import {
+  createPdfQuotaCta,
+  pdfAccountPlanFromConfig,
+  pdfPreviewQuotaExhausted,
+} from './quota-cta.js';
+import { pdfPendingText } from './progress.js';
+import { createPdfRenderControls } from './render-options.js';
 
 // PDF translation view, same stage model as the LLM Workbench: an empty state
 // (dropzone) swaps for a loaded state (original frame + translated frame) once
@@ -35,54 +56,66 @@ export function createPdfView() {
   const container = document.createElement('div');
   container.className = 'view pdf-view';
   container.innerHTML = `
-    <div class="view-toolbar">
-      <div class="field">
-        <span>Target</span>
-        <button type="button" id="pdfTarget"></button>
+    <div class="view-toolbar" id="pdfToolbar">
+      <div class="language-pair">
+        <button type="button" class="language-trigger" value="auto" aria-label="Source language: Detect language" disabled>Detect language</button>
+        <span class="language-arrow" aria-hidden="true">${iconMarkup('arrow-right')}</span>
+        <button type="button" id="pdfTarget" aria-label="Choose target language"></button>
       </div>
-      <label class="field switch-field">
-        <span>Show original</span>
-        <span class="switch">
-          <input type="checkbox" id="pdfShowOriginal" checked>
-          <span class="switch-slider"></span>
-        </span>
-      </label>
       <div class="toolbar-actions">
+        <label class="field switch-field">
+          <span>Show original</span>
+          <span class="switch">
+            <input type="checkbox" id="pdfShowOriginal" checked>
+            <span class="switch-slider"></span>
+          </span>
+        </label>
+        <button type="button" class="pdf-render-toolbar-button" id="pdfRenderToggle" aria-expanded="false" aria-controls="pdfRenderPanel">
+          ${iconMarkup('panel-left')}
+          <span>Render</span>
+        </button>
         <a class="icon-square-btn" id="pdfDownload" title="Download translated PDF" aria-label="Download translated PDF" hidden>${iconMarkup('download')}</a>
         <button type="button" class="icon-square-btn" id="pdfReset" title="Choose another PDF" aria-label="Choose another PDF" hidden>${iconMarkup('x')}</button>
       </div>
     </div>
-    <div class="usage-line" id="pdfUsage" hidden></div>
-    <div class="usage-line">Translations are temporary. Download the result after it completes.</div>
-    <div class="dropzone-card" id="pdfDropzone">
-      <div class="dropzone-drop">
-        ${iconMarkup('upload-cloud')}
-        <div class="dropzone-hint">Drag and drop a PDF</div>
-      </div>
-      <div class="dropzone-sep"></div>
-      <div class="dropzone-choose">
-        <span>Or choose a file</span>
-        <button type="button" class="browse-btn" id="pdfBrowseBtn">Browse your files</button>
-      </div>
-    </div>
-    <div class="result-grid" id="pdfStage" hidden>
-      <figure class="result-frame result-frame-original">
-        <iframe id="pdfOriginal" title="Original PDF"></iframe>
-      </figure>
-      <figure class="result-frame">
-        <div class="stage-pending" id="pdfPending">
-          <div class="spinner" role="status" aria-label="Translating"></div>
-          <div class="stage-pending-text" id="pdfPendingText">Translating…</div>
-          <button type="button" class="link-btn" id="pdfCancelBtn">Cancel</button>
+    <div class="pdf-workspace">
+      <div class="pdf-admission-loading" id="pdfAdmissionLoading">Checking PDF allowance…</div>
+      <div class="dropzone-card" id="pdfDropzone" hidden>
+        <div class="dropzone-drop">
+          ${iconMarkup('upload-cloud')}
+          <div class="dropzone-hint">Drag and drop a PDF</div>
         </div>
-        <iframe id="pdfTranslated" title="Translated PDF" hidden></iframe>
-      </figure>
+        <div class="dropzone-sep"></div>
+        <div class="dropzone-choose">
+          <span>Or choose a file</span>
+          <button type="button" class="browse-btn" id="pdfBrowseBtn">Browse your files</button>
+        </div>
+      </div>
+      <div class="result-grid" id="pdfStage" hidden>
+        <figure class="result-frame result-frame-original">
+          <iframe id="pdfOriginal" title="Original PDF"></iframe>
+        </figure>
+        <figure class="result-frame">
+          <div class="stage-pending" id="pdfPending">
+            <div class="spinner" role="status" aria-label="Translating"></div>
+            <div class="stage-pending-text" id="pdfPendingText">Translating…</div>
+            <button type="button" class="link-btn" id="pdfCancelBtn">Cancel</button>
+          </div>
+          <iframe id="pdfTranslated" title="Translated PDF" hidden></iframe>
+        </figure>
+      </div>
+      <div id="pdfRenderMount"></div>
     </div>
+    <div class="usage-line" id="pdfUsage" hidden></div>
+    <div class="usage-line" id="pdfPreviewNotice" hidden></div>
+    <div class="usage-line" id="pdfTemporaryNotice">Translations are temporary. Download the result after it completes.</div>
     <div class="status-line" id="pdfStatus" role="status"></div>
     <input type="file" id="pdfFileInput" accept="application/pdf,.pdf" hidden>
   `;
 
   const targetSelect = container.querySelector('#pdfTarget');
+  const toolbar = container.querySelector('#pdfToolbar');
+  const renderToggle = container.querySelector('#pdfRenderToggle');
   const showOriginalToggle = container.querySelector('#pdfShowOriginal');
   const showOriginalField = showOriginalToggle.closest('.switch-field');
   const downloadLink = container.querySelector('#pdfDownload');
@@ -97,6 +130,18 @@ export function createPdfView() {
   const pendingText = container.querySelector('#pdfPendingText');
   const cancelBtn = container.querySelector('#pdfCancelBtn');
   const statusEl = container.querySelector('#pdfStatus');
+  const usageEl = container.querySelector('#pdfUsage');
+  const previewNoticeEl = container.querySelector('#pdfPreviewNotice');
+  const temporaryNoticeEl = container.querySelector('#pdfTemporaryNotice');
+  const admissionLoadingEl = container.querySelector('#pdfAdmissionLoading');
+  const renderMount = container.querySelector('#pdfRenderMount');
+  const quotaCta = createPdfQuotaCta();
+  admissionLoadingEl.after(quotaCta.element);
+  const renderControls = createPdfRenderControls({
+    trigger: renderToggle,
+    onChange: handleRenderOptionsChange,
+  });
+  renderMount.replaceWith(renderControls.element);
 
   let currentFile = null;
   let sourceFileName = '';
@@ -107,7 +152,17 @@ export function createPdfView() {
   let translatedUrl = '';
   let runToken = 0;
   let pollTimer = 0;
-  let activeUserId = '';
+  let activeOwnerKey = 'anonymous';
+  let previewPageLimit = 0;
+  let previewPagesPerPeriod = 0;
+  let previewDetails = null;
+  let accountPlan = { pagesPerPeriod: 0, maxPagesPerJob: 0 };
+  let authConfigured = false;
+  let planResolved = false;
+  let usageResolved = false;
+  let usageRemaining = null;
+  let stageLoaded = false;
+  let operationStartedAt = '';
   let showOriginalPreference = showOriginalToggle.checked;
   const cancellationSettlements = new Map();
   let operationStorage = null;
@@ -117,50 +172,70 @@ export function createPdfView() {
     getRequest: getPdfRequest,
   });
 
-  // Anonymous gate: when the deployment has auth configured and the caller is
-  // not signed in, the sign-in card replaces the upload UI (the anonymous plan
-  // has PDF disabled). Re-evaluated on every auth-state change, so signing in
-  // swaps the upload UI back in. Not gated at all when auth is unconfigured —
-  // dev stays anonymous-only.
-  const gateCard = createSignInCard('PDF translation needs a free account.');
-  gateCard.classList.add('pdf-gate');
-  gateCard.hidden = true;
-  container.appendChild(gateCard);
-
-  let gateToken = 0;
-
-  async function applyAuthGate() {
-    if (!isAuthEnabled()) return;
-    const token = ++gateToken;
-    // Wait for the SDK session restore so a signed-in user is not gated on a
-    // not-yet-restored (empty) bearer token.
-    await whenAuthReady();
-    if (token !== gateToken) return;
-    let principalKind = '';
-    try {
-      const me = await getMe();
-      principalKind = String(me?.principal?.kind || '');
-    } catch {
-      // A failed /api/me leaves the view usable rather than gating on a guess.
-      return;
-    }
-    if (token !== gateToken) return;
-    const gated = principalKind !== 'user';
-    container.classList.toggle('is-gated', gated);
-    gateCard.hidden = !gated;
-    if (gated) usageEl.hidden = true;
-    else refreshUsage();
-  }
-
-  const usageEl = container.querySelector('#pdfUsage');
+  let planFetchToken = 0;
   let usageFetchToken = 0;
 
-  // Free-plan page balance. Refreshed when the gate settles (signed-in user)
-  // and whenever a job reaches a terminal state — its reservation is then
-  // consumed or released server-side, so the balance has moved.
+  function renderPreviewNotice() {
+    const message = pdfPreviewNotice(previewPageLimit, previewDetails);
+    previewNoticeEl.textContent = message;
+    previewNoticeEl.hidden = !message || (!stageLoaded && quotaIsExhausted());
+  }
+
+  function quotaIsExhausted() {
+    return pdfPreviewQuotaExhausted({
+      previewPageLimit,
+      usageResolved,
+      remaining: usageRemaining,
+    });
+  }
+
+  function renderAdmissionState() {
+    const waiting = !stageLoaded && (!planResolved || !usageResolved);
+    const exhausted = !stageLoaded && quotaIsExhausted();
+    dropzone.hidden = stageLoaded || waiting || exhausted;
+    admissionLoadingEl.hidden = stageLoaded || !waiting;
+    quotaCta.element.hidden = !exhausted;
+    toolbar.hidden = exhausted;
+    renderControls.setAvailable(!exhausted);
+    temporaryNoticeEl.hidden = exhausted;
+    quotaCta.update({
+      previewPagesPerPeriod,
+      previewPageLimit,
+      accountPlan,
+      authConfigured,
+      visible: exhausted,
+    });
+    renderPreviewNotice();
+  }
+
+  async function refreshPlanInfo() {
+    const token = ++planFetchToken;
+    planResolved = false;
+    renderAdmissionState();
+    await whenAuthReady();
+    if (token !== planFetchToken) return;
+    const [entitlementsResult, configResult] = await Promise.allSettled([
+      getEntitlements(),
+      getConfig(),
+    ]);
+    if (token !== planFetchToken) return;
+    if (entitlementsResult.status === 'fulfilled') {
+      previewPageLimit = configuredPdfPreviewLimit(entitlementsResult.value);
+    }
+    if (configResult.status === 'fulfilled') {
+      accountPlan = pdfAccountPlanFromConfig(configResult.value);
+      authConfigured = Boolean(configResult.value?.auth?.configured);
+    }
+    planResolved = true;
+    renderAdmissionState();
+  }
+
+  // Page balance for the resolved plan. Refreshed on account changes and
+  // terminal settlement.
   async function refreshUsage() {
     const token = ++usageFetchToken;
-    if (!isAuthEnabled()) return;
+    usageResolved = false;
+    renderAdmissionState();
     await whenAuthReady();
     if (token !== usageFetchToken) return;
     try {
@@ -169,12 +244,20 @@ export function createPdfView() {
       const pages = (data?.usage || []).find((entry) => entry.metric === 'pdf_translation.pages');
       if (!pages || typeof pages.remaining !== 'number' || typeof pages.limit !== 'number') {
         usageEl.hidden = true;
+        usageRemaining = null;
         return;
       }
+      usageRemaining = pages.remaining;
+      previewPagesPerPeriod = pages.limit;
       usageEl.textContent = `PDF pages this month: ${pages.remaining} of ${pages.limit} left${usageBreakdown(pages)}${formatResetDate(pages.period_end)}`;
       usageEl.hidden = false;
     } catch {
       // A failed fetch leaves the previous balance in place.
+    } finally {
+      if (token === usageFetchToken) {
+        usageResolved = true;
+        renderAdmissionState();
+      }
     }
   }
 
@@ -182,18 +265,35 @@ export function createPdfView() {
   applyViewMode();
 
   const applyAccountChange = createAccountChangeGuard(discardAccountState);
-  applyAuthGate();
+  applyAccountChange({ signedIn: false, userId: '' });
+  recoverPendingOperation(activeOwnerKey);
+  refreshPlanInfo();
+  refreshUsage();
   onAuthChange((authState) => {
-    const nextUserId = authState?.signedIn ? String(authState.userId || '') : '';
-    const accountChanged = nextUserId !== activeUserId;
+    const nextOwnerKey = authState?.signedIn && authState.userId
+      ? `user:${String(authState.userId)}`
+      : 'anonymous';
+    const accountChanged = nextOwnerKey !== activeOwnerKey;
     applyAccountChange(authState);
-    activeUserId = nextUserId;
-    applyAuthGate();
-    if (accountChanged && activeUserId) recoverPendingOperation(activeUserId);
+    activeOwnerKey = nextOwnerKey;
+    previewPageLimit = 0;
+    previewPagesPerPeriod = 0;
+    previewDetails = null;
+    accountPlan = { pagesPerPeriod: 0, maxPagesPerJob: 0 };
+    authConfigured = false;
+    planResolved = false;
+    usageResolved = false;
+    usageRemaining = null;
+    usageEl.hidden = true;
+    renderAdmissionState();
+    refreshPlanInfo();
+    refreshUsage();
+    if (accountChanged) recoverPendingOperation(activeOwnerKey);
   });
 
   function setBusy(busy) {
     publishViewBusy('pdf', busy);
+    renderControls.setBusy(busy);
   }
 
   function setStatus(message, isError = false) {
@@ -230,9 +330,10 @@ export function createPdfView() {
   }
 
   function setStageLoaded(loaded) {
-    dropzone.hidden = loaded;
+    stageLoaded = loaded;
     stage.hidden = !loaded;
     resetBtn.hidden = !loaded;
+    renderAdmissionState();
   }
 
   // The rendered translation is the first artifact that is not the uploaded
@@ -244,28 +345,6 @@ export function createPdfView() {
       if (String(meta?.mime_type || '').includes('pdf')) return name;
     }
     return '';
-  }
-
-  function progressText(envelope) {
-    const done = envelope?.pages_done ?? envelope?.response?.document?.pages_done;
-    const total = envelope?.pages_total ?? envelope?.response?.document?.pages_total ?? envelope?.page_count;
-    if (typeof done === 'number' && typeof total === 'number' && total > 0) {
-      // done counts FINISHED pages, so "0/N" sits there while page 1 is still
-      // in flight — showing the page in progress reads as movement, not stall.
-      return `Translating… page ${Math.min(done + 1, total)} of ${total}`;
-    }
-    return 'Translating…';
-  }
-
-  // The service shares one FIFO between image and pdf requests and lets image
-  // work overtake a queued PDF, so the position is "place in line", not an
-  // exact "N ahead of you" — the label stays honest about that.
-  function pendingTextFor(envelope) {
-    if (String(envelope?.state || '').toLowerCase() === 'queued') {
-      const position = envelope?.queue_position;
-      return typeof position === 'number' ? `In queue — position ${position}` : 'In queue…';
-    }
-    return progressText(envelope);
   }
 
   async function showTranslated(envelope) {
@@ -283,22 +362,48 @@ export function createPdfView() {
     clearPending();
     translatedFrame.src = translatedUrl;
     translatedFrame.hidden = false;
-    const stem = (sourceFileName || 'document').replace(/\.[^.]+$/, '');
+    renderAdmissionState();
     downloadLink.href = translatedUrl;
-    downloadLink.download = `${stem}_${targetSelect.value.toLowerCase()}.pdf`;
+    downloadLink.download = translatedPdfFilename(
+      sourceFileName,
+      targetSelect.value,
+      previewDetails,
+    );
     downloadLink.hidden = false;
     setStatus('');
   }
 
   function forgetPendingOperation(operationId = pendingOperationId || requestId) {
-    operationRecovery.forget(activeUserId, operationId);
+    operationRecovery.forget(activeOwnerKey, operationId);
     if (!operationId || pendingOperationId === operationId) pendingOperationId = '';
+  }
+
+  function rememberPendingOperation(operationId = pendingOperationId || requestId) {
+    if (!operationId) return;
+    operationRecovery.remember(activeOwnerKey, {
+      operationId,
+      fileName: sourceFileName,
+      targetLanguage: targetSelect.value,
+      startedAt: operationStartedAt,
+      pdfPreview: previewDetails,
+      renderOptions: renderControls.getValues(),
+    });
+  }
+
+  function applyPreviewEnvelope(envelope) {
+    const next = pdfPreviewFromEnvelope(envelope);
+    if (!next) return;
+    previewDetails = next;
+    renderPreviewNotice();
+    rememberPendingOperation();
   }
 
   async function applyEnvelope(token, envelope) {
     if (String(envelope?.request_id || '') !== requestId) {
       throw new Error('The service returned a different PDF operation.');
     }
+    applyPreviewEnvelope(envelope);
+    renderControls.setEnvelope(envelope);
     const state = String(envelope?.state || '').toLowerCase();
     requestState = state;
     if (state === 'completed') {
@@ -322,7 +427,7 @@ export function createPdfView() {
       refreshUsage();
       return true;
     }
-    setPending(pendingTextFor(envelope));
+    setPending(pdfPendingText(envelope));
     return false;
   }
 
@@ -343,8 +448,8 @@ export function createPdfView() {
     pollTimer = window.setTimeout(() => poll(token), POLL_INTERVAL_MS);
   }
 
-  async function recoverPendingOperation(userId) {
-    const saved = operationRecovery.load(userId);
+  async function recoverPendingOperation(ownerKey) {
+    const saved = operationRecovery.load(ownerKey);
     if (!saved) return;
     const token = ++runToken;
     stopPolling();
@@ -353,6 +458,10 @@ export function createPdfView() {
     pendingOperationId = saved.operationId;
     requestId = saved.operationId;
     requestState = '';
+    previewDetails = saved.pdfPreview || null;
+    if (saved.renderOptions) renderControls.setValues(saved.renderOptions);
+    operationStartedAt = saved.startedAt;
+    renderPreviewNotice();
     populateLanguageSelect(targetSelect, saved.targetLanguage);
     setOriginalAvailable(false);
     setStageLoaded(true);
@@ -360,8 +469,8 @@ export function createPdfView() {
     setStatus('');
     setBusy(true);
 
-    const result = await operationRecovery.recover(userId);
-    if (token !== runToken || userId !== activeUserId) return;
+    const result = await operationRecovery.recover(ownerKey);
+    if (token !== runToken || ownerKey !== activeOwnerKey) return;
     if (result.error) {
       clearPending();
       setBusy(false);
@@ -389,8 +498,14 @@ export function createPdfView() {
   }
 
   async function translate(file) {
+    if (!planResolved || !usageResolved || quotaIsExhausted()) {
+      renderAdmissionState();
+      return;
+    }
     const token = ++runToken;
     stopPolling();
+    await whenAuthReady();
+    if (token !== runToken) return;
     // A replacement must wait until the old reservation is settled. Otherwise
     // a target-language change can reserve the same pages twice and strand the
     // old hold after the regular poll has been invalidated.
@@ -413,6 +528,10 @@ export function createPdfView() {
     pendingOperationId = '';
     requestId = '';
     requestState = '';
+    previewDetails = null;
+    operationStartedAt = '';
+    renderControls.setEnvelope(null);
+    renderPreviewNotice();
     downloadLink.hidden = true;
     downloadLink.removeAttribute('href');
     if (translatedUrl) {
@@ -430,16 +549,13 @@ export function createPdfView() {
     setBusy(true);
     const operationId = globalThis.crypto.randomUUID();
     pendingOperationId = operationId;
-    operationRecovery.remember(activeUserId, {
-      operationId,
-      fileName: sourceFileName,
-      targetLanguage: targetSelect.value,
-      startedAt: new Date().toISOString(),
-    });
+    operationStartedAt = new Date().toISOString();
+    rememberPendingOperation(operationId);
     try {
       const envelope = await submitPdf(file, {
         target: targetSelect.value,
         operationId,
+        renderOptions: renderControls.getValues(),
       });
       if (token !== runToken) {
         cancelStaleSubmit(envelope);
@@ -447,6 +563,7 @@ export function createPdfView() {
       }
       requestId = String(envelope?.request_id || '');
       requestState = String(envelope?.state || '').toLowerCase();
+      applyPreviewEnvelope(envelope);
       refreshUsage();
       if (!requestId) {
         clearPending();
@@ -454,7 +571,7 @@ export function createPdfView() {
         setBusy(false);
         return;
       }
-      setPending(pendingTextFor(envelope));
+      setPending(pdfPendingText(envelope));
       poll(token);
     } catch (err) {
       if (token !== runToken) return;
@@ -464,7 +581,64 @@ export function createPdfView() {
       clearPending();
       setStatus(err.message || 'Could not submit the PDF.', true);
       setBusy(false);
-      refreshUsage();
+      await refreshUsage();
+      if (err?.status === 429 && quotaIsExhausted()) clearLocalPdfState();
+    }
+  }
+
+  function handleRenderOptionsChange() {
+    if (requestState !== 'completed' || !requestId) return;
+    rerenderCurrent();
+  }
+
+  async function rerenderCurrent() {
+    const sourceRequestId = requestId;
+    const token = ++runToken;
+    stopPolling();
+    await whenAuthReady();
+    if (token !== runToken) return;
+    const operationId = globalThis.crypto.randomUUID();
+    pendingOperationId = operationId;
+    operationStartedAt = new Date().toISOString();
+    downloadLink.hidden = true;
+    setPending('Rendering…');
+    setStatus('');
+    setBusy(true);
+    rememberPendingOperation(operationId);
+    try {
+      const envelope = await rerenderPdf(sourceRequestId, {
+        operationId,
+        renderOptions: renderControls.getValues(),
+      });
+      if (token !== runToken) {
+        cancelStaleSubmit(envelope);
+        return;
+      }
+      requestId = String(envelope?.request_id || '');
+      requestState = String(envelope?.state || '').toLowerCase();
+      applyPreviewEnvelope(envelope);
+      if (!requestId) {
+        forgetPendingOperation(operationId);
+        clearPending();
+        translatedFrame.hidden = !translatedUrl;
+        setStatus('The service did not return a request id.', true);
+        setBusy(false);
+        return;
+      }
+      setPending(pdfPendingText(envelope));
+      poll(token);
+    } catch (err) {
+      if (token !== runToken) return;
+      if (err?.status && err.status !== 408 && err.status < 500) {
+        forgetPendingOperation(operationId);
+      }
+      requestId = sourceRequestId;
+      requestState = 'completed';
+      clearPending();
+      translatedFrame.hidden = !translatedUrl;
+      downloadLink.hidden = !translatedUrl;
+      setStatus(err.message || 'Could not render the PDF.', true);
+      setBusy(false);
     }
   }
 
@@ -474,7 +648,7 @@ export function createPdfView() {
 
   function cancelAndSettle(id) {
     if (cancellationSettlements.has(id)) return cancellationSettlements.get(id);
-    const ownerId = activeUserId;
+    const ownerId = activeOwnerKey;
     const settlement = cancelPdf(id)
       .then((envelope) => waitForCancellationSettlement(envelope, {
         getRequest: getPdfRequest,
@@ -513,6 +687,10 @@ export function createPdfView() {
     pendingOperationId = '';
     requestId = '';
     requestState = '';
+    previewDetails = null;
+    operationStartedAt = '';
+    renderControls.setEnvelope(null);
+    renderPreviewNotice();
     downloadLink.hidden = true;
     downloadLink.removeAttribute('href');
     downloadLink.removeAttribute('download');
@@ -533,7 +711,7 @@ export function createPdfView() {
     stopPolling();
     const operationId = pendingOperationId || requestId;
     const settlement = cancelRequest();
-    operationRecovery.forget(activeUserId, operationId);
+    operationRecovery.forget(activeOwnerKey, operationId);
     clearLocalPdfState();
     settlement?.catch(() => {});
   }
@@ -541,7 +719,7 @@ export function createPdfView() {
   function discardAccountState() {
     ++runToken;
     stopPolling();
-    operationRecovery.forget(activeUserId);
+    operationRecovery.forget(activeOwnerKey);
     clearLocalPdfState();
   }
 
@@ -560,6 +738,10 @@ export function createPdfView() {
 
   function acceptFile(file) {
     if (!file) return;
+    if (!planResolved || !usageResolved || quotaIsExhausted()) {
+      renderAdmissionState();
+      return;
+    }
     if (file.type !== 'application/pdf' && !/\.pdf$/i.test(file.name || '')) {
       setStatus('Unsupported file type — choose a PDF.', true);
       return;

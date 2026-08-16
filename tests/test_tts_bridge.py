@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import base64
 import io
 import json
 import shutil
@@ -15,42 +14,40 @@ from app.tts_bridge import TTS_ROOT
 from app.tts_bridge import tts_settings_payload
 from app.tts_bridge import tts_settings_snapshot
 from app.tts_bridge import tts_uses_asr_reference_wav
+from app.upstreams.tts_pool.client import TtsSynthesisResult
 
 
 class FakeTtsPool:
     def __init__(self) -> None:
         self.calls = []
 
-    def post_json(self, url, payload, *, timeout_s):
+    def synthesize(self, payload, *, fairness_key, timeout_s):
         self.calls.append(
             {
-                "url": url,
                 "payload": payload,
+                "fairness_key": fairness_key,
                 "timeout_s": timeout_s,
             }
         )
-        return {
-            "id": "ttsresp_test",
-            "object": "tts_response",
-            "model": payload["model"],
-            "audio": {
-                "mime_type": "audio/wav",
-                "data_base64": base64.b64encode(b"wav-bytes").decode("ascii"),
-                "sample_rate_hz": 24000,
-                "duration_ms": 100,
-            },
-            "metrics": {
+        return TtsSynthesisResult(
+            response_id="ttsresp_test",
+            model=payload["model"],
+            pcm=b"\x00\x00" * 2400,
+            sample_rate_hz=24000,
+            channel_count=1,
+            duration_ms=100,
+            metrics={
                 "engine_queue_wait_ms": 1.0,
                 "backend_synthesis_wall_ms": 2.0,
                 "pool_total_wall_ms": 3.0,
             },
-            "metadata": {
+            metadata={
                 "engine": payload["model"],
                 "voice": payload.get("voice", {}).get("preset", ""),
                 "device": "remote",
                 "model_id": payload["model"],
             },
-        }
+        )
 
 
 class TTSBridgeTests(unittest.TestCase):
@@ -89,15 +86,17 @@ class TTSBridgeTests(unittest.TestCase):
         session_id = "conv_test_tts_pool_kokoro"
         self.addCleanup(lambda: shutil.rmtree(TTS_ROOT / session_id, ignore_errors=True))
 
-        with mock.patch("app.tts_bridge._post_json", side_effect=fake_pool.post_json):
+        with mock.patch("app.tts_bridge.synthesize_tts", side_effect=fake_pool.synthesize):
             payload = TTSBridge().synthesize(
                 session_id=session_id,
+                fairness_key="principal_test",
                 text="Hello",
                 language="English",
                 settings=settings,
             )
 
         request = fake_pool.calls[0]["payload"]
+        self.assertEqual(fake_pool.calls[0]["fairness_key"], "principal_test")
         self.assertEqual(request["model"], "kokoro")
         self.assertEqual(request["input"], "Hello")
         self.assertEqual(request["language"], "English")
@@ -105,7 +104,7 @@ class TTSBridgeTests(unittest.TestCase):
         self.assertNotIn("reference_audio", request["voice"])
 
         artifact = TTS_ROOT / session_id / f"{payload['artifact_id']}.wav"
-        self.assertEqual(artifact.read_bytes(), b"wav-bytes")
+        self.assertTrue(artifact.read_bytes().startswith(b"RIFF"))
         self.assertEqual(payload["mime_type"], "audio/wav")
         self.assertEqual(payload["sample_rate_hz"], 24000)
         self.assertEqual(payload["duration_ms"], 100)
@@ -136,9 +135,10 @@ class TTSBridgeTests(unittest.TestCase):
         source_path.write_bytes(_silent_wav(seconds=3.0))
         self.addCleanup(lambda: shutil.rmtree(session_root, ignore_errors=True))
 
-        with mock.patch("app.tts_bridge._post_json", side_effect=fake_pool.post_json):
+        with mock.patch("app.tts_bridge.synthesize_tts", side_effect=fake_pool.synthesize):
             payload = TTSBridge().synthesize(
                 session_id=session_id,
+                fairness_key="principal_test",
                 text="Hallo",
                 language="Dutch",
                 settings=settings,
@@ -154,7 +154,7 @@ class TTSBridgeTests(unittest.TestCase):
         reference_audio = request["voice"]["reference_audio"]
         self.assertEqual(reference_audio["mime_type"], "audio/wav")
         self.assertEqual(reference_audio["max_duration_s"], 2.0)
-        reference_bytes = base64.b64decode(reference_audio["data_base64"])
+        reference_bytes = reference_audio["data"]
         self.assertLess(len(reference_bytes), source_path.stat().st_size)
         self.assertLessEqual(_wav_duration_ms(reference_bytes), 2000)
         self.assertTrue(payload["metadata"]["reference_client_clipped"])
@@ -181,9 +181,10 @@ class TTSBridgeTests(unittest.TestCase):
         session_id = "conv_test_tts_pool_no_reference"
         self.addCleanup(lambda: shutil.rmtree(TTS_ROOT / session_id, ignore_errors=True))
 
-        with mock.patch("app.tts_bridge._post_json", side_effect=fake_pool.post_json):
+        with mock.patch("app.tts_bridge.synthesize_tts", side_effect=fake_pool.synthesize):
             TTSBridge().synthesize(
                 session_id=session_id,
+                fairness_key="principal_test",
                 text="Hallo",
                 language="Dutch",
                 settings=settings,
@@ -220,9 +221,10 @@ class TTSBridgeTests(unittest.TestCase):
         source_path.write_bytes(_silent_wav(seconds=3.0))
         self.addCleanup(lambda: shutil.rmtree(session_root, ignore_errors=True))
 
-        with mock.patch("app.tts_bridge._post_json", side_effect=fake_pool.post_json):
+        with mock.patch("app.tts_bridge.synthesize_tts", side_effect=fake_pool.synthesize):
             TTSBridge().synthesize(
                 session_id=session_id,
+                fairness_key="principal_test",
                 text="Hallo",
                 language="Dutch",
                 settings=settings,
@@ -292,9 +294,10 @@ class TTSBridgeTests(unittest.TestCase):
         # ASR wav is intentionally not provided — runtime would skip it for stable_generated.
         self.assertFalse(tts_uses_asr_reference_wav("Dutch", settings=settings))
 
-        with mock.patch("app.tts_bridge._post_json", side_effect=fake_pool.post_json):
+        with mock.patch("app.tts_bridge.synthesize_tts", side_effect=fake_pool.synthesize):
             payload = TTSBridge().synthesize(
                 session_id=session_id,
+                fairness_key="principal_test",
                 text="Hallo",
                 language="Dutch",
                 settings=settings,
@@ -338,9 +341,10 @@ class TTSBridgeTests(unittest.TestCase):
         session_id = "conv_test_uc2_stable"
         self.addCleanup(lambda: shutil.rmtree(TTS_ROOT / session_id, ignore_errors=True))
 
-        with mock.patch("app.tts_bridge._post_json", side_effect=fake_pool.post_json):
+        with mock.patch("app.tts_bridge.synthesize_tts", side_effect=fake_pool.synthesize):
             payload = TTSBridge().synthesize(
                 session_id=session_id,
+                fairness_key="principal_test",
                 text="Hallo",
                 language="Dutch",
                 settings=settings,
@@ -348,7 +352,7 @@ class TTSBridgeTests(unittest.TestCase):
             )
 
         reference_audio = fake_pool.calls[0]["payload"]["voice"]["reference_audio"]
-        reference_bytes = base64.b64decode(reference_audio["data_base64"])
+        reference_bytes = reference_audio["data"]
         self.assertEqual(_wav_duration_ms(reference_bytes), 5000)
         self.assertEqual(reference_audio["max_duration_s"], 5.0)
         self.assertEqual(
@@ -388,9 +392,10 @@ class TTSBridgeTests(unittest.TestCase):
         session_id = "conv_test_no_uc_stable"
         self.addCleanup(lambda: shutil.rmtree(TTS_ROOT / session_id, ignore_errors=True))
 
-        with mock.patch("app.tts_bridge._post_json", side_effect=fake_pool.post_json):
+        with mock.patch("app.tts_bridge.synthesize_tts", side_effect=fake_pool.synthesize):
             TTSBridge().synthesize(
                 session_id=session_id,
+                fairness_key="principal_test",
                 text="Hallo",
                 language="Dutch",
                 settings=settings,
@@ -428,9 +433,10 @@ class TTSBridgeTests(unittest.TestCase):
         session_id = "conv_test_uc1_last"
         self.addCleanup(lambda: shutil.rmtree(TTS_ROOT / session_id, ignore_errors=True))
 
-        with mock.patch("app.tts_bridge._post_json", side_effect=fake_pool.post_json):
+        with mock.patch("app.tts_bridge.synthesize_tts", side_effect=fake_pool.synthesize):
             TTSBridge().synthesize(
                 session_id=session_id,
+                fairness_key="principal_test",
                 text="Hallo",
                 language="Dutch",
                 settings=settings,
@@ -572,7 +578,12 @@ class TTSBridgeTests(unittest.TestCase):
 
     def test_synthesize_rejects_empty_text(self) -> None:
         with self.assertRaisesRegex(ValueError, "tts_text_empty"):
-            TTSBridge().synthesize(session_id="conv_test_empty", text=" ", language="English")
+            TTSBridge().synthesize(
+                session_id="conv_test_empty",
+                text=" ",
+                language="English",
+                fairness_key="principal_test",
+            )
 
 
 def _silent_wav(*, seconds: float, sample_rate_hz: int = 16000) -> bytes:

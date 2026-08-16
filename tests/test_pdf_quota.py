@@ -6,6 +6,7 @@ resolution are patched out.
 from __future__ import annotations
 
 import io
+import json
 import unittest
 import uuid
 from pathlib import Path
@@ -21,6 +22,8 @@ from app.pdf_quota import (
     require_pdf_request_owner,
     submit_pdf_with_quota,
 )
+from app.pdf_ownership import PDF_RERENDER_RESOURCE
+from app.pdf_render_options import APP_PDF_RENDER_DEFAULTS
 from app.pdf_translation_bridge import PdfTranslationError
 from app.saas_setup import SaasContext
 from saas.entitlements import EntitlementService
@@ -40,7 +43,14 @@ from saas.usage import QuotaService
 
 TENANT = "t"
 PLANS = {
-    "anonymous": {"pdf_translation.enabled": False},
+    "anonymous": {
+        "pdf_translation.enabled": True,
+        "pdf_translation.pages_per_period": 6,
+        "pdf_translation.period": "month",
+        "pdf_translation.max_pages_per_job": 2,
+        "pdf_translation.preview_first_pages": True,
+    },
+    "disabled": {},
     "free": {
         "pdf_translation.enabled": True,
         "pdf_translation.pages_per_period": 50,
@@ -109,7 +119,10 @@ class PdfQuotaFlowTests(unittest.TestCase):
         self._tmp.cleanup()
 
     def _usage(self) -> tuple[int, int]:
-        summary = self.ctx.quota_service.get_usage(self.principal, PAGES_METRIC, "month")
+        return self._usage_for(self.principal)
+
+    def _usage_for(self, principal: Principal) -> tuple[int, int]:
+        summary = self.ctx.quota_service.get_usage(principal, PAGES_METRIC, "month")
         return summary.reserved, summary.consumed
 
     def _submit(self, pages: int = 5, *, operation_id: str | None = None) -> dict:
@@ -123,9 +136,11 @@ class PdfQuotaFlowTests(unittest.TestCase):
                 content_type="application/pdf",
                 target_language="English",
                 operation_id=operation_id,
+                render_options=APP_PDF_RENDER_DEFAULTS.model_dump(),
             )
         self.assertIsNone(token)
         self.assertEqual(mock_submit.call_args.kwargs["operation_id"], operation_id)
+        self.last_submit_kwargs = mock_submit.call_args.kwargs
         return result
 
     def test_submit_reserves_pages_and_links_the_job(self) -> None:
@@ -160,6 +175,7 @@ class PdfQuotaFlowTests(unittest.TestCase):
                 content_type="application/pdf",
                 target_language="English",
                 operation_id="not-a-uuid",
+                render_options=APP_PDF_RENDER_DEFAULTS.model_dump(),
             )
         self.assertEqual(ctx.exception.code, INVALID_OPERATION_ID)
         self.assertEqual(self._usage(), (0, 0))
@@ -170,6 +186,53 @@ class PdfQuotaFlowTests(unittest.TestCase):
         self.assertEqual(ctx.exception.code, PAGE_LIMIT_PER_JOB_EXCEEDED)
         self.assertEqual(ctx.exception.status_code, 422)
         self.assertEqual(self._usage(), (0, 0))
+
+    def test_anonymous_long_pdf_submits_and_reserves_only_the_first_two_pages(self) -> None:
+        anonymous = _principal("anonymous")
+        with patch(
+            "app.pdf_quota.resolve_request_context",
+            return_value=(anonymous, self.entitlements.resolve(anonymous), None),
+        ):
+            envelope = self._submit(5)
+
+        self.assertEqual(count_pdf_pages(self.last_submit_kwargs["document_bytes"]), 2)
+        self.assertEqual(self._usage_for(anonymous), (2, 0))
+        self.assertEqual(
+            envelope["pdf_preview"],
+            {"source_pages": 5, "translated_pages": 2},
+        )
+        event = self.store.get_usage_event_by_job_id(TENANT, envelope["request_id"])
+        metadata = json.loads(event["metadata"])
+        self.assertEqual(metadata["pdf_source_pages"], 5)
+        self.assertEqual(metadata["pdf_translated_pages"], 2)
+        self.assertTrue(metadata["pdf_preview"])
+
+    def test_anonymous_short_pdf_is_not_marked_as_a_partial_preview(self) -> None:
+        anonymous = _principal("anonymous")
+        with patch(
+            "app.pdf_quota.resolve_request_context",
+            return_value=(anonymous, self.entitlements.resolve(anonymous), None),
+        ):
+            envelope = self._submit(1)
+
+        self.assertEqual(count_pdf_pages(self.last_submit_kwargs["document_bytes"]), 1)
+        self.assertEqual(self._usage_for(anonymous), (1, 0))
+        self.assertNotIn("pdf_preview", envelope)
+
+    def test_anonymous_period_limit_counts_translated_preview_pages(self) -> None:
+        anonymous = _principal("anonymous")
+        with patch(
+            "app.pdf_quota.resolve_request_context",
+            return_value=(anonymous, self.entitlements.resolve(anonymous), None),
+        ):
+            self._submit(10)
+            self._submit(10)
+            self._submit(10)
+            with self.assertRaises(SaasError) as ctx:
+                self._submit(10)
+
+        self.assertEqual(ctx.exception.code, PERIOD_QUOTA_EXCEEDED)
+        self.assertEqual(self._usage_for(anonymous), (6, 0))
 
     def test_period_quota_exceeded(self) -> None:
         reservation = self.ctx.quota_service.reserve(
@@ -197,6 +260,7 @@ class PdfQuotaFlowTests(unittest.TestCase):
                     content_type="application/pdf",
                     target_language="English",
                     operation_id=operation_id,
+                    render_options=APP_PDF_RENDER_DEFAULTS.model_dump(),
                 )
         self.assertEqual(self._usage(), (5, 0))
         event = self.store.get_usage_event_by_job_id(TENANT, operation_id)
@@ -217,15 +281,16 @@ class PdfQuotaFlowTests(unittest.TestCase):
                     content_type="application/pdf",
                     target_language="English",
                     operation_id=operation_id,
+                    render_options=APP_PDF_RENDER_DEFAULTS.model_dump(),
                 )
         self.assertEqual(self._usage(), (5, 0))
         self.assertIsNotNone(self.store.get_usage_event_by_job_id(TENANT, operation_id))
 
     def test_disabled_entitlement_rejects(self) -> None:
-        anonymous = _principal("anonymous")
+        disabled = _principal("disabled")
         with patch(
             "app.pdf_quota.resolve_request_context",
-            return_value=(anonymous, self.entitlements.resolve(anonymous), None),
+            return_value=(disabled, self.entitlements.resolve(disabled), None),
         ):
             with self.assertRaises(SaasError) as ctx:
                 self._submit(5)
@@ -288,6 +353,21 @@ class PdfQuotaFlowTests(unittest.TestCase):
     def test_pdf_request_owner_is_accepted(self) -> None:
         envelope = self._submit(5)
         require_pdf_request_owner(None, envelope["request_id"])
+
+    def test_quota_free_pdf_rerender_owner_is_accepted(self) -> None:
+        operation_id = str(uuid.uuid4())
+        self.assertTrue(
+            self.store.claim_resource_owner(
+                TENANT,
+                PDF_RERENDER_RESOURCE,
+                operation_id,
+                self.principal.kind,
+                self.principal.id,
+                "payload-hash",
+            )
+        )
+
+        self.assertIsNone(require_pdf_request_owner(None, operation_id))
 
     def test_same_job_id_in_another_metric_cannot_shadow_pdf_event(self) -> None:
         operation_id = str(uuid.uuid4())
