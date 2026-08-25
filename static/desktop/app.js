@@ -1,5 +1,5 @@
 // Desktop shell bootstrap: sidebar navigation + hash router on the vendored
-// spa-foundation package, following the same pattern as the LLM Workbench
+// spa-foundation package, following the same pattern as the Workbench
 // app. Views are kept alive across navigation (created once, re-attached on
 // return) so a running translation keeps its stage; a view with work in
 // flight marks its sidebar entry via the view-busy event.
@@ -93,20 +93,26 @@ function saveSidebarState() {
 
 function renderNav() {
   const itemMarkup = (item, extraClass = '') => `
-      <li data-route="${item.route}" data-tooltip="${item.name}"${extraClass ? ` class="${extraClass}"` : ''} role="button" tabindex="0">
-        ${iconMarkup(item.icon, 'sidebar-icon')}
-        <span class="link-text">${item.name}</span>
+      <li data-route="${item.route}" data-tooltip="${item.name}"${extraClass ? ` class="${extraClass}"` : ''}>
+        <a data-nav-route="${item.route}" href="${routeUrl(item.route)}">
+          ${iconMarkup(item.icon, 'sidebar-icon')}
+          <span class="link-text">${item.name}</span>
+        </a>
       </li>
     `;
 
   const mainMarkup = NAV_ITEMS.map((item) => itemMarkup(item)).join('');
-  const auxiliaryMarkup = AUX_ITEMS.map((item) => itemMarkup(item, 'sidebar-route-bottom')).join('');
+  const auxiliaryMarkup = AUX_ITEMS
+    .map((item, index) => itemMarkup(item, index === 0 ? 'sidebar-route-bottom' : ''))
+    .join('');
 
   navList.innerHTML = `${mainMarkup}${auxiliaryMarkup}`;
   accountNavList.innerHTML = `
-    <li data-route="account" data-tooltip="Account" role="button" tabindex="0" hidden>
-      <span class="sidebar-account-avatar" data-sidebar-account-avatar>${iconMarkup('user')}</span>
-      <span class="link-text">Account</span>
+    <li data-route="account" data-tooltip="Account" hidden>
+      <a data-nav-route="account" href="${routeUrl('account')}">
+        <span class="sidebar-account-avatar" data-sidebar-account-avatar>${iconMarkup('user')}</span>
+        <span class="link-text">Account</span>
+      </a>
     </li>
   `;
 }
@@ -131,13 +137,17 @@ function updateSidebarAccount(authState) {
 const router = new RouterCore(appRoot, {
   onRouteDidMount: ({ to }) => {
     sidebar.querySelectorAll('[data-route]').forEach((item) => {
-      item.classList.toggle('active', item.dataset.route === to.view);
+      const active = item.dataset.route === to.view;
+      item.classList.toggle('active', active);
+      const link = item.querySelector('[data-nav-route]');
+      if (active) link?.setAttribute('aria-current', 'page');
+      else link?.removeAttribute('aria-current');
     });
   },
 });
 
 ALL_NAV_ITEMS.forEach((item) => {
-  // Keep-alive, same pattern as the LLM Workbench shell: the view element is
+  // Keep-alive, same pattern as the Workbench shell: the view element is
   // created once and cached per route. Navigating away only detaches it (the
   // router clears the host), so DOM state, closures and in-flight polling
   // survive; returning re-attaches the same element. __onActivate /
@@ -200,20 +210,17 @@ function routeUrl(route) {
 }
 
 function navigateFromNavList(event) {
-  const item = event.target.closest('[data-route]');
+  const item = event.target.closest('[data-nav-route]');
   if (!item) return;
-  if (event.type === 'keydown' && event.key !== 'Enter' && event.key !== ' ') return;
-  if (event.type === 'keydown') event.preventDefault();
-  const route = String(item.dataset.route || '');
+  event.preventDefault();
+  const route = String(item.dataset.navRoute || '');
   if (router.has(route)) {
     router.navigate(route, null, { url: routeUrl(route) });
   }
 }
 
 navList.addEventListener('click', navigateFromNavList);
-navList.addEventListener('keydown', navigateFromNavList);
 accountNavList.addEventListener('click', navigateFromNavList);
-accountNavList.addEventListener('keydown', navigateFromNavList);
 onAuthChange(updateSidebarAccount);
 
 function init() {

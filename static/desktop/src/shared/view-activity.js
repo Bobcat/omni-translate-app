@@ -1,4 +1,4 @@
-// Sidebar activity signal, same idiom as the LLM Workbench workflow-activity.
+// Sidebar activity signal, same idiom as the Workbench workflow-activity.
 // A view announces that it has work running so the shell can mark its sidebar
 // entry. The state is kept in the shell (app.js), not in the view: the point
 // of the indicator is to be readable while you are looking at a DIFFERENT view.

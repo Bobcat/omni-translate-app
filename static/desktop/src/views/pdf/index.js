@@ -29,7 +29,7 @@ import {
 import { pdfPendingText } from './progress.js';
 import { createPdfRenderControls } from './render-options.js';
 
-// PDF translation view, same stage model as the LLM Workbench: an empty state
+// PDF translation view, same stage model as the Workbench: an empty state
 // (dropzone) swaps for a loaded state (original frame + translated frame) once
 // a file is chosen. The submit returns a lifecycle envelope immediately and
 // the view polls it — a PDF can take minutes, so the translated frame shows a
@@ -56,6 +56,7 @@ export function createPdfView() {
   const container = document.createElement('div');
   container.className = 'view pdf-view';
   container.innerHTML = `
+    <h1 class="visually-hidden">PDF translation</h1>
     <div class="view-toolbar" id="pdfToolbar">
       <div class="language-pair">
         <button type="button" class="language-trigger" value="auto" aria-label="Source language: Detect language" disabled>Detect language</button>
@@ -196,7 +197,7 @@ export function createPdfView() {
     admissionLoadingEl.hidden = stageLoaded || !waiting;
     quotaCta.element.hidden = !exhausted;
     toolbar.hidden = exhausted;
-    renderControls.setAvailable(!exhausted);
+    renderControls.setAvailable(stageLoaded && !exhausted);
     temporaryNoticeEl.hidden = exhausted;
     quotaCta.update({
       previewPagesPerPeriod,
@@ -262,7 +263,7 @@ export function createPdfView() {
   }
 
   populateLanguageSelect(targetSelect, 'English');
-  applyViewMode();
+  setOriginalAvailable(false);
 
   const applyAccountChange = createAccountChangeGuard(discardAccountState);
   applyAccountChange({ signedIn: false, userId: '' });
@@ -700,7 +701,7 @@ export function createPdfView() {
     if (translatedUrl) URL.revokeObjectURL(translatedUrl);
     originalUrl = '';
     translatedUrl = '';
-    setOriginalAvailable(true);
+    setOriginalAvailable(false);
     clearPending();
     setStatus('');
     setStageLoaded(false);

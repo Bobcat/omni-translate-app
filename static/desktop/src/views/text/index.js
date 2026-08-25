@@ -24,10 +24,26 @@ const TRAILING_BLANK_LINES = 4;
 const VIEWPORT_BOTTOM_MARGIN = 12;
 const RESIZE_CORNER_SIZE = 24;
 
+export function nextTextSwapState({
+  sourceLanguage,
+  targetLanguage,
+  sourceText,
+  targetText,
+}) {
+  const existingTargetText = String(targetText || '');
+  return {
+    sourceLanguage: String(targetLanguage || ''),
+    targetLanguage: String(sourceLanguage || ''),
+    sourceText: existingTargetText || String(sourceText || ''),
+    promotedTargetText: Boolean(existingTargetText),
+  };
+}
+
 export function createTextView() {
   const container = document.createElement('div');
   container.className = 'view text-view';
   container.innerHTML = `
+    <h1 class="visually-hidden">Text translation</h1>
     <div class="view-toolbar">
       <div class="language-pair">
         <button type="button" id="textSource" aria-label="Choose source language"></button>
@@ -277,9 +293,19 @@ export function createTextView() {
   }
 
   function swapLanguages() {
-    const source = sourceSelect.value;
-    populateLanguageSelect(sourceSelect, targetSelect.value);
-    populateLanguageSelect(targetSelect, source);
+    const next = nextTextSwapState({
+      sourceLanguage: sourceSelect.value,
+      targetLanguage: targetSelect.value,
+      sourceText: inputEl.value,
+      targetText: outputEl.textContent,
+    });
+    runner.invalidate();
+    populateLanguageSelect(sourceSelect, next.sourceLanguage);
+    populateLanguageSelect(targetSelect, next.targetLanguage);
+    if (next.promotedTargetText) {
+      inputEl.value = next.sourceText;
+      outputEl.textContent = '';
+    }
     persistLanguages();
     scheduleTranslation({ immediate: true });
   }

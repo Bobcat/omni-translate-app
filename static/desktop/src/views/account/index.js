@@ -5,11 +5,14 @@ import { createSignInCard } from '../../shared/signin-card.js';
 export function createAccountView() {
   const container = document.createElement('div');
   container.className = 'view settings-view account-view';
+  const heading = document.createElement('h1');
+  heading.className = 'visually-hidden';
+  heading.textContent = 'Account';
   const accountGroup = document.createElement('section');
   accountGroup.className = 'settings-group';
   accountGroup.setAttribute('aria-label', 'Account');
   accountGroup.hidden = true;
-  container.appendChild(accountGroup);
+  container.append(heading, accountGroup);
   initAccountGroup(accountGroup);
   return container;
 }

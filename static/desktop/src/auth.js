@@ -11,7 +11,7 @@
 import { setAuthTokenProvider } from './shared/auth-headers.js';
 
 const SUPABASE_SDK_URL = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
-const GIS_SDK_URL = 'https://accounts.google.com/gsi/client';
+const GIS_SDK_URL = 'https://accounts.google.com/gsi/client?hl=en';
 const GOOGLE_BUTTON_WIDTH = 280;
 
 let enabled = false;
@@ -103,6 +103,7 @@ export async function renderGoogleButton(element) {
       size: 'medium',
       shape: 'pill',
       text: 'continue_with',
+      locale: 'en',
       width: GOOGLE_BUTTON_WIDTH,
     });
     element.dataset.googleButtonTheme = theme;

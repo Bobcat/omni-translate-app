@@ -35,6 +35,7 @@ export function createImageView() {
   const container = document.createElement('div');
   container.className = 'view image-view';
   container.innerHTML = `
+    <h1 class="visually-hidden">Image translation</h1>
     <div class="view-toolbar">
       <div class="language-pair">
         <button type="button" class="language-trigger" value="auto" aria-label="Source language: Detect language" disabled>Detect language</button>
@@ -120,7 +121,7 @@ export function createImageView() {
   let zoomAuto = true;
 
   populateLanguageSelect(targetSelect, 'English');
-  applyViewMode();
+  setOriginalAvailable(false);
   recoverPendingOperation(activeOwnerKey);
   onAuthChange((authState) => {
     const nextOwnerKey = imageOperationOwnerKey(authState);
@@ -413,7 +414,7 @@ export function createImageView() {
       translatedUrl = '';
     }
     pending.hidden = true;
-    setOriginalAvailable(true);
+    setOriginalAvailable(false);
     if (!keepStatus) setStatus('');
     setStageLoaded(false);
   }
