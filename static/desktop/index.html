@@ -81,10 +81,11 @@
   <link rel="stylesheet" href="css/themes/palettes.css?v=20260811-appearance-1">
   <link rel="stylesheet" href="css/app.css?v=20260823-frontend-polish-1">
   <link rel="stylesheet" href="css/views/pdf-render.css?v=20260811-pdf-render-5">
+  <link rel="stylesheet" href="css/views/info.css?v=20260823-third-party-notices-1">
   <!-- Preload the ES module graph so first loads fetch in parallel instead
        of as a sequential waterfall (no build step). Keep in sync with the
        imports in app.js. -->
-  <link rel="modulepreload" href="app.js?v=20260823-frontend-polish-1">
+  <link rel="modulepreload" href="app.js?v=20260823-third-party-notices-1">
   <link rel="modulepreload" href="../foundation/spa-foundation/index.js">
   <link rel="modulepreload" href="../foundation/spa-foundation/RouterCore.js">
   <link rel="modulepreload" href="../foundation/spa-foundation/ShellState.js">
@@ -120,6 +121,8 @@
   <link rel="modulepreload" href="src/views/pdf/quota-cta.js">
   <link rel="modulepreload" href="src/views/pdf/progress.js">
   <link rel="modulepreload" href="src/views/pdf/render-options.js">
+  <link rel="modulepreload" href="src/views/info/index.js?v=20260823-third-party-notices-1">
+  <link rel="modulepreload" href="../shared/info/index.js?v=20260823-third-party-notices-1">
   <link rel="modulepreload" href="src/views/settings/index.js">
   <link rel="modulepreload" href="src/views/account/index.js">
 </head>
@@ -159,6 +162,6 @@
       }
     }());
   </script>
-  <script type="module" src="app.js?v=20260823-frontend-polish-1"></script>
+  <script type="module" src="app.js?v=20260823-third-party-notices-1"></script>
 </body>
 </html>

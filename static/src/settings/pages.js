@@ -11,12 +11,31 @@ import { renderDevToolsSettings } from './dev-tools.js';
 import { renderImageRenderControls } from './image-render.js';
 import { renderAppearanceSettings } from './appearance.js';
 import { renderAccountSettings } from './account.js';
+import {
+  getInfoCategory,
+  renderInfoArticle,
+  renderInfoOverview,
+} from '../../shared/info/index.js?v=20260823-third-party-notices-1';
 
 const PAGES = ['account', 'appearance', 'microphone', 'audio', 'history', 'dev-tools', 'tuning', 'voice-library', 'image-render'];
 
+function infoCategoryForPage(page) {
+  if (!page.startsWith('info-')) return null;
+  return getInfoCategory(page.slice('info-'.length));
+}
+
+function isInfoPage(page) {
+  return page === 'info' || Boolean(infoCategoryForPage(page));
+}
+
+function resetInfoScroll() {
+  const scrollElement = els.settingsInfoPage.closest('.settings-views');
+  if (scrollElement) scrollElement.scrollTop = 0;
+}
+
 export function setSettingsPage(page) {
   const previous = state.settingsPage;
-  state.settingsPage = PAGES.includes(page) ? page : 'home';
+  state.settingsPage = PAGES.includes(page) || isInfoPage(page) ? page : 'home';
   if (previous === 'voice-library' && state.settingsPage !== 'voice-library') {
     voiceLibraryOnExit();
   }
@@ -33,6 +52,16 @@ export function setSettingsPage(page) {
   if (state.settingsPage === 'image-render') renderImageRenderControls();
   if (state.settingsPage === 'appearance') renderAppearanceSettings();
   if (state.settingsPage === 'account') renderAccountSettings();
+  if (state.settingsPage === 'info') {
+    renderInfoOverview(els.settingsInfoPage, { showTitle: false });
+    resetInfoScroll();
+  } else {
+    const category = infoCategoryForPage(state.settingsPage);
+    if (category) {
+      renderInfoArticle(els.settingsInfoPage, category.id, { showTitle: false });
+      resetInfoScroll();
+    }
+  }
 }
 
 export function renderSettingsPage() {
@@ -40,6 +69,7 @@ export function renderSettingsPage() {
   const root = page === state.settingsRootPage;
   els.settingsHomePage.hidden = page !== 'home';
   els.settingsAccountPage.hidden = page !== 'account';
+  els.settingsInfoPage.hidden = !isInfoPage(page);
   els.settingsAppearancePage.hidden = page !== 'appearance';
   els.settingsMicrophonePage.hidden = page !== 'microphone';
   els.settingsAudioPage.hidden = page !== 'audio';
@@ -71,6 +101,10 @@ export function renderSettingsPage() {
     els.settingsSheetTitle.textContent = 'Voice library';
   } else if (page === 'image-render') {
     els.settingsSheetTitle.textContent = 'Image translation';
+  } else if (page === 'info') {
+    els.settingsSheetTitle.textContent = 'Info & help';
+  } else if (infoCategoryForPage(page)) {
+    els.settingsSheetTitle.textContent = infoCategoryForPage(page).title;
   } else {
     els.settingsSheetTitle.textContent = 'Settings';
   }

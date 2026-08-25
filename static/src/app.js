@@ -32,7 +32,7 @@ import {
   closeSettingsSheet,
   navigateSettingsPage,
   handleSettingsBack,
-} from './settings/sheet.js';
+} from './settings/sheet.js?v=20260823-third-party-notices-1';
 import {
   renderAudioSettings,
   handlePreGainInput,
@@ -176,6 +176,11 @@ async function init() {
   els.settingsVoiceLibraryNav.addEventListener('click', () => navigateSettingsPage('voice-library'));
   els.settingsImageRenderNav.addEventListener('click', () => navigateSettingsPage('image-render'));
   els.settingsAppearanceNav.addEventListener('click', () => navigateSettingsPage('appearance'));
+  els.settingsInfoNav.addEventListener('click', () => navigateSettingsPage('info'));
+  els.settingsInfoPage.addEventListener('click', (event) => {
+    const categoryButton = event.target.closest('[data-info-category]');
+    if (categoryButton) navigateSettingsPage(`info-${categoryButton.dataset.infoCategory}`);
+  });
   bindImageRenderControls();
   bindAppearanceSettings();
   els.voiceLibraryControls.addEventListener('change', handleVoiceLibraryChange);

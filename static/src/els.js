@@ -59,6 +59,8 @@ export const els = {
   settingsBackButton: document.querySelector('#settingsBackButton'),
   settingsHomePage: document.querySelector('#settingsHomePage'),
   settingsAccountPage: document.querySelector('#settingsAccountPage'),
+  settingsInfoNav: document.querySelector('#settingsInfoNav'),
+  settingsInfoPage: document.querySelector('#settingsInfoPage'),
   accountSignedOut: document.querySelector('#accountSignedOut'),
   accountSignedIn: document.querySelector('#accountSignedIn'),
   accountEmail: document.querySelector('#accountEmail'),

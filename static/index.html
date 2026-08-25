@@ -48,6 +48,7 @@
     <link rel="stylesheet" href="/styles/voice.css?v=20260809-mobile-css-split-1">
     <link rel="stylesheet" href="/styles/settings/sheet.css?v=20260809-mobile-css-split-1">
     <link rel="stylesheet" href="/styles/settings/voice.css?v=20260809-mobile-css-split-1">
+    <link rel="stylesheet" href="/styles/settings/info.css?v=20260823-third-party-notices-1">
     <link rel="stylesheet" href="/styles/responsive.css?v=20260812-language-bar-1">
   </head>
   <body>
@@ -291,6 +292,12 @@
                   <small>Options for translating images</small>
                 </span>
               </button>
+              <button class="settings-nav-row" id="settingsInfoNav" type="button">
+                <span>
+                  <strong>Info &amp; help</strong>
+                  <small>Guides, credits and about the app</small>
+                </span>
+              </button>
               <button class="settings-nav-row" id="settingsDevToolsNav" type="button">
                 <span>
                   <strong>Dev tools</strong>
@@ -322,6 +329,8 @@
                 <button class="link-row" id="accountSignOutButton" type="button">Sign out</button>
               </section>
             </div>
+
+            <div class="settings-page settings-info-page" id="settingsInfoPage" hidden></div>
 
             <div class="settings-page" id="settingsAppearancePage" hidden>
               <section class="setting-group" aria-label="Theme">
@@ -540,6 +549,6 @@
       </div>
 
     </main>
-    <script type="module" src="/src/app.js?v=20260823-frontend-polish-1"></script>
+    <script type="module" src="/src/app.js?v=20260823-third-party-notices-1"></script>
   </body>
 </html>

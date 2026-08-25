@@ -19,9 +19,11 @@ import { createVoiceWorkflow } from './src/views/voice/index.js';
 import { createTextView } from './src/views/text/index.js';
 import { createImageView } from './src/views/image/index.js';
 import { createPdfView } from './src/views/pdf/index.js';
+import { createInfoView } from './src/views/info/index.js?v=20260823-third-party-notices-1';
 import { createSettingsView } from './src/views/settings/index.js';
 import { createAccountView } from './src/views/account/index.js';
 import { initDesktopAppearance } from './src/shared/appearance.js';
+import { getInfoCategory } from '../shared/info/index.js?v=20260823-third-party-notices-1';
 
 const STORAGE_KEY = 'omni-translate.desktop.shell';
 
@@ -33,6 +35,7 @@ const NAV_ITEMS = [
 ];
 
 const AUX_ITEMS = [
+  { id: 'info', route: 'info', name: 'Info & help', icon: 'circle-help' },
   { id: 'settings', route: 'settings', name: 'Settings', icon: 'settings' },
 ];
 
@@ -50,6 +53,11 @@ const VIEW_FACTORIES = {
   text: createTextView,
   image: createImageView,
   pdf: createPdfView,
+  info: () => createInfoView({
+    onNavigate: navigateInfoCategory,
+    topicHref: (categoryId) => routeUrl(`info/${encodeURIComponent(categoryId)}`),
+    overviewHref: routeUrl('info'),
+  }),
   settings: () => createSettingsView({
     onToggleRecording: () => getVoiceWorkflow().toggleRecording(),
   }),
@@ -154,10 +162,11 @@ ALL_NAV_ITEMS.forEach((item) => {
   // __onDeactivate let a view hook into that cycle when it needs to.
   let cachedView = null;
   router.register(item.route, {
-    mount: (host) => {
+    mount: (host, data) => {
       host.innerHTML = '';
       if (!cachedView) cachedView = VIEW_FACTORIES[item.id]();
       host.appendChild(cachedView);
+      if (typeof cachedView.__onRoute === 'function') cachedView.__onRoute(data);
       if (typeof cachedView.__onActivate === 'function') cachedView.__onActivate();
     },
     unmount: () => {
@@ -209,6 +218,21 @@ function routeUrl(route) {
   return `${window.location.pathname}${window.location.search}#${route}`;
 }
 
+function parseRouteHash(hash) {
+  const raw = String(hash || '').replace(/^#/, '');
+  const [view, ...parts] = raw.split('/');
+  if (!router.has(view)) return null;
+  if (view !== 'info' || parts.length === 0) return { view, data: null };
+  const categoryId = parts.join('/');
+  return getInfoCategory(categoryId) ? { view, data: { categoryId } } : null;
+}
+
+function navigateInfoCategory(categoryId) {
+  const category = getInfoCategory(categoryId);
+  const route = category ? `info/${encodeURIComponent(category.id)}` : 'info';
+  router.navigate('info', category ? { categoryId: category.id } : null, { url: routeUrl(route) });
+}
+
 function navigateFromNavList(event) {
   const item = event.target.closest('[data-nav-route]');
   if (!item) return;
@@ -230,7 +254,7 @@ function init() {
   renderNav();
 
   router.bindPopState({
-    parseHash: ({ hash }) => (router.has(hash) ? { view: hash, data: null } : null),
+    parseHash: ({ hash }) => parseRouteHash(hash),
   });
 
   // Kick auth off before the first view mounts so account controls and bearer
@@ -242,8 +266,11 @@ function init() {
 
   // Voice is the app's main flow: land there when the hash is empty or unknown.
   const hash = window.location.hash.replace(/^#/, '');
-  const initialRoute = router.has(hash) ? hash : 'voice';
-  router.start(initialRoute, null, { url: routeUrl(initialRoute) });
+  const initialRoute = parseRouteHash(hash) || { view: 'voice', data: null };
+  const initialHash = initialRoute.view === 'info' && initialRoute.data?.categoryId
+    ? `info/${encodeURIComponent(initialRoute.data.categoryId)}`
+    : initialRoute.view;
+  router.start(initialRoute.view, initialRoute.data, { url: routeUrl(initialHash) });
 }
 
 init();
