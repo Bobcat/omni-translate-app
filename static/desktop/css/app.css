@@ -12,6 +12,18 @@ body {
   display: none !important;
 }
 
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 /* === Sidebar additions (on top of shell.css) === */
 
 /* Quiet editorial wordmark; the body UI remains system sans-serif. */
@@ -1038,7 +1050,14 @@ body {
 /* === Settings view === */
 
 .settings-view {
+  --settings-label-width: 160px;
+  --settings-control-width: 320px;
+  --settings-column-gap: 16px;
   max-width: 760px;
+}
+
+.desktop-settings-view {
+  max-width: 560px;
 }
 
 .settings-group {
@@ -1058,10 +1077,15 @@ body {
 }
 
 .appearance-setting {
+  width: 100%;
+  max-width: calc(var(--settings-label-width) + var(--settings-column-gap) + var(--settings-control-width));
   display: grid;
-  grid-template-columns: minmax(100px, 1fr) minmax(250px, 1.4fr);
+  grid-template-columns: var(--settings-label-width) minmax(0, var(--settings-control-width));
   align-items: center;
-  gap: 18px;
+  gap: var(--settings-column-gap);
+  color: var(--text-color);
+  font-size: 0.87rem;
+  line-height: 1.35;
 }
 
 .appearance-setting-label {
@@ -1120,30 +1144,227 @@ body {
   outline-offset: 2px;
 }
 
-.setting-row {
+.desktop-microphone-settings {
+  display: grid;
+  gap: 6px;
+}
+
+.desktop-microphone-settings > h3 {
+  margin: 4px 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.microphone-setting-group {
+  min-height: 48px;
+  margin: 0;
+  padding: 10px 12px;
+  display: grid;
+  gap: 8px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.microphone-setting-title-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  font-size: 0.87rem;
+  gap: 12px;
+  color: var(--text-strong);
+  font-size: 0.78rem;
+  font-weight: 600;
+  line-height: 1.25;
 }
 
-.setting-row select {
-  padding: 6px 10px;
+.microphone-setting-value {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.microphone-range-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  font-size: 0.78rem;
+  line-height: 1.25;
+}
+
+.microphone-range-row input[type="range"] {
+  width: 100%;
+  margin: 0;
+  accent-color: var(--primary);
+}
+
+.microphone-toggle-row {
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--text);
+  font-size: 0.78rem;
+  font-weight: 400;
+  line-height: 1.25;
+}
+
+.microphone-select-row {
+  min-height: 32px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  color: var(--text);
+  font-size: 0.78rem;
+  line-height: 1.25;
+}
+
+.microphone-select-row select {
+  appearance: none;
+  -webkit-appearance: none;
+  min-width: 0;
+  min-height: 30px;
+  max-width: 100%;
+  padding: 0 26px 0 8px;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: var(--panel);
-  color: var(--text-color);
-  font-size: 0.85rem;
+  background: var(--surface);
+  background-image: var(--select-chevron);
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 10px 6px;
+  color: var(--text);
+  font: inherit;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.setting-row input[type="range"] {
-  width: 220px;
-  accent-color: var(--primary);
+.settings-mic-meter {
+  position: relative;
+  height: 18px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--surface-muted);
+}
+
+.settings-mic-meter-fill {
+  position: absolute;
+  inset: 0;
+  background: var(--accent);
+  transform: scaleX(0);
+  transform-origin: left center;
+}
+
+.settings-mic-meter.is-hot .settings-mic-meter-fill {
+  background: var(--warning-accent);
+}
+
+.settings-mic-meter-threshold {
+  position: absolute;
+  inset: 0 auto 0 90%;
+  width: 2px;
+  background: var(--text-muted);
+  opacity: 0.65;
+}
+
+.microphone-switch {
+  position: relative;
+  display: inline-block;
+  width: 36px;
+  height: 20px;
+  flex: 0 0 auto;
+}
+
+.microphone-switch input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  border: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  opacity: 0;
+  cursor: pointer;
+  z-index: 1;
+}
+
+.microphone-switch-track {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  background: var(--control-track);
+  transition: background-color 0.14s ease;
+}
+
+.microphone-switch-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--surface);
+  box-shadow: var(--shadow-control);
+  transition: transform 0.14s ease;
+}
+
+.microphone-switch input:checked ~ .microphone-switch-track {
+  background: var(--accent);
+}
+
+.microphone-switch input:checked ~ .microphone-switch-thumb {
+  transform: translateX(16px);
+}
+
+.microphone-switch input:focus-visible ~ .microphone-switch-track {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.microphone-switch input:disabled ~ .microphone-switch-track,
+.microphone-switch input:disabled ~ .microphone-switch-thumb {
+  opacity: 0.48;
+}
+
+.microphone-link-button {
+  width: 100%;
+  min-height: 38px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--accent);
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 700;
+  line-height: 1.2;
+  text-align: left;
+  cursor: pointer;
+}
+
+.microphone-link-button:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+
+.microphone-link-button:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.microphone-link-button:disabled {
+  cursor: default;
+  opacity: 0.48;
 }
 
 @media (max-width: 620px) {
   .appearance-setting {
+    max-width: none;
     grid-template-columns: 1fr;
     gap: 8px;
   }

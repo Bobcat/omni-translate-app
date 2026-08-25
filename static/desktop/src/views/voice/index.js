@@ -10,10 +10,11 @@ import { createVoiceSession, visibleText } from './session.js';
 // navigation, so a running session survives view switches; the sidebar
 // entry is marked busy while the session is live.
 
-export function createVoiceView() {
+export function createVoiceWorkflow() {
   const container = document.createElement('div');
   container.className = 'view voice-view';
   container.innerHTML = `
+    <h1 class="visually-hidden">Voice translation</h1>
     <div class="view-toolbar voice-languagebar">
       <div class="language-pair">
         <button type="button" id="voiceSourceLanguage" aria-label="Choose source language"></button>
@@ -284,7 +285,10 @@ export function createVoiceView() {
     statusEl.classList.toggle('is-error', isError);
   }
 
-  return container;
+  return {
+    view: container,
+    toggleRecording: () => session.toggleMic(),
+  };
 }
 
 function previewSuffixText(committed, preview) {

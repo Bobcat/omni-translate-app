@@ -15,7 +15,7 @@ import { accountInitials } from '../shared/account-display.js';
 import { cancelImage, getConfig, getImageRequest } from './src/shared/api.js';
 import { initAuth, onAuthChange, onBeforeSignOut } from './src/auth.js';
 import { registerImageSignOutCancellation } from '../shared/image-operation-recovery.js';
-import { createVoiceView } from './src/views/voice/index.js';
+import { createVoiceWorkflow } from './src/views/voice/index.js';
 import { createTextView } from './src/views/text/index.js';
 import { createImageView } from './src/views/image/index.js';
 import { createPdfView } from './src/views/pdf/index.js';
@@ -38,12 +38,21 @@ const AUX_ITEMS = [
 
 const ACCOUNT_ITEM = { id: 'account', route: 'account', name: 'Account', icon: 'user' };
 
+let voiceWorkflow = null;
+
+function getVoiceWorkflow() {
+  if (!voiceWorkflow) voiceWorkflow = createVoiceWorkflow();
+  return voiceWorkflow;
+}
+
 const VIEW_FACTORIES = {
-  voice: createVoiceView,
+  voice: () => getVoiceWorkflow().view,
   text: createTextView,
   image: createImageView,
   pdf: createPdfView,
-  settings: createSettingsView,
+  settings: () => createSettingsView({
+    onToggleRecording: () => getVoiceWorkflow().toggleRecording(),
+  }),
   account: createAccountView,
 };
 

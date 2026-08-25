@@ -1,8 +1,9 @@
 // Voice session state machine for the desktop view. Trimmed port of the
 // mobile session flow (static/src/session/lifecycle.js + messages.js +
 // audio-queue.js): same protocol against the same backend, minus the
-// mobile-only concerns (tuning/live-settings, mic auto-off,
-// PC export, history stack). Live/TTS settings are left at the server
+// mobile-only concerns (tuning/live-settings, PC export, history stack).
+// Microphone capture settings and auto-off behaviour are shared with mobile.
+// Live/TTS settings are left at the server
 // defaults — the desktop app has no tuning UI.
 //
 // All state lives in this closure. The shell keeps the voice view alive
@@ -14,9 +15,16 @@ import { SessionSocket } from '../../../../src/api-client.js';
 import { AudioCapture } from '../../../../src/shared/audio-capture.js';
 import { playMicOffCue, playMicOnCue } from '../../../../src/shared/audio-cue.js';
 import { AudioQueue } from '../../../../src/shared/audio-playback.js';
+import { createMicAutoOffController } from '../../../../src/shared/mic-auto-off-controller.js';
 import { guessSetupLanguages, normalizeLanguageName } from '../../../../src/domain/languages.js';
 import { loadSetupLanguages, persistSetupLanguages } from '../../../../src/domain/storage.js';
 import { getConfig, createVoiceSession as requestVoiceSession } from '../../shared/api.js';
+import {
+  getDesktopMicrophoneState,
+  setDesktopMicrophoneRuntime,
+  setDesktopMicrophoneSettings,
+  subscribeDesktopMicrophoneState,
+} from '../../shared/microphone-settings.js';
 import { publishViewBusy } from '../../shared/view-activity.js';
 
 const LANE_IDS = ['a_to_b', 'b_to_a'];
@@ -142,9 +150,33 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
   // construction, so suppressing onChange until then loses nothing.
   let constructed = false;
 
+  const micAutoOff = createMicAutoOffController({
+    getSnapshot: () => {
+      const microphone = getDesktopMicrophoneState();
+      return {
+        active: state.live,
+        listening: state.micState === MIC_STATES.LISTENING,
+        speaking: state.currentTurn?.state === TURN_STATES.OPEN_SPEAKING,
+        silenceSeconds: microphone.autoOffSilenceSeconds,
+        autoOffAfterBubble: microphone.autoOffAfterBubble,
+      };
+    },
+    stopMicrophone: () => stopMic(),
+  });
+
+  subscribeDesktopMicrophoneState((event) => {
+    if (event.source === 'runtime' || event.source === 'capture') return;
+    applyMicrophoneSettingsChange(event);
+  });
+
   function emit() {
     if (!constructed) return;
     onChange?.();
+  }
+
+  function reportMicrophoneLevel(level, listening) {
+    onMicLevel?.(level, listening);
+    setDesktopMicrophoneRuntime({ inputLevel: level, listening });
   }
 
   function currentLaneId() {
@@ -208,6 +240,7 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
   async function start() {
     resetTranscript();
     state.starting = true;
+    setDesktopMicrophoneRuntime({ captureBusy: true });
     state.status = 'connecting';
     state.statusMessage = '';
     emit();
@@ -243,10 +276,12 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
       state.socket = socket;
       state.audioInputSampleRate = session.audio_input?.sample_rate_hz || 16000;
       state.socket.startListening();
+      capture.setPreGain(getDesktopMicrophoneState().preGain);
       state.capture = capture;
       state.micState = MIC_STATES.LISTENING;
-      onMicLevel?.(0, true);
-      safePlayMicOnCue();
+      syncCaptureSettings(capture);
+      reportMicrophoneLevel(0, true);
+      if (getDesktopMicrophoneState().autoOffCueEnabled) safePlayMicOnCue();
       state.live = true;
       publishViewBusy('voice', true);
       state.status = 'listening';
@@ -262,6 +297,7 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
       state.statusMessage = error?.message || 'Could not start the voice session.';
     } finally {
       state.starting = false;
+      setDesktopMicrophoneRuntime({ captureBusy: false });
       emit();
     }
   }
@@ -285,16 +321,19 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
     state.capture?.stop();
     state.capture = null;
     state.micState = MIC_STATES.OFF;
-    onMicLevel?.(0, false);
+    micAutoOff.clear();
+    reportMicrophoneLevel(0, false);
     resetToSetup();
     emit();
   }
 
   function cleanupSession({ keepSocket = false } = {}) {
+    micAutoOff.clear();
     state.capture?.stop();
     state.capture = null;
     state.micState = MIC_STATES.OFF;
-    onMicLevel?.(0, false);
+    reportMicrophoneLevel(0, false);
+    setDesktopMicrophoneRuntime({ captureBusy: false });
     state.captureMutedForPlayback = false;
     state.speakInflightFilter = null;
     hideVadHint();
@@ -306,9 +345,11 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
   }
 
   function resetToSetup() {
+    micAutoOff.clear();
     state.live = false;
     state.micState = MIC_STATES.OFF;
-    onMicLevel?.(0, false);
+    reportMicrophoneLevel(0, false);
+    setDesktopMicrophoneRuntime({ captureBusy: false });
     resetTranscript();
     publishViewBusy('voice', false);
     if (state.status !== 'error') state.status = 'idle';
@@ -340,26 +381,30 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
     if (!state.live || state.micState !== MIC_STATES.OFF) return;
     if (!state.socket?.isOpen()) return;
     state.starting = true;
+    setDesktopMicrophoneRuntime({ captureBusy: true });
     emit();
     try {
-      const capture = createCapture({ targetSampleRate: state.audioInputSampleRate });
-      await capture.start();
+      const capture = await createStartedCapture({ targetSampleRate: state.audioInputSampleRate });
       state.capture = capture;
       state.socket.startListening();
       state.micState = MIC_STATES.LISTENING;
-      onMicLevel?.(0, true);
-      safePlayMicOnCue();
+      syncCaptureSettings(capture);
+      reportMicrophoneLevel(0, true);
+      micAutoOff.arm();
+      if (getDesktopMicrophoneState().autoOffCueEnabled) safePlayMicOnCue();
       state.captureMutedForPlayback = false;
       state.status = 'listening';
     } catch (error) {
       state.capture?.stop();
       state.capture = null;
       state.micState = MIC_STATES.OFF;
-      onMicLevel?.(0, false);
+      micAutoOff.clear();
+      reportMicrophoneLevel(0, false);
       state.status = 'error';
       state.statusMessage = error?.message || 'Microphone unavailable.';
     } finally {
       state.starting = false;
+      setDesktopMicrophoneRuntime({ captureBusy: false });
       emit();
     }
   }
@@ -367,11 +412,12 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
   function stopMic() {
     if (!state.live) return;
     state.captureMutedForPlayback = false;
+    micAutoOff.clear();
     state.capture?.stop();
     state.capture = null;
     state.micState = MIC_STATES.OFF;
-    onMicLevel?.(0, false);
-    safePlayMicOffCue();
+    reportMicrophoneLevel(0, false);
+    if (getDesktopMicrophoneState().autoOffCueEnabled) safePlayMicOffCue();
     if (state.currentTurn.canTranslateNow) {
       state.socket?.translateNow();
     }
@@ -381,23 +427,30 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
     emit();
   }
 
-  function createCapture({ targetSampleRate = 16000 } = {}) {
+  function createCapture({
+    targetSampleRate = 16000,
+    microphone = getDesktopMicrophoneState(),
+  } = {}) {
     return new AudioCapture({
       targetSampleRate,
       chunkMs: 40,
-      // Same fixed input settings as the mobile defaults; the desktop app
-      // has no audio-settings UI.
-      preGain: 1.5,
-      autoGainControl: true,
+      preGain: microphone.preGain,
+      autoGainControl: microphone.autoGainControl,
       onChunk: (buffer) => {
         if (shouldSendMicrophoneAudio()) state.socket?.sendAudio(buffer);
       },
-      onLevel: (level) => onMicLevel?.(level, state.micState === MIC_STATES.LISTENING),
+      onLevel: (level) => reportMicrophoneLevel(
+        level,
+        state.micState === MIC_STATES.LISTENING,
+      ),
     });
   }
 
-  async function createStartedCapture({ targetSampleRate = 16000 } = {}) {
-    const capture = createCapture({ targetSampleRate });
+  async function createStartedCapture({
+    targetSampleRate = 16000,
+    microphone = getDesktopMicrophoneState(),
+  } = {}) {
+    const capture = createCapture({ targetSampleRate, microphone });
     try {
       await capture.start();
       return capture;
@@ -405,6 +458,82 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
       capture.stop();
       throw error;
     }
+  }
+
+  function syncCaptureSettings(capture) {
+    setDesktopMicrophoneSettings({
+      preGain: capture.preGain,
+      autoGainControl: capture.autoGainControl,
+    }, { source: 'capture' });
+  }
+
+  function applyMicrophoneSettingsChange({ previous, next, changed }) {
+    if (changed.has('preGain')) {
+      state.capture?.setPreGain(next.preGain);
+    }
+    if (changed.has('autoOffSilenceSeconds')) {
+      micAutoOff.arm();
+    }
+    if (changed.has('autoGainControl')) {
+      void restartCaptureForAutoGain(previous.autoGainControl);
+    }
+  }
+
+  async function restartCaptureForAutoGain(previousAutoGainControl) {
+    if (!state.live || state.micState !== MIC_STATES.LISTENING || !state.capture) return;
+    if (getDesktopMicrophoneState().captureBusy) return;
+    const sessionId = state.sessionId;
+    const targetSampleRate = state.capture.targetSampleRate || state.audioInputSampleRate;
+    const autoOffWasArmed = micAutoOff.isArmed();
+    state.starting = true;
+    setDesktopMicrophoneRuntime({ captureBusy: true, inputLevel: 0 });
+    micAutoOff.clear();
+    state.capture.stop();
+    state.capture = null;
+    emit();
+    try {
+      const nextCapture = await createStartedCapture({ targetSampleRate });
+      if (!captureStillExpected(sessionId)) {
+        nextCapture.stop();
+        return;
+      }
+      state.capture = nextCapture;
+      syncCaptureSettings(nextCapture);
+      if (autoOffWasArmed) micAutoOff.arm();
+    } catch {
+      if (!captureStillExpected(sessionId)) return;
+      setDesktopMicrophoneSettings({
+        autoGainControl: previousAutoGainControl,
+      }, { source: 'capture' });
+      try {
+        const restoredCapture = await createStartedCapture({
+          targetSampleRate,
+          microphone: getDesktopMicrophoneState(),
+        });
+        if (!captureStillExpected(sessionId)) {
+          restoredCapture.stop();
+          return;
+        }
+        state.capture = restoredCapture;
+        syncCaptureSettings(restoredCapture);
+        if (autoOffWasArmed) micAutoOff.arm();
+      } catch {
+        state.micState = MIC_STATES.OFF;
+        reportMicrophoneLevel(0, false);
+        state.status = 'error';
+        state.statusMessage = 'Microphone unavailable.';
+      }
+    } finally {
+      state.starting = false;
+      setDesktopMicrophoneRuntime({ captureBusy: false });
+      emit();
+    }
+  }
+
+  function captureStillExpected(sessionId) {
+    return state.live
+      && state.sessionId === sessionId
+      && state.micState === MIC_STATES.LISTENING;
   }
 
   function shouldSendMicrophoneAudio() {
@@ -597,6 +726,7 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
 
   function applyTurnUpdate(msg) {
     const previousLaneId = currentLaneId();
+    const previousTurnState = String(state.currentTurn?.state || '');
     for (const laneId of Object.keys(msg.lanes || {})) {
       mergeLanePayload(laneId, msg.lanes[laneId]);
     }
@@ -607,6 +737,11 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
       audioQueue.clear();
       hideVadHint();
     }
+    micAutoOff.handleTurnUpdate(
+      previousTurnState,
+      String(state.currentTurn?.state || ''),
+      String(msg.reason || ''),
+    );
     emit();
   }
 
@@ -677,6 +812,7 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
       hideVadHint();
       return;
     }
+    micAutoOff.arm();
     state.vadVisible = true;
     if (vadHintTimer) clearTimeout(vadHintTimer);
     vadHintTimer = setTimeout(() => {
