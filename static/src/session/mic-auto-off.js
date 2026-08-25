@@ -8,40 +8,42 @@
 
 import { state } from '../state.js';
 import { MIC_STATES, APP_MODES, TURN_STATES } from '../shared/constants.js';
+import { createMicAutoOffController } from '../shared/mic-auto-off-controller.js';
 
 let _stopMicCallback = null;
+
+const controller = createMicAutoOffController({
+  getSnapshot: () => ({
+    active: state.appMode === APP_MODES.LIVE_RECORDING,
+    listening: state.micState === MIC_STATES.LISTENING,
+    speaking: state.currentTurn?.state === TURN_STATES.OPEN_SPEAKING,
+    silenceSeconds: state.audioSettings.autoOffSilenceSeconds,
+    autoOffAfterBubble: state.audioSettings.autoOffAfterBubble,
+  }),
+  stopMicrophone: (reason) => _stopMicCallback?.(reason),
+  onTimerChange: (timer) => {
+    state.autoOffSilenceTimer = timer;
+  },
+});
 
 export function registerMicAutoOffStopHandler(fn) {
   _stopMicCallback = typeof fn === 'function' ? fn : null;
 }
 
 export function armAutoOffSilenceTimer() {
-  clearAutoOffSilenceTimer();
-  if (state.appMode !== APP_MODES.LIVE_RECORDING) return;
-  if (state.micState !== MIC_STATES.LISTENING) return;
-  if (state.currentTurn?.state === TURN_STATES.OPEN_SPEAKING) return;
-  const seconds = Number(state.audioSettings.autoOffSilenceSeconds || 0);
-  if (!Number.isFinite(seconds) || seconds <= 0) return;
-  state.autoOffSilenceTimer = setTimeout(() => {
-    state.autoOffSilenceTimer = null;
-    performMicAutoOff('silence');
-  }, Math.round(seconds * 1000));
+  controller.arm();
 }
 
 export function clearAutoOffSilenceTimer() {
-  if (state.autoOffSilenceTimer) {
-    clearTimeout(state.autoOffSilenceTimer);
-    state.autoOffSilenceTimer = null;
-  }
+  controller.clear();
 }
 
 export function performMicAutoOff(reason) {
-  if (state.appMode !== APP_MODES.LIVE_RECORDING) return;
-  if (state.micState !== MIC_STATES.LISTENING) return;
-  clearAutoOffSilenceTimer();
   // The stop handler (lifecycle.stopMicrophoneCapture) plays the
   // off-cue itself so manual stops and auto-stops sound identical.
-  if (typeof _stopMicCallback === 'function') {
-    _stopMicCallback(reason);
-  }
+  controller.stop(reason);
+}
+
+export function handleMicAutoOffTurnUpdate(previousState, nextState, reason) {
+  controller.handleTurnUpdate(previousState, nextState, reason);
 }

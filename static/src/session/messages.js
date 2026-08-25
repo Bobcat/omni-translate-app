@@ -5,8 +5,6 @@
 import { state } from '../state.js';
 import {
   DEFAULT_TUNING_SETTINGS,
-  MIC_STATES,
-  TURN_STATES,
 } from '../shared/constants.js';
 import { mergeSettings } from '../shared/utils.js';
 import { normalizeLanguageName } from '../domain/languages.js';
@@ -35,9 +33,7 @@ import {
 } from './lifecycle.js';
 import { clearSpeakNowPending } from './actions.js';
 import {
-  armAutoOffSilenceTimer,
-  clearAutoOffSilenceTimer,
-  performMicAutoOff,
+  handleMicAutoOffTurnUpdate,
 } from './mic-auto-off.js';
 
 export function handleMessage(msg) {
@@ -156,30 +152,8 @@ function applyTurnUpdate(msg) {
 }
 
 function applyMicAutoOffSideEffects(previousTurnState, reason) {
-  // Pause the silence timer while TTS is playing (we don't want the
-  // user's "listening to playback" time to count against them), and
-  // restart it when playback completes.
   const newTurnState = String(state.currentTurn?.state || '');
-  if (previousTurnState !== newTurnState) {
-    if (newTurnState === TURN_STATES.OPEN_SPEAKING) {
-      clearAutoOffSilenceTimer();
-    } else if (
-      previousTurnState === TURN_STATES.OPEN_SPEAKING
-      && state.micState === MIC_STATES.LISTENING
-    ) {
-      armAutoOffSilenceTimer();
-    }
-  }
-  // Opt-in: stop the mic right after a heuristic bubble close. The
-  // duration-cap close is excluded — it fires when there is no natural
-  // pause, so it does not indicate intent to stop talking.
-  if (
-    state.audioSettings.autoOffAfterBubble
-    && state.micState === MIC_STATES.LISTENING
-    && (reason === 'bubble_close:sentence_boundary' || reason === 'bubble_close:vad_silence')
-  ) {
-    performMicAutoOff('bubble_close');
-  }
+  handleMicAutoOffTurnUpdate(previousTurnState, newTurnState, reason);
 }
 
 function applyCurrentTurn(payload) {
