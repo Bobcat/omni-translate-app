@@ -43,6 +43,8 @@ _SEGMENT_DEBUG_KEYS = (
     "words",
 )
 
+ASR_CHUNKS_ROOT = (REPO_ROOT / "data" / "asr_chunks").resolve()
+
 
 @dataclass(frozen=True)
 class ASRJob:
@@ -77,7 +79,7 @@ class LiveASRPoolBridge:
         self.sample_rate_hz = int(sample_rate_hz)
         self.channels = int(channels)
         self.live_settings = live_settings
-        self.chunks_root = (REPO_ROOT / "data" / "asr_chunks" / _safe_token(session_id)).resolve()
+        self.chunks_root = (ASR_CHUNKS_ROOT / _safe_token(session_id)).resolve()
         self.consumer_id = f"conv_{_safe_token(session_id)[:96]}"
         self._client = ASRPoolClient(
             ASRPoolClientConfig(

@@ -17,6 +17,7 @@ from app.router import api_router
 from app.routes import websocket_endpoint
 from app.runtime import warm_asr_vad
 from app.saas_setup import build_saas_router
+from app.sessions import run_voice_session_cleanup_loop
 from app.upstreams.http import close_upstream_http_client
 from app.upstreams.http import open_upstream_http_client
 from app.upstreams.tts_pool.client import close_tts_pool_channel
@@ -46,6 +47,10 @@ async def lifespan(_app: FastAPI):
             asyncio.create_task(
                 run_image_quota_reconciliation_loop(),
                 name="image-quota-reconciliation",
+            ),
+            asyncio.create_task(
+                run_voice_session_cleanup_loop(),
+                name="voice-session-cleanup",
             ),
         ]
         yield

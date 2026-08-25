@@ -1,17 +1,27 @@
 from __future__ import annotations
 
+import asyncio
+import logging
 import secrets
+import shutil
 import threading
 import time
 from dataclasses import dataclass
 from dataclasses import field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
+from app.asr_pc_export import PC_EXPORT_ROOT
 from app.asr_pc_export import live_pc_events_to_text
 from app.asr_pc_export import pc_export_path
+from app.asr_bridge import ASR_CHUNKS_ROOT
 from app.config import get_int
 from app.live_settings import default_live_settings
+from app.tts_bridge import TTS_ROOT
+
+
+logger = logging.getLogger(__name__)
 
 
 def _utc_iso(ts: float) -> str:
@@ -51,6 +61,7 @@ class ConversationSessionManager:
         tts_settings: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         now = time.time()
+        self.cleanup_expired(now=now)
         ttl_s = get_int("live.session_ttl_s", 900, min_value=60)
         session_id = f"conv_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}_{secrets.token_hex(4)}"
         sess = ConversationSession(
@@ -64,14 +75,13 @@ class ConversationSessionManager:
             tts_settings=dict(tts_settings or {}),
         )
         with self._lock:
-            self._cleanup_locked(now)
             self._sessions[session_id] = sess
             return self._payload_locked(sess)
 
     def open_websocket(self, session_id: str) -> ConversationSession:
         now = time.time()
+        self.cleanup_expired(now=now)
         with self._lock:
-            self._cleanup_locked(now)
             sess = self._sessions.get(session_id)
             if sess is None:
                 raise KeyError("session_not_found")
@@ -128,14 +138,31 @@ class ConversationSessionManager:
                 raise KeyError("session_not_found")
             return [dict(event) for event in sess.pc_events]
 
-    def _cleanup_locked(self, now: float) -> None:
-        expired = [
-            session_id
-            for session_id, sess in self._sessions.items()
-            if now >= sess.expires_unix
-        ]
-        for session_id in expired:
-            self._sessions.pop(session_id, None)
+    def cleanup_expired(self, *, now: float | None = None, include_orphans: bool = False) -> int:
+        current_time = time.time() if now is None else float(now)
+        with self._lock:
+            expired = [
+                sess
+                for sess in self._sessions.values()
+                if not sess.ws_connected and current_time >= sess.expires_unix
+            ]
+            for sess in expired:
+                self._sessions.pop(sess.session_id, None)
+            active_session_ids = set(self._sessions)
+
+        for sess in expired:
+            _remove_session_artifacts(sess)
+        if include_orphans:
+            retention_s = get_int(
+                "live.session_export_ttl_s",
+                get_int("live.session_ttl_s", 900, min_value=60),
+                min_value=60,
+            )
+            _remove_orphaned_artifacts(
+                active_session_ids=active_session_ids,
+                cutoff_unix=current_time - retention_s,
+            )
+        return len(expired)
 
     def _payload_locked(self, sess: ConversationSession) -> dict[str, Any]:
         return {
@@ -156,3 +183,62 @@ class ConversationSessionManager:
 
 
 SESSIONS = ConversationSessionManager()
+
+
+def _remove_session_artifacts(sess: ConversationSession) -> None:
+    if sess.pc_export_path:
+        _unlink_within(Path(sess.pc_export_path), PC_EXPORT_ROOT)
+    _rmtree_within(TTS_ROOT / sess.session_id, TTS_ROOT)
+    _rmtree_within(ASR_CHUNKS_ROOT / sess.session_id, ASR_CHUNKS_ROOT)
+
+
+def _remove_orphaned_artifacts(*, active_session_ids: set[str], cutoff_unix: float) -> None:
+    if PC_EXPORT_ROOT.exists():
+        for path in PC_EXPORT_ROOT.glob("*.pc"):
+            if path.stem in active_session_ids or not _older_than(path, cutoff_unix):
+                continue
+            _unlink_within(path, PC_EXPORT_ROOT)
+    for root in (TTS_ROOT, ASR_CHUNKS_ROOT):
+        if not root.exists():
+            continue
+        for path in root.iterdir():
+            if not path.is_dir() or path.name in active_session_ids or not _older_than(path, cutoff_unix):
+                continue
+            _rmtree_within(path, root)
+
+
+def _older_than(path: Path, cutoff_unix: float) -> bool:
+    try:
+        return path.stat().st_mtime <= cutoff_unix
+    except OSError:
+        return False
+
+
+def _unlink_within(path: Path, root: Path) -> None:
+    try:
+        resolved = path.resolve()
+        resolved.relative_to(root.resolve())
+        resolved.unlink(missing_ok=True)
+    except (OSError, ValueError):
+        logger.warning("could not remove expired voice artifact %s", path, exc_info=True)
+
+
+def _rmtree_within(path: Path, root: Path) -> None:
+    try:
+        resolved = path.resolve()
+        resolved.relative_to(root.resolve())
+        if resolved.is_dir():
+            shutil.rmtree(resolved)
+    except (OSError, ValueError):
+        logger.warning("could not remove expired voice artifact directory %s", path, exc_info=True)
+
+
+async def run_voice_session_cleanup_loop() -> None:
+    """Remove expired voice session state and its temporary disk artifacts."""
+    interval_s = get_int("live.session_cleanup_interval_s", 60, min_value=1)
+    while True:
+        try:
+            await asyncio.to_thread(SESSIONS.cleanup_expired, include_orphans=True)
+        except Exception:
+            logger.exception("voice session cleanup pass failed")
+        await asyncio.sleep(interval_s)

@@ -123,6 +123,8 @@
   },
   "live": {
     "session_ttl_s": 900,
+    "session_export_ttl_s": 900,
+    "session_cleanup_interval_s": 60,
     "audio": {
       "sample_rate_hz": 16000,
       "channels": 1

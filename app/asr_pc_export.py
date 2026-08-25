@@ -10,6 +10,7 @@ from typing import Any
 from app.config import REPO_ROOT
 
 
+PC_EXPORT_ROOT = (REPO_ROOT / "data" / "asr_pc_exports").resolve()
 PC_EXPORT_COLUMNS = (
     "kind",
     "speech_start_ms",
@@ -46,7 +47,7 @@ def pc_export_filename(session_id: str) -> str:
 
 
 def pc_export_path(session_id: str) -> Path:
-    return (REPO_ROOT / "data" / "asr_pc_exports" / pc_export_filename(session_id)).resolve()
+    return (PC_EXPORT_ROOT / pc_export_filename(session_id)).resolve()
 
 
 def _event_row(event: dict[str, Any]) -> dict[str, Any]:
