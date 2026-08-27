@@ -52,6 +52,13 @@ export function createVoiceWorkflow() {
     </div>
     <div class="voice-statusrow">
       <p class="status-line" id="voiceStatus" role="status"></p>
+      <label class="field switch-field voice-auto-speak" for="voiceAutoSpeak">
+        <span>Automatically speak translations</span>
+        <span class="switch">
+          <input id="voiceAutoSpeak" type="checkbox" role="switch">
+          <span class="switch-slider" aria-hidden="true"></span>
+        </span>
+      </label>
       <button type="button" class="resume-audio-btn" id="voiceResumeAudio" hidden>Resume audio</button>
     </div>
   `;
@@ -67,6 +74,7 @@ export function createVoiceWorkflow() {
   const micToggleBtn = container.querySelector('#voiceMicToggle');
   const speakNowBtn = container.querySelector('#voiceSpeakNow');
   const statusEl = container.querySelector('#voiceStatus');
+  const autoSpeakInput = container.querySelector('#voiceAutoSpeak');
   const resumeBtn = container.querySelector('#voiceResumeAudio');
 
   const session = createVoiceSession({
@@ -94,6 +102,7 @@ export function createVoiceWorkflow() {
   micToggleBtn.addEventListener('click', () => session.toggleMic());
   translateNowBtn.addEventListener('click', () => session.translateNow());
   speakNowBtn.addEventListener('click', () => session.speakNow());
+  autoSpeakInput.addEventListener('change', () => session.setAutoSpeak(autoSpeakInput.checked));
 
   // Bubble actions (replay / speak / stop) on the target lane, one
   // delegated listener — same affordances as the mobile transcript.
@@ -122,6 +131,7 @@ export function createVoiceWorkflow() {
     renderLanguageBar();
     renderPanes();
     renderButtons();
+    renderAutoSpeak();
     renderStatus();
   }
 
@@ -273,6 +283,11 @@ export function createVoiceWorkflow() {
     else if (canPlayAudio) speakLabel = 'Play audio';
     speakNowBtn.setAttribute('aria-label', speakLabel);
     speakNowBtn.title = speakLabel;
+  }
+
+  function renderAutoSpeak() {
+    autoSpeakInput.checked = Boolean(session.state.ttsAutoSpeak);
+    autoSpeakInput.disabled = !session.state.ttsEnabled;
   }
 
   function renderMicLevel(value, listening) {

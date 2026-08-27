@@ -51,6 +51,7 @@ import { handleMessage } from './messages.js';
 let _iosMicOffCueTimer = null;
 
 export async function startListening({ withMic = true } = {}) {
+  if (state.ttsSettings.auto_speak) audioQueue.preparePcmPlayback();
   clearPendingIosMicOffCue();
   const startLaneId = currentLaneId();
   clearAllLanes({ laneId: startLaneId });

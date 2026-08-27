@@ -58,15 +58,16 @@ export async function getEntitlements() {
   return response.json();
 }
 
-// Voice sessions only pin the language pair; live/TTS settings stay at the
-// server defaults (the desktop app has no tuning UI).
-export async function createVoiceSession({ sideA, sideB }) {
+// Voice sessions pin the language pair and the voice view's automatic-speaking
+// choice. Other live/TTS settings stay at server defaults.
+export async function createVoiceSession({ sideA, sideB, autoSpeak = true }) {
   const response = await fetch('/api/sessions', {
     method: 'POST',
     headers: authHeaders({ 'Content-Type': 'application/json', Accept: 'application/json' }),
     body: JSON.stringify({
       side_a_language: String(sideA || ''),
       side_b_language: String(sideB || ''),
+      tts_settings: { auto_speak: Boolean(autoSpeak) },
     }),
   });
   await ensureOk(response);

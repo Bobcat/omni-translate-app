@@ -3,8 +3,8 @@
 // audio-queue.js): same protocol against the same backend, minus the
 // mobile-only concerns (tuning/live-settings, PC export, history stack).
 // Microphone capture settings and auto-off behaviour are shared with mobile.
-// Live/TTS settings are left at the server
-// defaults — the desktop app has no tuning UI.
+// Live settings and synthesis choices stay at server defaults. The view owns
+// the user-facing automatic-speaking preference.
 //
 // All state lives in this closure. The shell keeps the voice view alive
 // across navigation, so a running session (socket, mic capture, audio
@@ -17,7 +17,12 @@ import { playMicOffCue, playMicOnCue } from '../../../../src/shared/audio-cue.js
 import { AudioQueue } from '../../../../src/shared/audio-playback.js';
 import { createMicAutoOffController } from '../../../../src/shared/mic-auto-off-controller.js';
 import { guessSetupLanguages, normalizeLanguageName } from '../../../../src/domain/languages.js';
-import { loadSetupLanguages, persistSetupLanguages } from '../../../../src/domain/storage.js';
+import {
+  loadAutoSpeakPreference,
+  loadSetupLanguages,
+  persistAutoSpeakPreference,
+  persistSetupLanguages,
+} from '../../../../src/domain/storage.js';
 import { getConfig, createVoiceSession as requestVoiceSession } from '../../shared/api.js';
 import {
   getDesktopMicrophoneState,
@@ -130,6 +135,7 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
     currentTurn: null,
     audioInputSampleRate: 16000,
     ttsEnabled: true,
+    ttsAutoSpeak: loadAutoSpeakPreference() ?? true,
     audioPlayback: null,
     captureMutedForPlayback: false,
     speakNowPending: false,
@@ -248,6 +254,7 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
   // --- session lifecycle -------------------------------------------------
 
   async function start() {
+    if (state.ttsAutoSpeak) audioQueue.preparePcmPlayback();
     resetTranscript();
     state.starting = true;
     setDesktopMicrophoneRuntime({ captureBusy: true });
@@ -269,6 +276,7 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
       const session = await requestVoiceSession({
         sideA: state.sideALanguage,
         sideB: state.sideBLanguage,
+        autoSpeak: state.ttsAutoSpeak,
       });
       const sessionId = String(session.session?.session_id || session.session_id || '').trim();
       if (!sessionId) throw new Error('Missing session id');
@@ -630,6 +638,15 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
     emit();
   }
 
+  function setAutoSpeak(enabled) {
+    if (!state.ttsEnabled) return;
+    state.ttsAutoSpeak = Boolean(enabled);
+    if (state.ttsAutoSpeak) audioQueue.preparePcmPlayback();
+    persistAutoSpeakPreference(state.ttsAutoSpeak);
+    state.socket?.updateTtsSettings({ auto_speak: state.ttsAutoSpeak });
+    emit();
+  }
+
   function swap() {
     if (state.starting) return;
     if (!state.live) {
@@ -690,6 +707,7 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
           turnId: msg.turn_id,
           artifactId: msg.tts.artifact_id,
           partIds: msg.part_ids || [],
+          replay: msg.playback_kind === 'replay',
         });
       }
       emit();
@@ -715,13 +733,16 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
       emit();
       return;
     }
-    if (msg.type === 'tts_replay_ready') {
+    if (msg.type === 'tts_artifact_ready') {
+      if (!shouldApplyCurrentTurnMessage(msg)) return;
       if (msg.tts) {
         audioQueue.enqueue({
           ...msg.tts,
           laneId: msg.lane_id,
+          turnId: msg.turn_id,
           artifactId: msg.tts.artifact_id,
-          replay: true,
+          partIds: msg.part_ids || (msg.part_id ? [msg.part_id] : []),
+          replay: msg.playback_kind === 'replay',
           replayText: String(msg.text || ''),
         });
       }
@@ -729,6 +750,11 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
       return;
     }
     if (msg.type === 'tts_status' || msg.type === 'translation_status') {
+      emit();
+      return;
+    }
+    if (msg.type === 'tts_settings') {
+      state.ttsAutoSpeak = Boolean(msg.tts_settings?.auto_speak);
       emit();
       return;
     }
@@ -761,6 +787,7 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
       mergeLanePayload(laneId, msg.lanes[laneId]);
     }
     state.currentTurn = normalizeTurnPayload(msg.current_turn || createLocalTurn('a_to_b', state.lanes));
+    state.ttsAutoSpeak = Boolean(msg.tts_settings?.auto_speak ?? state.ttsAutoSpeak);
     hideVadHint();
     emit();
   }
@@ -881,6 +908,8 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
       const config = await getConfig();
       state.audioInputSampleRate = config.audio_input?.sample_rate_hz || 16000;
       state.ttsEnabled = config.tts?.enabled !== false;
+      state.ttsAutoSpeak = loadAutoSpeakPreference()
+        ?? Boolean(config.tts?.auto_speak);
       emit();
     } catch {
       // Defaults stand.
@@ -902,6 +931,7 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
     speakPart,
     replayPart,
     stopAudio,
+    setAutoSpeak,
     swap,
     setLanguage,
   };

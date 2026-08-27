@@ -678,6 +678,10 @@ body {
   margin: 0;
 }
 
+.voice-auto-speak {
+  white-space: nowrap;
+}
+
 .resume-audio-btn {
   padding: 6px 14px;
   border: 1px solid var(--border-control);

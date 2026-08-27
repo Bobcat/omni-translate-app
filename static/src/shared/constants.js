@@ -86,6 +86,7 @@ export const DEFAULT_TUNING_SETTINGS = {
 
 export const DEFAULT_TTS_SETTINGS = {
   enabled: true,
+  auto_speak: true,
   backend: 'kokoro',
   kokoro: {
     voices: {},

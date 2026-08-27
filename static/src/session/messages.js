@@ -64,6 +64,7 @@ export function handleMessage(msg) {
         turnId: msg.turn_id,
         artifactId: msg.tts.artifact_id,
         partIds: msg.part_ids || [],
+        replay: msg.playback_kind === 'replay',
       });
     }
     updateActionButtons();
@@ -89,13 +90,16 @@ export function handleMessage(msg) {
     updateActionButtons();
     return;
   }
-  if (msg.type === 'tts_replay_ready') {
+  if (msg.type === 'tts_artifact_ready') {
+    if (!shouldApplyCurrentTurnMessage(msg)) return;
     if (msg.tts) {
       audioQueue.enqueue({
         ...msg.tts,
         laneId: msg.lane_id,
+        turnId: msg.turn_id,
         artifactId: msg.tts.artifact_id,
-        replay: true,
+        partIds: msg.part_ids || (msg.part_id ? [msg.part_id] : []),
+        replay: msg.playback_kind === 'replay',
         replayText: String(msg.text || ''),
       });
     }
@@ -104,6 +108,11 @@ export function handleMessage(msg) {
   }
   if (msg.type === 'tts_status') {
     updateActionButtons();
+    return;
+  }
+  if (msg.type === 'tts_settings') {
+    state.ttsSettings = mergeSettings(state.ttsSettings, msg.tts_settings || {});
+    renderTtsSettings({ preserveScroll: true });
     return;
   }
   if (msg.type === 'translation_status') {
@@ -135,6 +144,7 @@ function applyReady(msg) {
   state.sideALanguage = normalizeLanguageName(msg.side_a_language || state.sideALanguage);
   state.sideBLanguage = normalizeLanguageName(msg.side_b_language || state.sideBLanguage);
   state.tuningSettings = mergeSettings(DEFAULT_TUNING_SETTINGS, msg.live_settings || state.tuningSettings);
+  state.ttsSettings = mergeSettings(state.ttsSettings, msg.tts_settings || {});
   state.lanes = buildLocalLanes(state.sideALanguage, state.sideBLanguage);
   for (const laneId of Object.keys(msg.lanes || {})) {
     mergeLanePayload(laneId, msg.lanes[laneId]);
