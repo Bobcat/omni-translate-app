@@ -65,6 +65,7 @@ export function handleMessage(msg) {
         artifactId: msg.tts.artifact_id,
         partIds: msg.part_ids || [],
         replay: msg.playback_kind === 'replay',
+        playbackTrigger: msg.playback_trigger,
       });
     }
     updateActionButtons();
@@ -100,6 +101,7 @@ export function handleMessage(msg) {
         artifactId: msg.tts.artifact_id,
         partIds: msg.part_ids || (msg.part_id ? [msg.part_id] : []),
         replay: msg.playback_kind === 'replay',
+        playbackTrigger: msg.playback_trigger,
         replayText: String(msg.text || ''),
       });
     }

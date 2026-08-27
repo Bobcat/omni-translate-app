@@ -15,6 +15,7 @@ import { SessionSocket } from '../../../../src/api-client.js';
 import { AudioCapture } from '../../../../src/shared/audio-capture.js';
 import { playMicOffCue, playMicOnCue } from '../../../../src/shared/audio-cue.js';
 import { AudioQueue } from '../../../../src/shared/audio-playback.js';
+import { shouldStopMicrophoneAfterPlayback } from '../../../../src/shared/voice-playback.js';
 import { createMicAutoOffController } from '../../../../src/shared/mic-auto-off-controller.js';
 import { guessSetupLanguages, normalizeLanguageName } from '../../../../src/domain/languages.js';
 import {
@@ -224,8 +225,9 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
       state.audioPlayback = null;
       emit();
     },
-    onPlaybackComplete: () => {
-      // Turn flow: once the translation has been spoken, the mic goes off.
+    onPlaybackComplete: (item) => {
+      // Explicit Speak ends the turn; automatic playback resumes live capture.
+      if (!shouldStopMicrophoneAfterPlayback(item)) return;
       if (!state.live || state.micState !== MIC_STATES.LISTENING) return;
       stopMic();
     },
@@ -708,6 +710,7 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
           artifactId: msg.tts.artifact_id,
           partIds: msg.part_ids || [],
           replay: msg.playback_kind === 'replay',
+          playbackTrigger: msg.playback_trigger,
         });
       }
       emit();
@@ -743,6 +746,7 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
           artifactId: msg.tts.artifact_id,
           partIds: msg.part_ids || (msg.part_id ? [msg.part_id] : []),
           replay: msg.playback_kind === 'replay',
+          playbackTrigger: msg.playback_trigger,
           replayText: String(msg.text || ''),
         });
       }

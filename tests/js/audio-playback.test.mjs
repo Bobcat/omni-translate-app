@@ -123,8 +123,9 @@ function makeQueue({ context = new FakeAudioContext() } = {}) {
   const statuses = [];
   const resumeButton = new FakeEventTarget();
   resumeButton.hidden = true;
+  const audio = new FakeAudio();
   const queue = new AudioQueue({
-    audio: new FakeAudio(),
+    audio,
     resumeButton,
     audioContextFactory: () => context,
     onStatus: (status) => statuses.push(status),
@@ -134,7 +135,7 @@ function makeQueue({ context = new FakeAudioContext() } = {}) {
     onItemEnded: (item) => ended.push(item.artifactId),
     onItemFailed: (item, reason) => failed.push([item.artifactId, reason]),
   });
-  return { queue, context, ended, failed, started, completed, statuses, resumeButton };
+  return { queue, audio, context, ended, failed, started, completed, statuses, resumeButton };
 }
 
 
@@ -229,6 +230,29 @@ test('a queued live stream is detected while a replay is playing', () => {
 
   assert.equal(harness.queue.current.replay, true);
   assert.equal(harness.queue.hasNonReplayAudio(), true);
+});
+
+
+test('a URL playback error settles the current item', () => {
+  const harness = makeQueue();
+  harness.queue.enqueue({ artifactId: 'tts_1', url: '/fake/missing.wav' });
+
+  harness.audio.dispatch('error');
+
+  assert.deepEqual(harness.failed, [['tts_1', 'url_playback_failed']]);
+  assert.equal(harness.queue.current, null);
+  assert.equal(harness.audio.src, '');
+});
+
+
+test('a URL item without a URL fails before entering the queue', () => {
+  const harness = makeQueue();
+
+  const accepted = harness.queue.enqueue({ artifactId: 'tts_1' });
+
+  assert.equal(accepted, false);
+  assert.deepEqual(harness.failed, [['tts_1', 'missing_audio_url']]);
+  assert.equal(harness.queue.hasAudio(), false);
 });
 
 

@@ -4,6 +4,7 @@
 // wired from app.js — out of scope to change in this refactor.
 
 import { AudioQueue } from '../shared/audio-playback.js';
+import { shouldStopMicrophoneAfterPlayback } from '../shared/voice-playback.js';
 import { state } from '../state.js';
 import { els } from '../els.js';
 import { APP_MODES, MIC_STATES } from '../shared/constants.js';
@@ -28,7 +29,8 @@ export const audioQueue = new AudioQueue({
     state.audioPlayback = null;
     renderTranscript();
   },
-  onPlaybackComplete: () => {
+  onPlaybackComplete: (item) => {
+    if (!shouldStopMicrophoneAfterPlayback(item)) return;
     if (state.appMode !== APP_MODES.LIVE_RECORDING || state.micState !== MIC_STATES.LISTENING) return;
     stopMicrophoneCapture();
   },
