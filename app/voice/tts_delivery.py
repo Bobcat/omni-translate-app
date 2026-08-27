@@ -21,6 +21,7 @@ from app.tts_bridge import get_tts_bridge
 from app.tts_bridge import tts_settings_enabled
 from app.tts_bridge import tts_uses_asr_reference_wav
 from app.upstreams.tts_pool.client import TtsSynthesisCancellation
+from app.voice.session_storage import SessionArtifactLimitExceeded
 from app.voice.tasks import cancel_task
 
 if TYPE_CHECKING:
@@ -496,6 +497,13 @@ class TtsDelivery:
                 runtime._refresh_turn_state()
                 await runtime._send_turn_update(reason="tts_skipped")
             self._resolve_done(record)
+            return
+        except SessionArtifactLimitExceeded as exc:
+            self.active_stream_artifacts.pop(record.artifact_id, None)
+            record.state = "failed"
+            record.chunks.clear()
+            self._resolve_done(record)
+            await runtime.lifecycle.end_for_storage_limit(limit_bytes=exc.limit_bytes)
             return
         except Exception as exc:
             self.active_stream_artifacts.pop(record.artifact_id, None)

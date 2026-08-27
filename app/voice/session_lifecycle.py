@@ -8,8 +8,10 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import status
 
+from app.config import get_int
 from app.protocol import event
 from app.sessions import SESSIONS
+from app.voice.session_storage import release_session_artifact_tracking
 from app.voice.tasks import cancel_task
 
 if TYPE_CHECKING:
@@ -24,6 +26,13 @@ class ConversationLifecycle:
         self.send_lock = asyncio.Lock()
         self.listening = False
         self.closed = False
+        self.close_reason = "closed"
+        self.max_duration_s = get_int(
+            "live.max_session_duration_s",
+            900,
+            min_value=60,
+        )
+        self.deadline_mono: float | None = None
 
     async def run(self) -> None:
         runtime = self.runtime
@@ -31,6 +40,7 @@ class ConversationLifecycle:
         self.asr_ready = asyncio.Event()
         try:
             await runtime.websocket.accept()
+            self.deadline_mono = self.loop.time() + self.max_duration_s
             try:
                 for lane in runtime.lanes.values():
                     lane.asr_runner.ensure_vad_ready()
@@ -75,6 +85,11 @@ class ConversationLifecycle:
             )
             while not self.closed:
                 kind, incoming = await self.wait_for_input()
+                if self.closed:
+                    break
+                if kind == "session_duration_limit":
+                    await self.end_for_duration_limit()
+                    break
                 if kind == "asr":
                     await runtime._process_asr(force=False)
                     continue
@@ -103,6 +118,11 @@ class ConversationLifecycle:
             loop.call_soon_threadsafe(ready.set)
 
     async def wait_for_input(self) -> tuple[str, dict[str, Any] | None]:
+        loop = self.loop or asyncio.get_running_loop()
+        deadline = self.deadline_mono
+        if deadline is not None and loop.time() >= deadline:
+            return "session_duration_limit", None
+
         ready = self.asr_ready
         if ready is not None and ready.is_set():
             ready.clear()
@@ -114,7 +134,17 @@ class ConversationLifecycle:
         if ready is not None:
             ready_task = asyncio.create_task(ready.wait())
             tasks.add(ready_task)
-        done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        timeout = None if deadline is None else max(0.0, deadline - loop.time())
+        done, _ = await asyncio.wait(
+            tasks,
+            timeout=timeout,
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+
+        if not done:
+            await cancel_task(ready_task)
+            await cancel_task(receive_task)
+            return "session_duration_limit", None
 
         if receive_task in done:
             await cancel_task(ready_task)
@@ -124,6 +154,55 @@ class ConversationLifecycle:
             ready.clear()
         await cancel_task(receive_task)
         return "asr", None
+
+    async def end_for_duration_limit(self) -> None:
+        await self._end_for_guardrail(
+            reason="session_duration_limit",
+            message=(
+                "Voice session stopped after reaching its "
+                f"{_format_duration(self.max_duration_s)} time limit."
+            ),
+            max_duration_s=self.max_duration_s,
+        )
+
+    async def end_for_storage_limit(self, *, limit_bytes: int) -> None:
+        await self._end_for_guardrail(
+            reason="session_storage_limit",
+            message=(
+                "Voice session stopped because its temporary audio reached "
+                f"the {_format_bytes(limit_bytes)} storage limit."
+            ),
+            max_artifact_bytes=int(limit_bytes),
+        )
+
+    async def _end_for_guardrail(
+        self,
+        *,
+        reason: str,
+        message: str,
+        **fields: Any,
+    ) -> None:
+        if self.closed:
+            return
+        self.closed = True
+        self.listening = False
+        self.close_reason = reason
+        with contextlib.suppress(KeyError):
+            SESSIONS.update(self.runtime.session_id, state="completed")
+        with contextlib.suppress(Exception):
+            await self.send(
+                event(
+                    "ended",
+                    self.runtime.session_id,
+                    reason=reason,
+                    message=message,
+                    **fields,
+                )
+            )
+        with contextlib.suppress(Exception):
+            await self.runtime.websocket.close(code=status.WS_1000_NORMAL_CLOSURE)
+        if self.asr_ready is not None:
+            self.asr_ready.set()
 
     async def pause_listening(self) -> None:
         runtime = self.runtime
@@ -161,8 +240,34 @@ class ConversationLifecycle:
             lane.translation_task = None
             lane.tts_task = None
         runtime.asr_bridge.close()
-        SESSIONS.close(runtime.session_id, reason="closed")
+        try:
+            SESSIONS.close(runtime.session_id, reason=self.close_reason)
+        finally:
+            release_session_artifact_tracking(runtime.session_id)
 
     async def send(self, payload: dict[str, Any]) -> None:
         async with self.send_lock:
             await self.runtime.websocket.send_json(payload)
+
+
+def _format_duration(seconds: int | float) -> str:
+    value = float(seconds)
+    if value >= 60 and value % 60 == 0:
+        minutes = int(value // 60)
+        return f"{minutes}-minute"
+    return f"{value:g}-second"
+
+
+def _format_bytes(byte_count: int) -> str:
+    size = max(0, int(byte_count))
+    for unit, divisor in (
+        ("TiB", 1024**4),
+        ("GiB", 1024**3),
+        ("MiB", 1024**2),
+        ("KiB", 1024),
+    ):
+        if size >= divisor:
+            value = size / divisor
+            formatted = f"{value:.1f}".rstrip("0").rstrip(".")
+            return f"{formatted} {unit}"
+    return f"{size} byte" if size == 1 else f"{size} bytes"

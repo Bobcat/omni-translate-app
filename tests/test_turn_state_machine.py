@@ -16,6 +16,7 @@ from app.runtime import TurnPart
 from app.sessions import ConversationSession
 from app.sessions import SESSIONS
 from app.tts_bridge import tts_settings_snapshot
+from app.voice.session_storage import SessionArtifactLimitExceeded
 
 
 class FakeWebSocket:
@@ -97,6 +98,17 @@ class FastTTS:
                 }
             )
         return payload
+
+
+class StorageLimitTTS:
+    enabled = True
+
+    def synthesize(self, **_kwargs) -> dict:
+        raise SessionArtifactLimitExceeded(
+            limit_bytes=256 * 1024 * 1024,
+            used_bytes=256 * 1024 * 1024,
+            requested_bytes=1024,
+        )
 
 
 class SlowTTS:
@@ -427,6 +439,56 @@ class TurnStateMachineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ready["playback_kind"], "first")
         self.assertEqual(ready["playback_trigger"], "explicit")
         self.assertEqual(ready["tts"]["artifact_id"], "artifact_1")
+
+    async def test_tts_storage_limit_ends_the_voice_session(self) -> None:
+        runtime, websocket = self.make_runtime(StorageLimitTTS())
+        part = runtime.current_turn.parts[0]
+
+        await runtime._speak_part(part.part_id)
+        await runtime._current_lane().tts_task
+
+        ended = [item for item in websocket.sent if item["type"] == "ended"]
+        self.assertEqual(ended[-1]["reason"], "session_storage_limit")
+        self.assertIn("256 MiB", ended[-1]["message"])
+        self.assertTrue(runtime.lifecycle.closed)
+        self.assertIsNotNone(websocket.closed_code)
+        self.assertFalse(any(item.get("code") == "tts_failed" for item in websocket.sent))
+
+    async def test_asr_storage_limit_ends_the_voice_session(self) -> None:
+        runtime, websocket = self.make_runtime()
+        lane = runtime._current_lane()
+        runtime.lifecycle.listening = True
+        work = SimpleNamespace(
+            sequence_id=1,
+            t0_ms=0,
+            t1_ms=500,
+            pcm16le=b"\0\0" * 8000,
+        )
+        decision = SimpleNamespace(
+            error=None,
+            speech_gate_decision=None,
+            speech_observation=None,
+            work_decision=SimpleNamespace(work_item=work),
+        )
+        limit_error = SessionArtifactLimitExceeded(
+            limit_bytes=256 * 1024 * 1024,
+            used_bytes=256 * 1024 * 1024,
+            requested_bytes=len(work.pcm16le),
+        )
+
+        with (
+            patch.object(lane.asr_runner, "maybe_dispatch_work", return_value=decision),
+            patch.object(lane.asr_runner, "rollback_inflight_work") as rollback,
+            patch.object(runtime.asr_bridge, "enqueue_pcm16", side_effect=limit_error),
+        ):
+            await runtime._enqueue_asr(lane, force=False)
+
+        rollback.assert_called_once_with(sequence_id=work.sequence_id)
+        ended = [item for item in websocket.sent if item["type"] == "ended"]
+        self.assertEqual(ended[-1]["reason"], "session_storage_limit")
+        self.assertTrue(runtime.lifecycle.closed)
+        self.assertIsNotNone(websocket.closed_code)
+        self.assertFalse(any(item.get("code") == "asr_submit_failed" for item in websocket.sent))
 
     async def test_speak_joins_buffered_speculative_generation(self) -> None:
         tts = BufferedTTS()

@@ -31,6 +31,7 @@ export const state = {
   currentTurn: createLocalTurn('a_to_b', initialLanes),
   audioStatus: '',
   status: 'idle',
+  sessionEndMessage: '',
   appMode: APP_MODES.SETUP,
   imageTranslation: {
     fileName: '',

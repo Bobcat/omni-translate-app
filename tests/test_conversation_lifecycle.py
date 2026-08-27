@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -8,6 +9,7 @@ from unittest.mock import patch
 from fastapi import status
 
 from app.voice.session_lifecycle import ConversationLifecycle
+from app.voice.session_lifecycle import _format_bytes
 
 
 class _WebSocket:
@@ -27,6 +29,12 @@ class _WebSocket:
 
     async def close(self, *, code: int, reason: str = "") -> None:
         self.closed = (code, reason)
+
+
+class _BlockingWebSocket(_WebSocket):
+    async def receive(self) -> dict:
+        await asyncio.Future()
+        raise AssertionError("unreachable")
 
 
 class _AsrBridge:
@@ -59,8 +67,12 @@ class _TtsDelivery:
         self.cleared = True
 
 
-def _runtime(*, vad_error: Exception | None = None) -> SimpleNamespace:
-    websocket = _WebSocket()
+def _runtime(
+    *,
+    vad_error: Exception | None = None,
+    websocket: _WebSocket | None = None,
+) -> SimpleNamespace:
+    websocket = websocket or _WebSocket()
     asr_bridge = _AsrBridge()
     lane = SimpleNamespace(
         asr_runner=_AsrRunner(vad_error),
@@ -108,6 +120,49 @@ class ConversationLifecycleTests(unittest.IsolatedAsyncioTestCase):
             {"enabled": True, "auto_speak": False},
         )
         close_session.assert_called_once_with(runtime.session_id, reason="closed")
+
+    async def test_duration_limit_reports_reason_and_closes_session(self) -> None:
+        runtime = _runtime(websocket=_BlockingWebSocket())
+        lifecycle = ConversationLifecycle(runtime)
+        lifecycle.max_duration_s = 0.01
+
+        with patch("app.voice.session_lifecycle.SESSIONS.close") as close_session:
+            await lifecycle.run()
+
+        self.assertEqual(runtime.websocket.sent[-1]["type"], "ended")
+        self.assertEqual(runtime.websocket.sent[-1]["reason"], "session_duration_limit")
+        self.assertIn("0.01-second", runtime.websocket.sent[-1]["message"])
+        self.assertEqual(
+            runtime.websocket.closed,
+            (status.WS_1000_NORMAL_CLOSURE, ""),
+        )
+        close_session.assert_called_once_with(
+            runtime.session_id,
+            reason="session_duration_limit",
+        )
+
+    async def test_background_guardrail_wakes_the_waiting_run_loop(self) -> None:
+        runtime = _runtime(websocket=_BlockingWebSocket())
+        lifecycle = ConversationLifecycle(runtime)
+
+        with patch("app.voice.session_lifecycle.SESSIONS.close") as close_session:
+            run_task = asyncio.create_task(lifecycle.run())
+            while not runtime.asr_bridge.started:
+                await asyncio.sleep(0)
+            await lifecycle.end_for_storage_limit(limit_bytes=256 * 1024 * 1024)
+            await asyncio.wait_for(run_task, timeout=0.1)
+
+        runtime._process_asr.assert_not_awaited()
+        close_session.assert_called_once_with(
+            runtime.session_id,
+            reason="session_storage_limit",
+        )
+
+    def test_storage_limit_message_uses_readable_units(self) -> None:
+        self.assertEqual(_format_bytes(1), "1 byte")
+        self.assertEqual(_format_bytes(1536), "1.5 KiB")
+        self.assertEqual(_format_bytes(256 * 1024**2), "256 MiB")
+        self.assertEqual(_format_bytes(1024**4), "1 TiB")
 
     async def test_vad_failure_reports_error_and_still_closes_resources(self) -> None:
         runtime = _runtime(vad_error=RuntimeError("vad unavailable"))

@@ -303,6 +303,8 @@ export function createVoiceWorkflow() {
     if (state.status === 'error') {
       text = state.statusMessage || 'Something went wrong.';
       isError = true;
+    } else if (state.status === 'notice') {
+      text = state.statusMessage;
     } else if (state.status === 'connecting') {
       text = 'Connecting…';
     } else {

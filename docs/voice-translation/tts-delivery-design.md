@@ -275,6 +275,10 @@ lifecycle. Preparation records are process-local and disappear on restart.
 After a restart, a missing record is a cache miss even if an orphaned file still
 exists; normal session cleanup removes the file.
 
+ASR and TTS WAV files also share the per-session storage cap described in
+[`session-guardrails-design.md`](session-guardrails-design.md). Reaching that cap
+ends the voice session before the next artifact is written.
+
 Buffered PCM is released when:
 
 - the browser has subscribed and all chunks have been forwarded;

@@ -7,6 +7,7 @@ export const els = {
   turnModeButton: document.querySelector('#turnModeButton'),
   conversationModeButton: document.querySelector('#conversationModeButton'),
   setupStartPanel: document.querySelector('#setupStartPanel'),
+  sessionEndNotice: document.querySelector('#sessionEndNotice'),
   startButton: document.querySelector('#startButton'),
   setupImageButton: document.querySelector('#setupImageButton'),
   setupCameraButton: document.querySelector('#setupCameraButton'),

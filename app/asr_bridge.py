@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import re
 import threading
 import time
@@ -24,6 +25,7 @@ from asr_pool_api import (
 
 from app.config import REPO_ROOT, get_setting, get_str
 from app.live_settings import get_live_setting
+from app.voice.session_storage import write_session_artifact
 
 
 _SPEAKER_PREFIX_RE = re.compile(
@@ -168,11 +170,13 @@ class LiveASRPoolBridge:
         raw = bytes(pcm16le or b"")
         if len(raw) % 2:
             raw = raw[:-1]
-        with wave.open(str(wav_path), "wb") as wf:
+        buffer = io.BytesIO()
+        with wave.open(buffer, "wb") as wf:
             wf.setnchannels(self.channels)
             wf.setsampwidth(2)
             wf.setframerate(self.sample_rate_hz)
             wf.writeframes(raw)
+        write_session_artifact(self.session_id, wav_path, buffer.getvalue())
 
         speaker_mode = "none"
         min_speakers = None

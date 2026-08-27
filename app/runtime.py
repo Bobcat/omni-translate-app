@@ -36,6 +36,7 @@ from app.translation_bridge import TranslationBridge
 from app.tts_bridge import tts_settings_enabled
 from app.tts_bridge import tts_settings_snapshot
 from app.voice.session_lifecycle import ConversationLifecycle
+from app.voice.session_storage import SessionArtifactLimitExceeded
 from app.voice.tasks import cancel_task
 from app.voice.tts_delivery import TtsDelivery
 
@@ -487,6 +488,10 @@ class ConversationRuntime:
                 pcm16le=work.pcm16le,
                 language=lane.asr_language,
             )
+        except SessionArtifactLimitExceeded as exc:
+            lane.asr_runner.rollback_inflight_work(sequence_id=work.sequence_id)
+            await self.lifecycle.end_for_storage_limit(limit_bytes=exc.limit_bytes)
+            return
         except Exception as exc:
             lane.asr_runner.rollback_inflight_work(sequence_id=work.sequence_id)
             await self.lifecycle.send(
