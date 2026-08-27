@@ -113,8 +113,8 @@ node --test tests/js/
 git diff --check main...HEAD
 ```
 
-The author run passed 264 Python tests and 91 JavaScript tests. Inspect the full
-diff from `main`; do not review only the last commit.
+The post-fix author run passed 269 Python tests and 91 JavaScript tests. Inspect
+the full diff from `main`; do not review only the last commit.
 
 ## Review response
 
