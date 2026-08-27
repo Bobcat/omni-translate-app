@@ -56,8 +56,10 @@ class _Preparation:
     subscribed: bool = False
     used: bool = False
     playback_kind: str = "first"
+    playback_trigger: str = "explicit"
     started_tts: dict[str, Any] | None = None
     chunks: list[dict[str, Any]] = field(default_factory=list)
+    forward_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
     forwarded_chunks: int = 0
     started_sent: bool = False
     artifact_id: str = ""
@@ -198,7 +200,11 @@ class TtsDelivery:
                 )
             )
             return
-        await self._deliver_ready_artifact(record, playback_kind="replay")
+        await self._deliver_ready_artifact(
+            record,
+            playback_kind="replay",
+            playback_trigger="explicit",
+        )
 
     async def run_speak_sequence(
         self,
@@ -245,6 +251,7 @@ class TtsDelivery:
     ) -> None:
         if not tts_settings_enabled(self.runtime.tts_settings):
             return
+        playback_trigger = "automatic" if generation_reason == "automatic" else "explicit"
         key = (turn_id, part_id)
         record = self.preparations.get(key)
         if record is not None and not self._record_is_current(record):
@@ -263,16 +270,20 @@ class TtsDelivery:
                 return
             self._record_playback_path(record, "demand_miss")
             await self._prioritize_explicit(record)
-            await self._subscribe(record)
+            await self._subscribe(record, playback_trigger=playback_trigger)
             self._enqueue(record, priority=True)
         elif record.state == "ready":
             self._record_playback_path(record, "ready_hit")
-            await self._subscribe(record)
-            await self._deliver_ready_artifact(record, playback_kind="first")
+            await self._subscribe(record, playback_trigger=playback_trigger)
+            await self._deliver_ready_artifact(
+                record,
+                playback_kind="first",
+                playback_trigger=playback_trigger,
+            )
             return
         else:
             self._record_playback_path(record, "joined_generation")
-            await self._subscribe(record)
+            await self._subscribe(record, playback_trigger=playback_trigger)
             if record.state == "queued":
                 self._move_to_front(record.key)
             await self._cancel_unrelated_speculation(record.key)
@@ -341,14 +352,26 @@ class TtsDelivery:
                 if record is None or record.state != "queued" or record.cancelled:
                     continue
                 self.active_preparation_key = key
-                await self._generate(record)
-                self.active_preparation_key = None
+                try:
+                    await self._generate(record)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    self._settle_unexpected_generation_failure(record, exc)
+                finally:
+                    self.active_preparation_key = None
         finally:
             self.active_preparation_key = None
             if self.generation_task is current_task:
                 self.generation_task = None
 
     async def _generate(self, record: _Preparation) -> None:
+        try:
+            await self._generate_record(record)
+        finally:
+            self._resolve_done(record)
+
+    async def _generate_record(self, record: _Preparation) -> None:
         runtime = self.runtime
         lane = runtime.lanes[record.lane_id]
         loop = asyncio.get_running_loop()
@@ -549,7 +572,13 @@ class TtsDelivery:
         )
         self._resolve_done(record)
 
-    async def _subscribe(self, record: _Preparation) -> None:
+    async def _subscribe(
+        self,
+        record: _Preparation,
+        *,
+        playback_trigger: str,
+    ) -> None:
+        record.playback_trigger = playback_trigger
         if not record.subscribed:
             record.subscribed = True
             record.subscribed_mono = time.monotonic()
@@ -565,7 +594,6 @@ class TtsDelivery:
                     reason=record.reason,
                 )
         if record.state == "generating":
-            await self._send_started(record)
             await self._forward_buffered_chunks(record)
 
     async def _send_started(self, record: _Preparation) -> None:
@@ -580,31 +608,34 @@ class TtsDelivery:
                 turn_id=record.turn_id,
                 part_ids=[record.part_id],
                 playback_kind=record.playback_kind,
+                playback_trigger=record.playback_trigger,
                 tts=dict(record.started_tts),
             )
         )
 
     async def _forward_buffered_chunks(self, record: _Preparation) -> None:
-        await self._send_started(record)
-        chunks = record.chunks
-        record.chunks = []
-        for chunk in chunks:
-            await self.runtime.lifecycle.send(
-                event(
-                    "tts_stream_chunk",
-                    self.runtime.session_id,
-                    lane_id=record.lane_id,
-                    turn_id=record.turn_id,
-                    **chunk,
+        async with record.forward_lock:
+            await self._send_started(record)
+            chunks = record.chunks
+            record.chunks = []
+            for chunk in chunks:
+                await self.runtime.lifecycle.send(
+                    event(
+                        "tts_stream_chunk",
+                        self.runtime.session_id,
+                        lane_id=record.lane_id,
+                        turn_id=record.turn_id,
+                        **chunk,
+                    )
                 )
-            )
-            record.forwarded_chunks += 1
+                record.forwarded_chunks += 1
 
     async def _deliver_ready_artifact(
         self,
         record: _Preparation,
         *,
         playback_kind: str,
+        playback_trigger: str,
     ) -> None:
         if record.tts_payload is None or not self._record_is_current(record):
             return
@@ -628,6 +659,7 @@ class TtsDelivery:
                 part_ids=[record.part_id],
                 text=record.text,
                 playback_kind=playback_kind,
+                playback_trigger=playback_trigger,
                 tts=dict(record.tts_payload),
             )
         )
@@ -652,6 +684,7 @@ class TtsDelivery:
     def _move_to_front(self, key: tuple[str, str]) -> None:
         self.generation_queue = [queued for queued in self.generation_queue if queued != key]
         self.generation_queue.insert(0, key)
+        self._ensure_worker()
 
     async def settings_changed(
         self,
@@ -814,6 +847,42 @@ class TtsDelivery:
                 turn_id=record.turn_id,
                 artifact_id=record.artifact_id,
             )
+        )
+
+    def _settle_unexpected_generation_failure(
+        self,
+        record: _Preparation,
+        exc: Exception,
+    ) -> None:
+        LOGGER.exception(
+            "tts preparation failed outside the synthesis error path lane=%s turn=%s part=%s",
+            record.lane_id,
+            record.turn_id,
+            record.part_id,
+            exc_info=exc,
+        )
+        if record.cancellation is not None:
+            record.cancellation.cancel()
+        self.active_stream_artifacts.pop(record.artifact_id, None)
+        lane = self.runtime.lanes[record.lane_id]
+        lane.pending_tts.pop(record.artifact_id, None)
+        record.state = "cancelled" if record.cancelled else "failed"
+        record.chunks.clear()
+        record.forwarded_chunks = 0
+        if record.subscribed and self._turn_is_current(record.turn_id):
+            self._set_part_speech_state(
+                [record.part_id],
+                expected="speaking",
+                replacement="pending",
+            )
+            self.runtime._refresh_turn_state()
+        _metric(
+            "tts_preparation",
+            sess=self.runtime.session_id,
+            lane=record.lane_id,
+            part=record.part_id,
+            reason=record.reason,
+            state="failed",
         )
 
     def _record_is_current(self, record: _Preparation) -> bool:

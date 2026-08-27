@@ -30,6 +30,35 @@ class FakeWebSocket:
         self.closed_code = code
 
 
+class SuspendingChunkWebSocket(FakeWebSocket):
+    def __init__(self) -> None:
+        super().__init__()
+        self.first_chunk_send_started = asyncio.Event()
+        self.release_first_chunk_send = asyncio.Event()
+
+    async def send_json(self, payload: dict) -> None:
+        self.sent.append(payload)
+        if (
+            payload.get("type") == "tts_stream_chunk"
+            and payload.get("sequence_number") == 0
+            and not self.first_chunk_send_started.is_set()
+        ):
+            self.first_chunk_send_started.set()
+            await self.release_first_chunk_send.wait()
+
+
+class FailingCompleteWebSocket(FakeWebSocket):
+    def __init__(self) -> None:
+        super().__init__()
+        self.failed = False
+
+    async def send_json(self, payload: dict) -> None:
+        if payload.get("type") == "tts_stream_complete" and not self.failed:
+            self.failed = True
+            raise RuntimeError("simulated websocket send failure")
+        self.sent.append(payload)
+
+
 class FastTTS:
     enabled = True
 
@@ -185,6 +214,53 @@ class BufferedTTS:
         return payload
 
 
+class InterleavingTTS:
+    enabled = True
+
+    def __init__(self) -> None:
+        self.chunk_ready = threading.Event()
+        self.release = threading.Event()
+
+    def synthesize(self, *, on_stream_started=None, on_audio_chunk=None, cancellation=None, **_kwargs) -> dict:
+        payload = {
+            "artifact_id": "interleaving_artifact",
+            "url": "/fake/interleaving.wav",
+            "duration_ms": 100,
+        }
+        if on_stream_started is not None:
+            on_stream_started(
+                {
+                    "artifact_id": payload["artifact_id"],
+                    "sample_rate_hz": 24_000,
+                    "channel_count": 1,
+                    "encoding": "pcm_s16le",
+                }
+            )
+        for sequence_number in range(3):
+            on_audio_chunk(
+                {
+                    "artifact_id": payload["artifact_id"],
+                    "sequence_number": sequence_number,
+                    "first_sample": sequence_number * 2400,
+                    "pcm": b"\x00\x00" * 2400,
+                }
+            )
+        self.chunk_ready.set()
+        while not self.release.wait(0.001):
+            if cancellation is not None and cancellation.cancelled:
+                raise RuntimeError("cancelled")
+        for sequence_number in range(3, 6):
+            on_audio_chunk(
+                {
+                    "artifact_id": payload["artifact_id"],
+                    "sequence_number": sequence_number,
+                    "first_sample": sequence_number * 2400,
+                    "pcm": b"\x00\x00" * 2400,
+                }
+            )
+        return payload
+
+
 class PriorityTTS:
     enabled = True
 
@@ -264,6 +340,7 @@ class TurnStateMachineTests(unittest.IsolatedAsyncioTestCase):
         *,
         auto_speak: bool = False,
         speculation_limit: int = 8,
+        websocket: FakeWebSocket | None = None,
     ) -> tuple[ConversationRuntime, FakeWebSocket]:
         session = ConversationSession(
             session_id=f"conv_test_{time.time_ns()}",
@@ -276,7 +353,7 @@ class TurnStateMachineTests(unittest.IsolatedAsyncioTestCase):
                 {"enabled": True, "auto_speak": auto_speak}
             )[0],
         )
-        websocket = FakeWebSocket()
+        websocket = websocket or FakeWebSocket()
         with patch(
             "app.voice.tts_delivery.get_int",
             return_value=speculation_limit,
@@ -348,6 +425,7 @@ class TurnStateMachineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(runtime.tts_delivery.speculation_budget, 1)
         ready = next(item for item in websocket.sent if item["type"] == "tts_artifact_ready")
         self.assertEqual(ready["playback_kind"], "first")
+        self.assertEqual(ready["playback_trigger"], "explicit")
         self.assertEqual(ready["tts"]["artifact_id"], "artifact_1")
 
     async def test_speak_joins_buffered_speculative_generation(self) -> None:
@@ -377,6 +455,81 @@ class TurnStateMachineTests(unittest.IsolatedAsyncioTestCase):
         tts.release.set()
         await runtime._current_lane().tts_task
         self.assertTrue(any(item["type"] == "tts_stream_complete" for item in websocket.sent))
+
+    async def test_speak_join_preserves_chunk_order_while_new_chunks_arrive(self) -> None:
+        tts = InterleavingTTS()
+        websocket = SuspendingChunkWebSocket()
+        runtime, _ = self.make_runtime(
+            tts,
+            speculation_limit=1,
+            websocket=websocket,
+        )
+        part = runtime.current_turn.parts[0]
+        part.is_closed = True
+        runtime.tts_delivery.prepare_definitive_part(
+            lane_id="a_to_b",
+            turn_id=runtime.current_turn.turn_id,
+            part_id=part.part_id,
+        )
+        self.assertTrue(await asyncio.to_thread(tts.chunk_ready.wait, 1.0))
+
+        await runtime._speak_part(part.part_id)
+        await asyncio.wait_for(websocket.first_chunk_send_started.wait(), timeout=1.0)
+        tts.release.set()
+        await asyncio.sleep(0.01)
+        websocket.release_first_chunk_send.set()
+        await asyncio.wait_for(runtime._current_lane().tts_task, timeout=1.0)
+
+        sequences = [
+            item["sequence_number"]
+            for item in websocket.sent
+            if item["type"] == "tts_stream_chunk"
+        ]
+        self.assertEqual(sequences, list(range(6)))
+
+    async def test_send_failure_does_not_strand_the_generation_queue(self) -> None:
+        tts = BufferedTTS()
+        websocket = FailingCompleteWebSocket()
+        runtime, _ = self.make_runtime(
+            tts,
+            speculation_limit=2,
+            websocket=websocket,
+        )
+        first = runtime.current_turn.parts[0]
+        first.is_closed = True
+        second = TurnPart(
+            part_id="turn_1_part_2",
+            source_committed_text="Tweede",
+            target_committed_text="Second",
+            is_closed=True,
+        )
+        runtime.current_turn.parts.append(second)
+        for part in (first, second):
+            self.assertTrue(
+                runtime.tts_delivery.prepare_definitive_part(
+                    lane_id="a_to_b",
+                    turn_id=runtime.current_turn.turn_id,
+                    part_id=part.part_id,
+                )
+            )
+        self.assertTrue(await asyncio.to_thread(tts.chunk_ready.wait, 1.0))
+
+        await runtime._speak_part(first.part_id)
+        tts.release.set()
+        speak_task = runtime._current_lane().tts_task
+        generation_task = runtime.tts_delivery.generation_task
+        await asyncio.wait_for(speak_task, timeout=1.0)
+        await asyncio.wait_for(generation_task, timeout=1.0)
+
+        first_record = runtime.tts_delivery.preparations[(runtime.current_turn.turn_id, first.part_id)]
+        second_record = runtime.tts_delivery.preparations[(runtime.current_turn.turn_id, second.part_id)]
+        self.assertTrue(websocket.failed)
+        self.assertEqual(first_record.state, "failed")
+        self.assertTrue(first_record.done.done())
+        self.assertEqual(first.speech_state, "pending")
+        self.assertEqual(second_record.state, "ready")
+        self.assertTrue(second_record.done.done())
+        self.assertFalse(runtime.tts_delivery.generation_queue)
 
     async def test_explicit_demand_preempts_unrelated_speculation(self) -> None:
         tts = PriorityTTS()
@@ -442,6 +595,8 @@ class TurnStateMachineTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(part.is_closed)
         self.assertEqual(part.speech_state, "speaking")
         self.assertEqual(tts.count, 1)
+        started = next(item for item in websocket.sent if item["type"] == "tts_stream_started")
+        self.assertEqual(started["playback_trigger"], "automatic")
         self.assertTrue(any(item["type"] == "tts_stream_chunk" for item in websocket.sent))
 
     async def test_disabling_auto_speak_cancels_unstarted_automatic_generation(self) -> None:
@@ -634,6 +789,7 @@ class TurnStateMachineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(replay["part_id"], "turn_1_part_1")
         self.assertEqual(replay["text"], "Test")
         self.assertEqual(replay["playback_kind"], "replay")
+        self.assertEqual(replay["playback_trigger"], "explicit")
         self.assertEqual(replay["tts"]["artifact_id"], "artifact_1")
 
     async def test_unavailable_replay_returns_the_bubble_to_pending(self) -> None:
