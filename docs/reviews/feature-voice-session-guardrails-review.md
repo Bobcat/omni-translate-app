@@ -1,7 +1,7 @@
 # Review prompt: voice session runtime and storage guardrails
 
-Review `feature/voice-session-guardrails` against `main`. Review only; do not
-modify the branch.
+Review PR #23, `feature/voice-session-guardrails` against `main`. Review only;
+do not modify the branch.
 
 ## Required context
 
