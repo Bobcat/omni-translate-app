@@ -43,7 +43,7 @@
     <link rel="stylesheet" href="/themes/light.css?v=20260730-appearance-1">
     <link rel="stylesheet" href="/themes/dark.css?v=20260730-appearance-1">
     <link rel="stylesheet" href="/themes/warm.css?v=20260811-warm-palette-2">
-    <link rel="stylesheet" href="/styles/shell.css?v=20260812-language-bar-1">
+    <link rel="stylesheet" href="/styles/shell.css?v=20260827-voice-guardrails-1">
     <link rel="stylesheet" href="/styles/image.css?v=20260809-mobile-css-split-1">
     <link rel="stylesheet" href="/styles/voice.css?v=20260827-voice-tts-stream-review-2">
     <link rel="stylesheet" href="/styles/settings/sheet.css?v=20260809-mobile-css-split-1">
@@ -96,6 +96,7 @@
           <div class="text-stream" id="targetText" data-empty="No translation yet"></div>
         </article>
         <div class="setup-start-panel" id="setupStartPanel">
+          <p class="setup-session-notice" id="sessionEndNotice" role="status" hidden></p>
           <button class="setup-mode-pill setup-start-button" id="startButton" type="button" title="From microphone" aria-label="From microphone">
             <svg class="setup-mode-icon" viewBox="0 0 24 24" aria-hidden="true">
               <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path>
@@ -557,6 +558,6 @@
       </div>
 
     </main>
-    <script type="module" src="/src/app.js?v=20260827-voice-tts-review-1"></script>
+    <script type="module" src="/src/app.js?v=20260827-voice-guardrails-1"></script>
   </body>
 </html>

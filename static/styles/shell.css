@@ -646,6 +646,15 @@ button {
   display: none;
 }
 
+.setup-session-notice {
+  max-width: 300px;
+  margin: 0 0 4px;
+  color: var(--text);
+  font-size: 0.9rem;
+  line-height: 1.35;
+  text-align: center;
+}
+
 .setup-mode-pill {
   --setup-mode-pill-accent: #2f6fce;
   --setup-mode-pill-bg: #e8f7ff;

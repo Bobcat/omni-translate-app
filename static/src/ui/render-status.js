@@ -28,6 +28,8 @@ export function renderLifecycle() {
   els.app.classList.toggle('is-mic-off', micOff);
   els.app.classList.toggle('is-mic-listening', micListening);
   els.setupStartPanel.hidden = !setup;
+  els.sessionEndNotice.textContent = state.sessionEndMessage;
+  els.sessionEndNotice.hidden = !setup || !state.sessionEndMessage;
   els.imageTranslationView.hidden = !imageTranslation;
   els.sourceText.hidden = setup || imageTranslation;
   els.languageDirectionButton.hidden = !(setup || imageTranslation);

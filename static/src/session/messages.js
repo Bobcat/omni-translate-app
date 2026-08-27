@@ -16,6 +16,7 @@ import {
 } from '../domain/lanes.js';
 import {
   setStatus,
+  renderLifecycle,
   renderLanguageControls,
 } from '../ui/render-status.js';
 import { updateActionButtons } from '../ui/action-buttons.js';
@@ -24,6 +25,7 @@ import { renderTtsSettings } from '../settings/tts.js';
 import { renderTranscript } from '../ui/render-turn.js';
 import { enableTranscriptAutoFollow } from '../ui/auto-follow.js';
 import { normalizeTurnPayload } from '../domain/turns.js';
+import { voiceSessionEndMessage } from '../shared/voice-session-end.js';
 import { audioQueue } from './audio-queue.js';
 import {
   hideVadHint,
@@ -134,11 +136,14 @@ export function handleMessage(msg) {
     return;
   }
   if (msg.type === 'ended') {
+    const endMessage = voiceSessionEndMessage(msg);
     state.captureMutedForPlayback = false;
     hideVadHint();
     cleanupClientSession({ keepSocket: false });
     state.sessionId = null;
     resetLiveRecordingToSetup();
+    state.sessionEndMessage = endMessage;
+    renderLifecycle();
   }
 }
 

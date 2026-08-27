@@ -16,6 +16,7 @@ import { AudioCapture } from '../../../../src/shared/audio-capture.js';
 import { playMicOffCue, playMicOnCue } from '../../../../src/shared/audio-cue.js';
 import { AudioQueue } from '../../../../src/shared/audio-playback.js';
 import { shouldStopMicrophoneAfterPlayback } from '../../../../src/shared/voice-playback.js';
+import { voiceSessionEndMessage } from '../../../../src/shared/voice-session-end.js';
 import { createMicAutoOffController } from '../../../../src/shared/mic-auto-off-controller.js';
 import { guessSetupLanguages, normalizeLanguageName } from '../../../../src/domain/languages.js';
 import {
@@ -776,9 +777,14 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
       return;
     }
     if (msg.type === 'ended') {
+      const endMessage = voiceSessionEndMessage(msg);
       state.captureMutedForPlayback = false;
       cleanupSession({ keepSocket: false });
       resetToSetup();
+      if (endMessage) {
+        state.status = 'notice';
+        state.statusMessage = endMessage;
+      }
       emit();
     }
   }

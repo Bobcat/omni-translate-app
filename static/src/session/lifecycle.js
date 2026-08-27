@@ -52,6 +52,7 @@ let _iosMicOffCueTimer = null;
 
 export async function startListening({ withMic = true } = {}) {
   if (state.ttsSettings.auto_speak) audioQueue.preparePcmPlayback();
+  state.sessionEndMessage = '';
   clearPendingIosMicOffCue();
   const startLaneId = currentLaneId();
   clearAllLanes({ laneId: startLaneId });
@@ -359,6 +360,7 @@ export function resetLiveRecordingToSetup() {
   clearAllLanes({ laneId: 'a_to_b' });
   state.requestedStartLaneId = 'a_to_b';
   state.captureMutedForPlayback = false;
+  state.sessionEndMessage = '';
   setLiveRecordingAppMode(APP_MODES.SETUP);
   setStatus('idle');
 }
