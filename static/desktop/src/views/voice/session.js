@@ -225,13 +225,23 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
     },
     onItemEnded: (item) => {
       if (item.replay) return;
-      const speakingPart = (state.currentTurn?.parts || []).find((p) => p.speechState === 'speaking');
-      if (speakingPart) speakingPart.speechState = 'spoken';
+      const selection = new Set(item.partIds || []);
+      for (const part of state.currentTurn?.parts || []) {
+        if (selection.has(part.partId) && part.speechState === 'speaking') part.speechState = 'spoken';
+      }
       state.socket?.ttsPlaybackComplete({
         laneId: item.laneId,
         turnId: item.turnId,
         artifactId: item.artifactId,
       });
+    },
+    onItemFailed: (item) => {
+      state.socket?.stopTts({
+        laneId: item.laneId,
+        turnId: item.turnId,
+        artifactId: '',
+      });
+      audioQueue.stop();
     },
   });
 
@@ -561,6 +571,7 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
       && state.currentTurn.state !== TURN_STATES.OPEN_SPEAKING
       && state.socket?.speakNow();
     if (!canSpeak) return;
+    audioQueue.preparePcmPlayback();
     state.speakNowPending = true;
     state.speakInflightFilter = {
       turnId: String(state.currentTurn.turnId || ''),
@@ -596,16 +607,25 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
     if (!state.live || !state.ttsEnabled) return;
     const id = String(partId || '').trim();
     if (!id) return;
+    audioQueue.preparePcmPlayback();
     state.socket?.speakPart(id);
   }
 
-  function replayPart({ laneId, text }) {
+  function replayPart({ laneId, partId }) {
     if (!state.live || !state.ttsEnabled) return;
-    if (!String(text || '').trim()) return;
-    state.socket?.replayTts({ laneId, text });
+    const id = String(partId || '').trim();
+    if (!id) return;
+    state.socket?.replayTts({ laneId, partId: id });
   }
 
-  function stopAudio() {
+  function stopAudio({ preparing = false } = {}) {
+    if (preparing || audioQueue.hasNonReplayAudio()) {
+      state.socket?.stopTts({
+        laneId: state.currentTurn.laneId,
+        turnId: state.currentTurn.turnId,
+        artifactId: audioQueue.currentArtifactId(),
+      });
+    }
     audioQueue.stop();
     emit();
   }
@@ -661,16 +681,37 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
       applyTurnUpdate(msg);
       return;
     }
-    if (msg.type === 'tts_clip_ready') {
+    if (msg.type === 'tts_stream_started') {
       if (!shouldApplyCurrentTurnMessage(msg)) return;
       if (msg.tts) {
-        audioQueue.enqueue({
+        audioQueue.startPcmStream({
           ...msg.tts,
           laneId: msg.lane_id,
           turnId: msg.turn_id,
           artifactId: msg.tts.artifact_id,
+          partIds: msg.part_ids || [],
         });
       }
+      emit();
+      return;
+    }
+    if (msg.type === 'tts_stream_chunk') {
+      if (!shouldApplyCurrentTurnMessage(msg)) return;
+      audioQueue.appendPcmChunk({
+        artifactId: msg.artifact_id,
+        sequenceNumber: msg.sequence_number,
+        pcmBase64: msg.pcm_base64,
+      });
+      return;
+    }
+    if (msg.type === 'tts_stream_complete') {
+      if (!shouldApplyCurrentTurnMessage(msg)) return;
+      if (msg.tts) audioQueue.completePcmStream(msg.tts);
+      emit();
+      return;
+    }
+    if (msg.type === 'tts_stream_failed') {
+      audioQueue.failPcmStream(msg.artifact_id);
       emit();
       return;
     }

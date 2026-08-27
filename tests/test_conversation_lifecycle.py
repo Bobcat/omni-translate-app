@@ -51,6 +51,14 @@ class _AsrRunner:
             raise self.error
 
 
+class _TtsDelivery:
+    def __init__(self) -> None:
+        self.cleared = False
+
+    def clear(self) -> None:
+        self.cleared = True
+
+
 def _runtime(*, vad_error: Exception | None = None) -> SimpleNamespace:
     websocket = _WebSocket()
     asr_bridge = _AsrBridge()
@@ -72,6 +80,7 @@ def _runtime(*, vad_error: Exception | None = None) -> SimpleNamespace:
         lanes={"a_to_b": lane},
         current_turn=object(),
         asr_bridge=asr_bridge,
+        tts_delivery=_TtsDelivery(),
         _lane_payload=lambda _lane: {"lane_id": "a_to_b"},
         _turn_payload=lambda _turn: {"turn_id": "turn_1"},
         _process_asr=AsyncMock(),
@@ -91,6 +100,7 @@ class ConversationLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(runtime.websocket.accepted)
         self.assertTrue(runtime.asr_bridge.started)
         self.assertTrue(runtime.asr_bridge.closed)
+        self.assertTrue(runtime.tts_delivery.cleared)
         self.assertEqual(runtime.websocket.sent[0]["type"], "ready")
         close_session.assert_called_once_with(runtime.session_id, reason="closed")
 
@@ -103,6 +113,7 @@ class ConversationLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(runtime.asr_bridge.started)
         self.assertTrue(runtime.asr_bridge.closed)
+        self.assertTrue(runtime.tts_delivery.cleared)
         self.assertEqual(runtime.websocket.sent[0]["code"], "vad_init_failed")
         self.assertEqual(
             runtime.websocket.closed,

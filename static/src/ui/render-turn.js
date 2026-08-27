@@ -40,6 +40,13 @@ function handleBubbleAudioAction(button, bubble) {
   const action = button.dataset.audioAction || 'replay';
   if (action === 'stop') {
     flashReplayBubble(bubble);
+    if (button.classList.contains('is-preparing') || audioQueue.hasNonReplayAudio()) {
+      state.socket?.stopTts({
+        laneId: state.currentTurn.laneId,
+        turnId: state.currentTurn.turnId,
+        artifactId: audioQueue.currentArtifactId(),
+      });
+    }
     audioQueue.stop();
     return;
   }
@@ -58,12 +65,12 @@ function flashReplayBubble(bubble) {
 }
 
 function triggerReplayFromButton(button) {
-  const text = String(button.dataset.replayText || '').trim();
   const laneId = String(button.dataset.replayLane || '').trim();
-  if (!text || !laneId) return;
+  const partId = String(button.dataset.partId || '').trim();
+  if (!laneId || !partId) return;
   if (state.appMode !== APP_MODES.LIVE_RECORDING) return;
   if (!state.ttsSettings.enabled) return;
-  state.socket?.replayTts({ laneId, text });
+  state.socket?.replayTts({ laneId, partId });
 }
 
 function triggerSpeakPartFromButton(button) {
@@ -71,6 +78,7 @@ function triggerSpeakPartFromButton(button) {
   if (!partId) return;
   if (state.appMode !== APP_MODES.LIVE_RECORDING) return;
   if (!state.ttsSettings.enabled) return;
+  audioQueue.preparePcmPlayback();
   state.socket?.speakPart(partId);
 }
 
@@ -116,6 +124,10 @@ function renderTurnStream(el, parts, role, fallbackText) {
         row.classList.add('is-replayable');
         row.classList.add('is-playing-audio');
         row.append(createBubbleSpeakButton({ text: replayText, laneId: state.currentTurn.laneId, partId: part.partId, mode: 'stop' }));
+      } else if (part.speechState === 'speaking') {
+        row.classList.add('is-speakable');
+        row.classList.add('is-preparing-audio');
+        row.append(createBubbleSpeakButton({ text: speakText, laneId: state.currentTurn.laneId, partId: part.partId, mode: 'preparing' }));
       } else if (part.speechState === 'spoken' && replayText) {
         row.classList.add('is-replayable');
         row.append(createBubbleSpeakButton({ text: replayText, laneId: state.currentTurn.laneId, partId: part.partId, mode: 'replay' }));
@@ -156,6 +168,15 @@ function createBubbleSpeakButton({ text, laneId, partId, mode = 'replay' }) {
     button.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true">'
       + '<circle cx="12" cy="12" r="10"/>'
       + '<rect x="9" y="9" width="6" height="6" rx="1"/>'
+      + '</svg>';
+  } else if (mode === 'preparing') {
+    button.classList.add('is-preparing');
+    button.dataset.audioAction = 'stop';
+    button.setAttribute('aria-label', 'Stop preparing audio');
+    button.title = 'Stop preparing audio';
+    button.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true">'
+      + '<circle cx="12" cy="12" r="8"/>'
+      + '<path d="M12 4a8 8 0 0 1 8 8"/>'
       + '</svg>';
   } else {
     button.dataset.audioAction = mode === 'speak' ? 'speak' : 'replay';

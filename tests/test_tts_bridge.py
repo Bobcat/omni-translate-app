@@ -14,21 +14,51 @@ from app.tts_bridge import TTS_ROOT
 from app.tts_bridge import tts_settings_payload
 from app.tts_bridge import tts_settings_snapshot
 from app.tts_bridge import tts_uses_asr_reference_wav
+from app.upstreams.tts_pool.client import TtsAudioChunk
 from app.upstreams.tts_pool.client import TtsSynthesisResult
+from app.upstreams.tts_pool.client import TtsStreamStarted
 
 
 class FakeTtsPool:
     def __init__(self) -> None:
         self.calls = []
 
-    def synthesize(self, payload, *, fairness_key, timeout_s):
+    def synthesize(
+        self,
+        payload,
+        *,
+        fairness_key,
+        timeout_s,
+        on_started=None,
+        on_audio_chunk=None,
+        cancellation=None,
+    ):
         self.calls.append(
             {
                 "payload": payload,
                 "fairness_key": fairness_key,
                 "timeout_s": timeout_s,
+                "cancellation": cancellation,
             }
         )
+        if on_started is not None:
+            on_started(
+                TtsStreamStarted(
+                    response_id="ttsresp_test",
+                    model=payload["model"],
+                    sample_rate_hz=24_000,
+                    channel_count=1,
+                    scheduler_queue_wait_ms=1.0,
+                )
+            )
+        if on_audio_chunk is not None:
+            on_audio_chunk(
+                TtsAudioChunk(
+                    sequence_number=0,
+                    first_sample=0,
+                    pcm=b"\x00\x00" * 2400,
+                )
+            )
         return TtsSynthesisResult(
             response_id="ttsresp_test",
             model=payload["model"],
@@ -113,6 +143,30 @@ class TTSBridgeTests(unittest.TestCase):
         self.assertIn("tts_pool_request_wall_ms", payload["metrics"])
         self.assertIn("tts_artifact_write_ms", payload["metrics"])
         self.assertIn("tts_total_wall_ms", payload["metrics"])
+
+    def test_synthesize_forwards_pcm_before_returning_the_artifact(self) -> None:
+        fake_pool = FakeTtsPool()
+        session_id = "conv_test_tts_pool_stream"
+        self.addCleanup(lambda: shutil.rmtree(TTS_ROOT / session_id, ignore_errors=True))
+        started_events = []
+        audio_chunks = []
+
+        with mock.patch("app.tts_bridge.synthesize_tts", side_effect=fake_pool.synthesize):
+            payload = TTSBridge().synthesize(
+                session_id=session_id,
+                fairness_key="principal_test",
+                text="Hello",
+                language="English",
+                settings=self._settings({"backend": "kokoro"}),
+                on_stream_started=started_events.append,
+                on_audio_chunk=audio_chunks.append,
+            )
+
+        self.assertEqual(started_events[0]["artifact_id"], payload["artifact_id"])
+        self.assertEqual(started_events[0]["sample_rate_hz"], 24_000)
+        self.assertEqual(audio_chunks[0]["artifact_id"], payload["artifact_id"])
+        self.assertEqual(audio_chunks[0]["sequence_number"], 0)
+        self.assertEqual(audio_chunks[0]["pcm"], b"\x00\x00" * 2400)
 
     def test_synthesize_sends_voxcpm2_reference_audio_to_tts_pool(self) -> None:
         settings = self._settings({

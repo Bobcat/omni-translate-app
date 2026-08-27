@@ -105,14 +105,14 @@ export function createVoiceWorkflow() {
     targetText.dataset.autofollow = 'off';
     const action = button.dataset.audioAction || 'replay';
     if (action === 'stop') {
-      session.stopAudio();
+      session.stopAudio({ preparing: button.classList.contains('is-preparing') });
       return;
     }
     if (action === 'speak') {
       session.speakPart(button.dataset.partId);
       return;
     }
-    session.replayPart({ laneId: button.dataset.replayLane, text: button.dataset.replayText });
+    session.replayPart({ laneId: button.dataset.replayLane, partId: button.dataset.partId });
   });
 
   session.loadConfig();
@@ -193,6 +193,9 @@ export function createVoiceWorkflow() {
     if (isStopForThis) {
       row.classList.add('is-playing-audio');
       row.append(createBubbleButton({ mode: 'stop', text: replayText, partId: part.partId }));
+    } else if (part.speechState === 'speaking') {
+      row.classList.add('is-preparing-audio');
+      row.append(createBubbleButton({ mode: 'preparing', text: speakText, partId: part.partId }));
     } else if (part.speechState === 'spoken' && replayText) {
       row.append(createBubbleButton({ mode: 'replay', text: replayText, partId: part.partId }));
     } else if (part.speechState !== 'spoken' && canSpeakVisibleText) {
@@ -213,6 +216,15 @@ export function createVoiceWorkflow() {
       button.setAttribute('aria-label', 'Stop playback');
       button.title = 'Stop';
       button.innerHTML = iconMarkup('stop');
+    } else if (mode === 'preparing') {
+      button.classList.add('is-preparing');
+      button.dataset.audioAction = 'stop';
+      button.setAttribute('aria-label', 'Stop preparing audio');
+      button.title = 'Stop preparing audio';
+      button.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true">'
+        + '<circle cx="12" cy="12" r="8"/>'
+        + '<path d="M12 4a8 8 0 0 1 8 8"/>'
+        + '</svg>';
     } else {
       button.dataset.audioAction = mode === 'speak' ? 'speak' : 'replay';
       button.setAttribute('aria-label', mode === 'speak' ? 'Speak' : 'Replay');

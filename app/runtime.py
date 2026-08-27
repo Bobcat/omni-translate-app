@@ -104,10 +104,6 @@ class TurnPart:
     target_committed_text: str = ""
     target_preview_text: str = ""
     speech_state: str = "pending"
-    # Snapshot of the ASR reference WAV used at the original TTS call, so
-    # replays of this bubble reuse the same voice reference even if newer
-    # speech has overwritten lane.last_asr_wav_path in the meantime.
-    reference_wav_path: str = ""
     # True when the TTS for this part had to fall back to a sub-threshold
     # last_speech fragment (no previous qualifying fragment available).
     # Surfaced to the UI as an "uncertain voice quality" indicator.
@@ -244,6 +240,9 @@ class ConversationRuntime:
             return True
         if msg_type == "replay_tts":
             await self.tts_delivery.replay(payload)
+            return True
+        if msg_type == "stop_tts":
+            await self.tts_delivery.stop(payload)
             return True
         if msg_type == "update_live_settings":
             await self._update_live_settings(payload)
@@ -915,14 +914,13 @@ class ConversationRuntime:
         if not is_open_turn(turn.state):
             return turn
         lane = self.lanes[turn.lane_id]
+        self.tts_delivery.discard_turn(turn.turn_id)
         self._close_asr_scope_for_turn(lane)
         await cancel_task(lane.translation_task)
         await cancel_task(lane.tts_task)
         lane.translation_task = None
         lane.tts_task = None
         lane.pending_tts.clear()
-        for part in turn.parts:
-            self.tts_delivery.discard_part_reference_wav(part)
         turn.state = TurnState.CLOSED
         self.closed_turns.append(turn)
         self.turn_counter += 1

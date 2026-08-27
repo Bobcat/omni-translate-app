@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 import time
 import unittest
 from types import SimpleNamespace
@@ -37,31 +38,111 @@ class FastTTS:
         self.settings: list[dict | None] = []
         self.fairness_keys: list[str] = []
 
-    def synthesize(self, *, session_id: str, text: str, language: str, fairness_key: str, settings: dict | None = None, reference_wav_path: str | None = None, reference_prompt_text: str | None = None, source_audio_duration_ms: int | None = None) -> dict:
+    def synthesize(self, *, session_id: str, text: str, language: str, fairness_key: str, settings: dict | None = None, reference_wav_path: str | None = None, reference_prompt_text: str | None = None, source_audio_duration_ms: int | None = None, on_stream_started=None, on_audio_chunk=None, cancellation=None) -> dict:
         self.count += 1
         self.settings.append(settings)
         self.fairness_keys.append(fairness_key)
-        return {
+        payload = {
             "artifact_id": f"artifact_{self.count}",
             "url": f"/fake/{self.count}.wav",
             "duration_ms": 100,
             "language": language,
             "chars": len(text),
         }
+        if on_stream_started is not None:
+            on_stream_started(
+                {
+                    "artifact_id": payload["artifact_id"],
+                    "sample_rate_hz": 24_000,
+                    "channel_count": 1,
+                    "encoding": "pcm_s16le",
+                }
+            )
+        if on_audio_chunk is not None:
+            on_audio_chunk(
+                {
+                    "artifact_id": payload["artifact_id"],
+                    "sequence_number": 0,
+                    "first_sample": 0,
+                    "pcm": b"\x00\x00" * 2400,
+                }
+            )
+        return payload
 
 
 class SlowTTS:
     enabled = True
 
-    def synthesize(self, *, session_id: str, text: str, language: str, fairness_key: str, settings: dict | None = None, reference_wav_path: str | None = None, reference_prompt_text: str | None = None, source_audio_duration_ms: int | None = None) -> dict:
-        time.sleep(0.2)
-        return {
+    def synthesize(self, *, session_id: str, text: str, language: str, fairness_key: str, settings: dict | None = None, reference_wav_path: str | None = None, reference_prompt_text: str | None = None, source_audio_duration_ms: int | None = None, on_stream_started=None, on_audio_chunk=None, cancellation=None) -> dict:
+        payload = {
             "artifact_id": "late_artifact",
             "url": "/fake/late.wav",
             "duration_ms": 100,
             "language": language,
             "chars": len(text),
         }
+        if on_stream_started is not None:
+            on_stream_started(
+                {
+                    "artifact_id": payload["artifact_id"],
+                    "sample_rate_hz": 24_000,
+                    "channel_count": 1,
+                    "encoding": "pcm_s16le",
+                }
+            )
+        if on_audio_chunk is not None:
+            on_audio_chunk(
+                {
+                    "artifact_id": payload["artifact_id"],
+                    "sequence_number": 0,
+                    "first_sample": 0,
+                    "pcm": b"\x00\x00" * 2400,
+                }
+            )
+        time.sleep(0.2)
+        return payload
+
+
+class BlockingTTS:
+    enabled = True
+
+    def __init__(self) -> None:
+        self.started = threading.Event()
+        self.cancelled = threading.Event()
+
+    def synthesize(self, *, cancellation=None, **_kwargs) -> dict:
+        self.started.set()
+        while cancellation is not None and not cancellation.cancelled:
+            time.sleep(0.001)
+        self.cancelled.set()
+        raise RuntimeError("cancelled")
+
+
+class LateStartTTS:
+    enabled = True
+
+    def __init__(self) -> None:
+        self.entered = threading.Event()
+        self.release = threading.Event()
+
+    def synthesize(self, *, on_stream_started=None, cancellation=None, **_kwargs) -> dict:
+        self.entered.set()
+        self.release.wait(timeout=1.0)
+        payload = {
+            "artifact_id": "late_start_artifact",
+            "url": "/fake/late-start.wav",
+            "duration_ms": 100,
+        }
+        if on_stream_started is not None:
+            on_stream_started(
+                {
+                    "artifact_id": payload["artifact_id"],
+                    "sample_rate_hz": 24_000,
+                    "channel_count": 1,
+                    "encoding": "pcm_s16le",
+                }
+            )
+        return payload
 
 
 class RecordingTranslationBridge:
@@ -120,7 +201,12 @@ class TurnStateMachineTests(unittest.IsolatedAsyncioTestCase):
 
         await tts_task
         self.assertIsNotNone(runtime._current_lane().pending_tts)
-        self.assertTrue(any(event["type"] == "tts_clip_ready" for event in websocket.sent))
+        event_types = [event["type"] for event in websocket.sent]
+        self.assertIn("tts_stream_started", event_types)
+        self.assertIn("tts_stream_chunk", event_types)
+        self.assertIn("tts_stream_complete", event_types)
+        self.assertLess(event_types.index("tts_stream_started"), event_types.index("tts_stream_chunk"))
+        self.assertLess(event_types.index("tts_stream_chunk"), event_types.index("tts_stream_complete"))
 
         await runtime.tts_delivery.playback_complete(
             {
@@ -138,16 +224,131 @@ class TurnStateMachineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(next_part.part_id, "turn_1_part_2")
         self.assertEqual(len(runtime.current_turn.parts), 2)
 
-    async def test_replay_uses_session_fairness_key(self) -> None:
+    async def test_replay_reuses_the_turn_artifact_without_new_synthesis(self) -> None:
         tts = FastTTS()
         runtime, websocket = self.make_runtime(tts)
 
-        await runtime.tts_delivery.replay({"lane_id": "a_to_b", "text": "Test"})
+        await runtime._speak_now()
+        await runtime._current_lane().tts_task
+        await runtime.tts_delivery.playback_complete(
+            {
+                "lane_id": "a_to_b",
+                "turn_id": runtime.current_turn.turn_id,
+                "artifact_id": "artifact_1",
+            }
+        )
+        await runtime.tts_delivery.replay(
+            {"lane_id": "a_to_b", "part_id": "turn_1_part_1"}
+        )
 
         self.assertEqual(tts.fairness_keys, ["principal_test"])
+        self.assertEqual(tts.count, 1)
         replay = next(item for item in websocket.sent if item["type"] == "tts_replay_ready")
+        self.assertEqual(replay["part_id"], "turn_1_part_1")
         self.assertEqual(replay["text"], "Test")
         self.assertEqual(replay["tts"]["artifact_id"], "artifact_1")
+
+    async def test_unavailable_replay_returns_the_bubble_to_pending(self) -> None:
+        runtime, websocket = self.make_runtime(FastTTS())
+
+        await runtime._speak_now()
+        await runtime._current_lane().tts_task
+        await runtime.tts_delivery.playback_complete(
+            {
+                "lane_id": "a_to_b",
+                "turn_id": runtime.current_turn.turn_id,
+                "artifact_id": "artifact_1",
+            }
+        )
+        runtime.tts_delivery.cached_turn_artifacts.clear()
+
+        await runtime.tts_delivery.replay(
+            {"lane_id": "a_to_b", "part_id": "turn_1_part_1"}
+        )
+
+        self.assertEqual(runtime.current_turn.parts[0].speech_state, "pending")
+        self.assertEqual(runtime.current_turn.state.value, "open_active_unspoken")
+        self.assertTrue(
+            any(
+                item["type"] == "turn_update"
+                and item["reason"] == "tts_replay_unavailable"
+                for item in websocket.sent
+            )
+        )
+
+    async def test_stop_cancels_an_active_stream_and_returns_the_part_to_pending(self) -> None:
+        runtime, websocket = self.make_runtime(SlowTTS())
+
+        await runtime._speak_now()
+        await asyncio.sleep(0.02)
+        await runtime.tts_delivery.stop(
+            {
+                "lane_id": "a_to_b",
+                "turn_id": runtime.current_turn.turn_id,
+                "artifact_id": "late_artifact",
+            }
+        )
+        await asyncio.sleep(0.25)
+
+        self.assertEqual(runtime.current_turn.parts[0].speech_state, "pending")
+        self.assertEqual(runtime.current_turn.state.value, "open_active_unspoken")
+        self.assertIsNone(runtime._current_lane().tts_task)
+        self.assertTrue(
+            any(
+                item["type"] == "tts_stream_failed"
+                and item["artifact_id"] == "late_artifact"
+                for item in websocket.sent
+            )
+        )
+        self.assertFalse(any(item["type"] == "tts_stream_complete" for item in websocket.sent))
+
+    async def test_stop_cancels_pool_work_before_the_first_stream_event(self) -> None:
+        tts = BlockingTTS()
+        runtime, _websocket = self.make_runtime(tts)
+
+        await runtime._speak_now()
+        self.assertTrue(await asyncio.to_thread(tts.started.wait, 1.0))
+        await runtime.tts_delivery.stop(
+            {
+                "lane_id": "a_to_b",
+                "turn_id": runtime.current_turn.turn_id,
+                "artifact_id": "",
+            }
+        )
+
+        self.assertTrue(await asyncio.to_thread(tts.cancelled.wait, 1.0))
+        self.assertEqual(runtime.current_turn.parts[0].speech_state, "pending")
+        self.assertIsNone(runtime._current_lane().tts_task)
+
+    async def test_stop_keeps_only_the_current_completed_bubble_replayable(self) -> None:
+        tts = FastTTS()
+        runtime, _websocket = self.make_runtime(tts)
+        runtime.current_turn.parts.append(
+            TurnPart(
+                part_id="turn_1_part_2",
+                source_committed_text="Nog een",
+                target_committed_text="Another",
+            )
+        )
+        runtime._refresh_turn_state()
+
+        await runtime._speak_now()
+        await runtime._current_lane().tts_task
+        await runtime.tts_delivery.stop(
+            {
+                "lane_id": "a_to_b",
+                "turn_id": runtime.current_turn.turn_id,
+                "artifact_id": "artifact_1",
+            }
+        )
+
+        self.assertEqual(
+            [part.speech_state for part in runtime.current_turn.parts],
+            ["spoken", "pending"],
+        )
+        self.assertIn((runtime.current_turn.turn_id, "turn_1_part_1"), runtime.tts_delivery.cached_turn_artifacts)
+        self.assertNotIn((runtime.current_turn.turn_id, "turn_1_part_2"), runtime.tts_delivery.cached_turn_artifacts)
+        self.assertFalse(runtime._current_lane().pending_tts)
 
     async def test_speak_now_accepts_visible_preview_text(self) -> None:
         runtime, websocket = self.make_runtime(FastTTS())
@@ -334,7 +535,39 @@ class TurnStateMachineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(runtime.current_turn.parts, [])
         self.assertEqual(len(runtime.closed_turns), 1)
         self.assertFalse(runtime.lanes["a_to_b"].pending_tts)
-        self.assertFalse(any(event["type"] == "tts_clip_ready" for event in websocket.sent))
+        self.assertFalse(runtime.tts_delivery.active_stream_artifacts)
+        self.assertFalse(any(event["type"] == "tts_stream_complete" for event in websocket.sent))
+
+    async def test_next_turn_before_stream_start_does_not_leak_active_artifact(self) -> None:
+        tts = LateStartTTS()
+        runtime, websocket = self.make_runtime(tts)
+
+        await runtime._speak_now()
+        self.assertTrue(await asyncio.to_thread(tts.entered.wait, 1.0))
+        await runtime._next_turn(lane_id="b_to_a")
+        tts.release.set()
+        await asyncio.sleep(0.05)
+
+        self.assertFalse(runtime.tts_delivery.active_stream_artifacts)
+        self.assertFalse(any(event["type"] == "tts_stream_started" for event in websocket.sent))
+
+    async def test_closing_a_turn_discards_its_cached_tts_artifacts(self) -> None:
+        runtime, _websocket = self.make_runtime(FastTTS())
+
+        await runtime._speak_now()
+        await runtime._current_lane().tts_task
+        await runtime.tts_delivery.playback_complete(
+            {
+                "lane_id": "a_to_b",
+                "turn_id": runtime.current_turn.turn_id,
+                "artifact_id": "artifact_1",
+            }
+        )
+        self.assertTrue(runtime.tts_delivery.cached_turn_artifacts)
+
+        await runtime._next_turn(lane_id="b_to_a")
+
+        self.assertFalse(runtime.tts_delivery.cached_turn_artifacts)
 
     async def test_finish_closes_without_forced_asr_or_translation_drain(self) -> None:
         runtime, websocket = self.make_runtime(FastTTS())
