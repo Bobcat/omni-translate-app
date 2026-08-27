@@ -20,6 +20,10 @@ Automatic speaking is available in both voice interfaces and is enabled by
 default. It applies only to bubbles finalized after the setting is enabled. The
 browser stores the choice in `localStorage`; mobile and desktop share it.
 
+The same PR updates the **Under the hood** information. It lists LaMa as the
+selective image-inpainting model and distinguishes the self-hosted consumer
+hardware from its workstation-class GPU.
+
 The design and state rules are in
 [`docs/voice-translation/tts-delivery-design.md`](../voice-translation/tts-delivery-design.md).
 
@@ -104,6 +108,14 @@ concrete failure sequence over style comments.
 - Confirm metrics contain no source or translated text.
 - Check ready-hit, joined-generation, demand-miss, cancellation, unused-artifact,
   queue-time, and first-PCM measurements for misleading double counts.
+
+### Help and information copy
+
+- Confirm LaMa is described as a selectively used image-background model, not
+  as a mandatory step for every image.
+- Confirm the hardware wording distinguishes a workstation GPU from a
+  datacenter accelerator without describing the whole system as enterprise
+  infrastructure.
 
 ## Intentional exclusions
 
