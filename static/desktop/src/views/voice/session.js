@@ -619,7 +619,7 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
   }
 
   function stopAudio({ preparing = false } = {}) {
-    if (preparing || !state.audioPlayback?.replay) {
+    if (preparing || audioQueue.hasNonReplayAudio()) {
       state.socket?.stopTts({
         laneId: state.currentTurn.laneId,
         turnId: state.currentTurn.turnId,

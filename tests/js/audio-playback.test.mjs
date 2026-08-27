@@ -212,6 +212,26 @@ test('stopping an in-flight stream settles it only after synthesis completes', (
 });
 
 
+test('a queued live stream is detected while a replay is playing', () => {
+  const harness = makeQueue();
+  harness.queue.enqueue({
+    artifactId: 'replay_1',
+    url: '/fake/replay.wav',
+    replay: true,
+  });
+  assert.equal(harness.queue.hasNonReplayAudio(), false);
+
+  harness.queue.startPcmStream({
+    artifactId: 'tts_2',
+    sampleRateHz: 16_000,
+    channelCount: 1,
+  });
+
+  assert.equal(harness.queue.current.replay, true);
+  assert.equal(harness.queue.hasNonReplayAudio(), true);
+});
+
+
 test('a client-side sequence failure aborts and reports the stream', () => {
   const harness = makeQueue();
   harness.queue.startPcmStream({ artifactId: 'tts_1', sampleRateHz: 16_000, channelCount: 1 });

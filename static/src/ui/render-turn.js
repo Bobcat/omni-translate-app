@@ -40,7 +40,7 @@ function handleBubbleAudioAction(button, bubble) {
   const action = button.dataset.audioAction || 'replay';
   if (action === 'stop') {
     flashReplayBubble(bubble);
-    if (button.classList.contains('is-preparing') || !state.audioPlayback?.replay) {
+    if (button.classList.contains('is-preparing') || audioQueue.hasNonReplayAudio()) {
       state.socket?.stopTts({
         laneId: state.currentTurn.laneId,
         turnId: state.currentTurn.turnId,
