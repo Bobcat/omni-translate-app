@@ -22,6 +22,7 @@ from app.config import get_str
 from app.config import rooted_path
 from app.upstreams.tts_pool.client import synthesize_tts
 from app.upstreams.tts_pool.client import TtsAudioChunk
+from app.upstreams.tts_pool.client import TtsSynthesisCancellation
 from app.upstreams.tts_pool.client import TtsStreamStarted
 from app.upstreams.http import get_upstream_http_client
 
@@ -252,6 +253,7 @@ class TTSBridge:
         source_audio_duration_ms: int | None = None,
         on_stream_started: Callable[[dict[str, Any]], None] | None = None,
         on_audio_chunk: Callable[[dict[str, Any]], None] | None = None,
+        cancellation: TtsSynthesisCancellation | None = None,
     ) -> dict[str, Any]:
         call_started = time.perf_counter()
         safe_text = str(text or "").strip()
@@ -304,6 +306,7 @@ class TTSBridge:
             timeout_s=_tts_pool_timeout_s(),
             on_started=handle_started if on_stream_started is not None else None,
             on_audio_chunk=handle_audio_chunk if on_audio_chunk is not None else None,
+            cancellation=cancellation,
         )
         request_wall_ms = (time.perf_counter() - request_started) * 1000.0
         audio_bytes = response.wav_bytes()

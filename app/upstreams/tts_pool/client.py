@@ -26,6 +26,42 @@ class TtsPoolRpcError(RuntimeError):
     pass
 
 
+class TtsSynthesisCancellation:
+    """Thread-safe handle that can cancel a bound streaming gRPC call."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._cancelled = False
+        self._call: Any = None
+
+    @property
+    def cancelled(self) -> bool:
+        with self._lock:
+            return self._cancelled
+
+    def bind(self, call: Any) -> None:
+        with self._lock:
+            self._call = call
+            cancel_now = self._cancelled
+        if cancel_now:
+            cancel = getattr(call, "cancel", None)
+            if callable(cancel):
+                cancel()
+
+    def release(self, call: Any) -> None:
+        with self._lock:
+            if self._call is call:
+                self._call = None
+
+    def cancel(self) -> None:
+        with self._lock:
+            self._cancelled = True
+            call = self._call
+        cancel = getattr(call, "cancel", None)
+        if callable(cancel):
+            cancel()
+
+
 @dataclass(frozen=True)
 class TtsStreamStarted:
     response_id: str
@@ -99,6 +135,7 @@ def synthesize_tts(
     timeout_s: float,
     on_started: Callable[[TtsStreamStarted], None] | None = None,
     on_audio_chunk: Callable[[TtsAudioChunk], None] | None = None,
+    cancellation: TtsSynthesisCancellation | None = None,
 ) -> TtsSynthesisResult:
     stable_key = str(fairness_key or "").strip()
     if not stable_key:
@@ -108,6 +145,8 @@ def synthesize_tts(
         _request_from_payload(payload, fairness_key=stable_key),
         timeout=timeout_s,
     )
+    if cancellation is not None:
+        cancellation.bind(call)
     started: tts_pb2.Started | None = None
     completed: tts_pb2.Completed | None = None
     chunks: list[bytes] = []
@@ -172,11 +211,16 @@ def synthesize_tts(
         if callable(cancel):
             cancel()
         raise
+    finally:
+        if cancellation is not None:
+            cancellation.release(call)
 
     if started is None or completed is None:
         raise ValueError("tts_pool_incomplete_event_stream")
     if completed.chunk_count != next_sequence or completed.total_sample_count != next_sample:
         raise ValueError("tts_pool_completed_counts_mismatch")
+    if next_sequence == 0 or next_sample == 0:
+        raise ValueError("tts_pool_empty_audio")
     return TtsSynthesisResult(
         response_id=started.response_id,
         model=started.model,

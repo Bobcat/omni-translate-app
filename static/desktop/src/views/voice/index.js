@@ -105,7 +105,7 @@ export function createVoiceWorkflow() {
     targetText.dataset.autofollow = 'off';
     const action = button.dataset.audioAction || 'replay';
     if (action === 'stop') {
-      session.stopAudio();
+      session.stopAudio({ preparing: button.classList.contains('is-preparing') });
       return;
     }
     if (action === 'speak') {
@@ -218,10 +218,9 @@ export function createVoiceWorkflow() {
       button.innerHTML = iconMarkup('stop');
     } else if (mode === 'preparing') {
       button.classList.add('is-preparing');
-      button.dataset.audioAction = 'preparing';
-      button.disabled = true;
-      button.setAttribute('aria-label', 'Preparing audio');
-      button.title = 'Preparing audio';
+      button.dataset.audioAction = 'stop';
+      button.setAttribute('aria-label', 'Stop preparing audio');
+      button.title = 'Stop preparing audio';
       button.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true">'
         + '<circle cx="12" cy="12" r="8"/>'
         + '<path d="M12 4a8 8 0 0 1 8 8"/>'

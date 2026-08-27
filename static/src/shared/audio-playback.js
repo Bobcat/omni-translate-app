@@ -7,6 +7,7 @@ export class AudioQueue {
     onPlaybackIdle,
     onPlaybackComplete,
     onItemEnded,
+    onItemFailed,
     audioContextFactory = defaultAudioContextFactory,
   }) {
     this.audio = audio;
@@ -16,6 +17,7 @@ export class AudioQueue {
     this.onPlaybackIdle = onPlaybackIdle;
     this.onPlaybackComplete = onPlaybackComplete;
     this.onItemEnded = onItemEnded;
+    this.onItemFailed = onItemFailed;
     this.queue = [];
     this.current = null;
     this.blocked = false;
@@ -63,15 +65,26 @@ export class AudioQueue {
   preparePcmPlayback() {
     const context = this.ensurePcmContext();
     if (!context) return false;
-    if (context.state === 'suspended') {
-      context.resume().then(() => {
-        this.blocked = false;
-        this.render();
-      }).catch(() => {
-        this.blocked = true;
-        this.render();
-      });
+    if (context.state === 'running') {
+      this.blocked = false;
+      this.render();
+      return true;
     }
+    if (context.state === 'closed' || typeof context.resume !== 'function') return false;
+    this.blocked = true;
+    this.render();
+    context.resume().then(() => {
+      if (this.pcmContext !== context) return;
+      this.blocked = context.state !== 'running';
+      if (!this.blocked && this.current?.kind === 'pcm') {
+        this.schedulePendingPcm(this.current);
+      } else {
+        this.render();
+      }
+    }).catch(() => {
+      this.blocked = true;
+      this.render();
+    });
     return true;
   }
 
@@ -109,19 +122,19 @@ export class AudioQueue {
     if (!item || item.stream.completed || item.stream.playbackStopped) return false;
     const sequence = Number(sequenceNumber);
     if (!Number.isInteger(sequence) || sequence !== item.stream.nextSequence) {
-      this.failPcmStream(item.artifactId);
+      this.abortPcmStream(item.artifactId, 'sequence_mismatch');
       return false;
     }
     let pcm;
     try {
       pcm = decodeBase64Bytes(pcmBase64);
     } catch {
-      this.failPcmStream(item.artifactId);
+      this.abortPcmStream(item.artifactId, 'base64_decode_failed');
       return false;
     }
     const frameBytes = item.stream.channelCount * 2;
     if (!pcm.length || pcm.length % frameBytes) {
-      this.failPcmStream(item.artifactId);
+      this.abortPcmStream(item.artifactId, 'invalid_pcm_chunk');
       return false;
     }
     item.stream.nextSequence += 1;
@@ -134,6 +147,10 @@ export class AudioQueue {
     const artifactId = String(tts?.artifact_id || tts?.artifactId || '').trim();
     const item = this.pcmStreams.get(artifactId);
     if (!item) return false;
+    if (item.stream.nextSequence === 0) {
+      this.abortPcmStream(artifactId, 'empty_pcm_stream');
+      return false;
+    }
     item.url = String(tts?.url || '');
     item.durationMs = Number(tts?.duration_ms || 0);
     item.stream.completed = true;
@@ -149,7 +166,11 @@ export class AudioQueue {
     return true;
   }
 
-  failPcmStream(artifactId) {
+  abortPcmStream(artifactId, reason) {
+    return this.failPcmStream(artifactId, { notifyServer: true, reason });
+  }
+
+  failPcmStream(artifactId, { notifyServer = false, reason = '' } = {}) {
     const id = String(artifactId || '').trim();
     const item = this.pcmStreams.get(id);
     if (!item) return false;
@@ -157,6 +178,7 @@ export class AudioQueue {
     item.stream.playbackStopped = true;
     this.stopPcmSources(item);
     this.queue = this.queue.filter((queued) => queued !== item);
+    if (notifyServer) this.onItemFailed?.(item, String(reason || 'pcm_stream_failed'));
     if (this.current === item) {
       this.current = null;
       this.playNext();
@@ -242,6 +264,7 @@ export class AudioQueue {
     this.current = next;
     if (next.kind === 'pcm') {
       this.schedulePendingPcm(next);
+      this.finishPcmIfReady(next);
       this.render();
       return;
     }
@@ -274,7 +297,15 @@ export class AudioQueue {
   }
 
   ensurePcmContext() {
-    if (!this.pcmContext) this.pcmContext = this.audioContextFactory?.() || null;
+    if (!this.pcmContext) {
+      this.pcmContext = this.audioContextFactory?.() || null;
+      this.pcmContext?.addEventListener?.('statechange', () => {
+        if (this.current?.kind !== 'pcm') return;
+        this.blocked = this.pcmContext.state !== 'running';
+        if (!this.blocked) this.schedulePendingPcm(this.current);
+        else this.render();
+      });
+    }
     return this.pcmContext;
   }
 
@@ -282,9 +313,19 @@ export class AudioQueue {
     if (this.current !== item || item.stream.playbackStopped) return;
     const context = this.ensurePcmContext();
     if (!context) {
-      this.failPcmStream(item.artifactId);
+      this.abortPcmStream(item.artifactId, 'audio_context_unavailable');
       return;
     }
+    if (context.state === 'closed') {
+      this.abortPcmStream(item.artifactId, 'audio_context_closed');
+      return;
+    }
+    if (context.state !== 'running') {
+      this.blocked = true;
+      this.render();
+      return;
+    }
+    this.blocked = false;
     while (item.stream.pendingChunks.length) {
       const pcm = item.stream.pendingChunks[0];
       const frameCount = pcm.length / (item.stream.channelCount * 2);

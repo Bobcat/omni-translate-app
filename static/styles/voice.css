@@ -174,7 +174,7 @@
 }
 
 .bubble-speak-button.is-preparing {
-  cursor: progress;
+  cursor: pointer;
 }
 
 .bubble-speak-button.is-preparing svg {

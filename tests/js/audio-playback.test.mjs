@@ -74,11 +74,13 @@ class FakeSource extends FakeEventTarget {
 }
 
 
-class FakeAudioContext {
-  constructor() {
+class FakeAudioContext extends FakeEventTarget {
+  constructor({ state = 'running', resumeState = 'running' } = {}) {
+    super();
     this.currentTime = 1;
     this.destination = {};
-    this.state = 'running';
+    this.state = state;
+    this.resumeState = resumeState;
     this.sources = [];
   }
 
@@ -99,7 +101,8 @@ class FakeAudioContext {
   }
 
   resume() {
-    this.state = 'running';
+    this.state = this.resumeState;
+    this.dispatch('statechange');
     return Promise.resolve();
   }
 }
@@ -112,9 +115,9 @@ function pcmBase64(samples) {
 }
 
 
-function makeQueue() {
-  const context = new FakeAudioContext();
+function makeQueue({ context = new FakeAudioContext() } = {}) {
   const ended = [];
+  const failed = [];
   const started = [];
   const completed = [];
   const statuses = [];
@@ -129,8 +132,9 @@ function makeQueue() {
     onPlaybackIdle: () => {},
     onPlaybackComplete: (item) => completed.push(item.artifactId),
     onItemEnded: (item) => ended.push(item.artifactId),
+    onItemFailed: (item, reason) => failed.push([item.artifactId, reason]),
   });
-  return { queue, context, ended, started, completed, statuses };
+  return { queue, context, ended, failed, started, completed, statuses, resumeButton };
 }
 
 
@@ -205,4 +209,84 @@ test('stopping an in-flight stream settles it only after synthesis completes', (
 
   harness.queue.completePcmStream({ artifact_id: 'tts_1', duration_ms: 1 });
   assert.deepEqual(harness.ended, ['tts_1']);
+});
+
+
+test('a client-side sequence failure aborts and reports the stream', () => {
+  const harness = makeQueue();
+  harness.queue.startPcmStream({ artifactId: 'tts_1', sampleRateHz: 16_000, channelCount: 1 });
+  harness.queue.appendPcmChunk({
+    artifactId: 'tts_1',
+    sequenceNumber: 0,
+    pcmBase64: pcmBase64([1, 2]),
+  });
+
+  const accepted = harness.queue.appendPcmChunk({
+    artifactId: 'tts_1',
+    sequenceNumber: 2,
+    pcmBase64: pcmBase64([3, 4]),
+  });
+
+  assert.equal(accepted, false);
+  assert.deepEqual(harness.failed, [['tts_1', 'sequence_mismatch']]);
+  assert.equal(harness.queue.current, null);
+  assert.equal(harness.queue.completePcmStream({ artifact_id: 'tts_1', duration_ms: 1 }), false);
+});
+
+
+test('a completed stream without PCM aborts instead of stalling the queue', () => {
+  const harness = makeQueue();
+  harness.queue.startPcmStream({ artifactId: 'tts_1', sampleRateHz: 16_000, channelCount: 1 });
+
+  const accepted = harness.queue.completePcmStream({ artifact_id: 'tts_1', duration_ms: 0 });
+
+  assert.equal(accepted, false);
+  assert.deepEqual(harness.failed, [['tts_1', 'empty_pcm_stream']]);
+  assert.equal(harness.queue.current, null);
+  assert.equal(harness.queue.hasAudio(), false);
+});
+
+
+test('a queued empty stream is removed without blocking the current item', () => {
+  const harness = makeQueue();
+  harness.queue.startPcmStream({ artifactId: 'tts_1', sampleRateHz: 16_000, channelCount: 1 });
+  harness.queue.appendPcmChunk({
+    artifactId: 'tts_1',
+    sequenceNumber: 0,
+    pcmBase64: pcmBase64([1, 2]),
+  });
+  harness.queue.completePcmStream({ artifact_id: 'tts_1', duration_ms: 1 });
+  harness.queue.startPcmStream({ artifactId: 'tts_2', sampleRateHz: 16_000, channelCount: 1 });
+
+  harness.queue.completePcmStream({ artifact_id: 'tts_2', duration_ms: 0 });
+
+  assert.deepEqual(harness.failed, [['tts_2', 'empty_pcm_stream']]);
+  assert.equal(harness.queue.current.artifactId, 'tts_1');
+  harness.context.sources[0].finish();
+  assert.equal(harness.queue.current, null);
+});
+
+
+test('a suspended AudioContext keeps chunks pending and exposes resume', async () => {
+  const context = new FakeAudioContext({ state: 'suspended', resumeState: 'suspended' });
+  const harness = makeQueue({ context });
+  harness.queue.startPcmStream({ artifactId: 'tts_1', sampleRateHz: 16_000, channelCount: 1 });
+  harness.queue.appendPcmChunk({
+    artifactId: 'tts_1',
+    sequenceNumber: 0,
+    pcmBase64: pcmBase64([1, 2]),
+  });
+
+  harness.queue.preparePcmPlayback();
+  await Promise.resolve();
+
+  assert.equal(harness.context.sources.length, 0);
+  assert.equal(harness.queue.blocked, true);
+  assert.equal(harness.resumeButton.hidden, false);
+  assert.equal(harness.queue.statusText(), 'Audio ready');
+
+  context.state = 'running';
+  context.dispatch('statechange');
+  assert.equal(harness.context.sources.length, 1);
+  assert.deepEqual(harness.started, ['tts_1']);
 });

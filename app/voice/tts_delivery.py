@@ -14,6 +14,7 @@ from app.tts_bridge import TtsReferenceUnavailableError
 from app.tts_bridge import get_tts_bridge
 from app.tts_bridge import tts_settings_enabled
 from app.tts_bridge import tts_uses_asr_reference_wav
+from app.upstreams.tts_pool.client import TtsSynthesisCancellation
 from app.voice.tasks import cancel_task
 
 if TYPE_CHECKING:
@@ -60,6 +61,9 @@ class TtsDelivery:
         text = self.part_target_text(part)
         tts_payload = self.cached_turn_artifacts.get((turn.turn_id, part_id))
         if not text or tts_payload is None:
+            part.speech_state = "pending"
+            runtime._refresh_turn_state()
+            await runtime._send_turn_update(reason="tts_replay_unavailable")
             await runtime.lifecycle.send(
                 event(
                     "tts_status",
@@ -113,8 +117,7 @@ class TtsDelivery:
                 try:
                     await sub_task
                 except asyncio.CancelledError:
-                    if not sub_task.done():
-                        sub_task.cancel()
+                    await cancel_task(sub_task)
                     raise
         finally:
             if lane.tts_task is current_task:
@@ -144,15 +147,33 @@ class TtsDelivery:
         loop = asyncio.get_running_loop()
         stream_artifact_id = ""
         stream_generation = self.stream_generation
+        cancellation = TtsSynthesisCancellation()
 
-        def send_from_synthesis(payload: dict[str, Any]) -> None:
+        async def deliver_from_synthesis(
+            payload: dict[str, Any],
+            *,
+            before_send: Callable[[], None] | None = None,
+        ) -> None:
             if (
-                runtime.lifecycle.closed
+                cancellation.cancelled
+                or runtime.lifecycle.closed
                 or stream_generation != self.stream_generation
                 or not self._turn_is_speaking(turn_id)
             ):
                 raise _StaleTtsStream()
-            future = asyncio.run_coroutine_threadsafe(runtime.lifecycle.send(payload), loop)
+            if before_send is not None:
+                before_send()
+            await runtime.lifecycle.send(payload)
+
+        def send_from_synthesis(
+            payload: dict[str, Any],
+            *,
+            before_send: Callable[[], None] | None = None,
+        ) -> None:
+            future = asyncio.run_coroutine_threadsafe(
+                deliver_from_synthesis(payload, before_send=before_send),
+                loop,
+            )
             try:
                 future.result(timeout=STREAM_SEND_TIMEOUT_S)
             except concurrent.futures.TimeoutError:
@@ -162,11 +183,14 @@ class TtsDelivery:
         def stream_started(tts: dict[str, Any]) -> None:
             nonlocal stream_artifact_id
             stream_artifact_id = str(tts.get("artifact_id") or "").strip()
-            if stream_artifact_id:
-                self.active_stream_artifacts[stream_artifact_id] = (
-                    turn_id,
-                    list(speaking_part_ids),
-                )
+
+            def mark_active() -> None:
+                if stream_artifact_id:
+                    self.active_stream_artifacts[stream_artifact_id] = (
+                        turn_id,
+                        list(speaking_part_ids),
+                    )
+
             send_from_synthesis(
                 event(
                     "tts_stream_started",
@@ -175,7 +199,8 @@ class TtsDelivery:
                     turn_id=turn_id,
                     part_ids=list(speaking_part_ids),
                     tts=tts,
-                )
+                ),
+                before_send=mark_active,
             )
 
         def audio_chunk(chunk: dict[str, Any]) -> None:
@@ -208,11 +233,14 @@ class TtsDelivery:
                 source_audio_duration_ms=source_audio_duration_ms,
                 on_stream_started=stream_started,
                 on_audio_chunk=audio_chunk,
+                cancellation=cancellation,
             )
         except asyncio.CancelledError:
+            cancellation.cancel()
             self.active_stream_artifacts.pop(stream_artifact_id, None)
             raise
         except _StaleTtsStream:
+            cancellation.cancel()
             self.active_stream_artifacts.pop(stream_artifact_id, None)
             return
         except TtsReferenceUnavailableError as exc:
@@ -358,6 +386,22 @@ class TtsDelivery:
         )
         runtime._refresh_turn_state()
         await runtime._send_turn_update(reason="tts_playback_complete")
+
+    def discard_turn(self, turn_id: str) -> None:
+        stable_turn_id = str(turn_id or "").strip()
+        if not stable_turn_id:
+            return
+        self.stream_generation += 1
+        for cache_key in [key for key in self.cached_turn_artifacts if key[0] == stable_turn_id]:
+            self.cached_turn_artifacts.pop(cache_key, None)
+        for artifact_id, (active_turn_id, _part_ids) in list(self.active_stream_artifacts.items()):
+            if active_turn_id == stable_turn_id:
+                self.active_stream_artifacts.pop(artifact_id, None)
+
+    def clear(self) -> None:
+        self.stream_generation += 1
+        self.cached_turn_artifacts.clear()
+        self.active_stream_artifacts.clear()
 
     def record_asr_reference(self, lane: ConversationLane) -> None:
         """Keep the latest ASR WAV that is suitable as a voice reference."""

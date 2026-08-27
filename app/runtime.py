@@ -914,6 +914,7 @@ class ConversationRuntime:
         if not is_open_turn(turn.state):
             return turn
         lane = self.lanes[turn.lane_id]
+        self.tts_delivery.discard_turn(turn.turn_id)
         self._close_asr_scope_for_turn(lane)
         await cancel_task(lane.translation_task)
         await cancel_task(lane.tts_task)

@@ -235,6 +235,14 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
         artifactId: item.artifactId,
       });
     },
+    onItemFailed: (item) => {
+      state.socket?.stopTts({
+        laneId: item.laneId,
+        turnId: item.turnId,
+        artifactId: '',
+      });
+      audioQueue.stop();
+    },
   });
 
   // --- session lifecycle -------------------------------------------------
@@ -610,12 +618,14 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
     state.socket?.replayTts({ laneId, partId: id });
   }
 
-  function stopAudio() {
-    state.socket?.stopTts({
-      laneId: state.currentTurn.laneId,
-      turnId: state.currentTurn.turnId,
-      artifactId: audioQueue.currentArtifactId(),
-    });
+  function stopAudio({ preparing = false } = {}) {
+    if (preparing || !state.audioPlayback?.replay) {
+      state.socket?.stopTts({
+        laneId: state.currentTurn.laneId,
+        turnId: state.currentTurn.turnId,
+        artifactId: audioQueue.currentArtifactId(),
+      });
+    }
     audioQueue.stop();
     emit();
   }

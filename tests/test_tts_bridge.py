@@ -31,12 +31,14 @@ class FakeTtsPool:
         timeout_s,
         on_started=None,
         on_audio_chunk=None,
+        cancellation=None,
     ):
         self.calls.append(
             {
                 "payload": payload,
                 "fairness_key": fairness_key,
                 "timeout_s": timeout_s,
+                "cancellation": cancellation,
             }
         )
         if on_started is not None:

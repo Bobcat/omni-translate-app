@@ -44,4 +44,12 @@ export const audioQueue = new AudioQueue({
       artifactId: item.artifactId,
     });
   },
+  onItemFailed: (item) => {
+    state.socket?.stopTts({
+      laneId: item.laneId,
+      turnId: item.turnId,
+      artifactId: '',
+    });
+    audioQueue.stop();
+  },
 });

@@ -136,6 +136,7 @@ class ConversationLifecycle:
 
     async def discard_runtime_work(self) -> None:
         runtime = self.runtime
+        runtime.tts_delivery.clear()
         for lane in runtime.lanes.values():
             inflight = lane.asr_inflight
             if inflight is not None:
@@ -152,6 +153,7 @@ class ConversationLifecycle:
     async def close(self) -> None:
         runtime = self.runtime
         self.closed = True
+        runtime.tts_delivery.clear()
         for lane in runtime.lanes.values():
             await cancel_task(lane.translation_task)
             await cancel_task(lane.tts_task)

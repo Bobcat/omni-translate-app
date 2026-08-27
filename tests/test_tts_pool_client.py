@@ -117,6 +117,44 @@ class TtsPoolClientTests(unittest.TestCase):
                     timeout_s=10.0,
                 )
 
+    def test_empty_audio_is_rejected(self) -> None:
+        events = _successful_events()
+        del events[1]
+        events[1].completed.total_sample_count = 0
+        events[1].completed.duration_ms = 0
+        events[1].completed.chunk_count = 0
+        stub = _RecordingStub(events)
+        with mock.patch.object(client, "_channel", return_value=object()), mock.patch.object(
+            client.tts_pb2_grpc,
+            "TTSServiceStub",
+            return_value=stub,
+        ):
+            with self.assertRaisesRegex(ValueError, "empty_audio"):
+                client.synthesize_tts(
+                    {"model": "model", "input": "text", "language": "English"},
+                    fairness_key="principal_test",
+                    timeout_s=10.0,
+                )
+
+    def test_cancellation_reaches_a_bound_grpc_call(self) -> None:
+        call = mock.Mock()
+        cancellation = client.TtsSynthesisCancellation()
+        cancellation.bind(call)
+
+        cancellation.cancel()
+
+        self.assertTrue(cancellation.cancelled)
+        call.cancel.assert_called_once_with()
+
+    def test_cancellation_before_bind_cancels_immediately_on_bind(self) -> None:
+        call = mock.Mock()
+        cancellation = client.TtsSynthesisCancellation()
+        cancellation.cancel()
+
+        cancellation.bind(call)
+
+        call.cancel.assert_called_once_with()
+
     def test_fairness_key_is_stable_and_principal_scoped(self) -> None:
         first = Principal(
             tenant="default",
