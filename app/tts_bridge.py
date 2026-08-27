@@ -785,6 +785,7 @@ def tts_settings_snapshot(settings: dict[str, Any] | None = None) -> tuple[dict[
 def _base_tts_settings() -> dict[str, Any]:
     return {
         "enabled": get_bool("tts.enabled", True),
+        "auto_speak": get_bool("tts.auto_speak", True),
         "backend": _validated_backend(get_str("tts.backend", "kokoro")),
         "kokoro": {
             "voices": _configured_kokoro_voices(),
@@ -830,6 +831,8 @@ def _normalize_tts_settings_delta(delta: dict[str, Any]) -> tuple[dict[str, Any]
     errors: dict[str, str] = {}
     if "enabled" in delta:
         normalized["enabled"] = bool(delta["enabled"])
+    if "auto_speak" in delta:
+        normalized["auto_speak"] = bool(delta["auto_speak"])
     if "backend" in delta:
         try:
             normalized["backend"] = _validated_backend(delta["backend"])

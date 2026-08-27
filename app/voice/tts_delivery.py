@@ -5,10 +5,16 @@ from __future__ import annotations
 import asyncio
 import base64
 import concurrent.futures
+import json
 import logging
+import time
+from copy import deepcopy
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
+from app.config import get_int
+from app.live_metrics import log_event as _metric
 from app.protocol import event
 from app.tts_bridge import TtsReferenceUnavailableError
 from app.tts_bridge import get_tts_bridge
@@ -32,6 +38,42 @@ class _StaleTtsStream(Exception):
     """Stop forwarding a pool stream that no longer belongs to the active turn."""
 
 
+@dataclass
+class _Preparation:
+    lane_id: str
+    turn_id: str
+    part_id: str
+    text: str
+    target_language: str
+    settings: dict[str, Any]
+    settings_key: str
+    reason: str
+    reference_wav_path: str | None
+    reference_prompt_text: str | None
+    source_audio_duration_ms: int | None
+    low_quality_reference: bool
+    state: str = "queued"
+    subscribed: bool = False
+    used: bool = False
+    playback_kind: str = "first"
+    started_tts: dict[str, Any] | None = None
+    chunks: list[dict[str, Any]] = field(default_factory=list)
+    forwarded_chunks: int = 0
+    started_sent: bool = False
+    artifact_id: str = ""
+    tts_payload: dict[str, Any] | None = None
+    cancellation: TtsSynthesisCancellation | None = None
+    done: asyncio.Future[None] | None = None
+    cancelled: bool = False
+    created_mono: float = field(default_factory=time.monotonic)
+    subscribed_mono: float | None = None
+    first_pcm_seen: bool = False
+
+    @property
+    def key(self) -> tuple[str, str]:
+        return self.turn_id, self.part_id
+
+
 class TtsDelivery:
     """Own the TTS delivery lifecycle for one conversation runtime."""
 
@@ -44,9 +86,82 @@ class TtsDelivery:
         self.runtime = runtime
         self.part_target_text = part_target_text
         self.bridge = get_tts_bridge()
-        self.cached_turn_artifacts: dict[tuple[str, str], dict[str, Any]] = {}
+        self.preparations: dict[tuple[str, str], _Preparation] = {}
+        self.generation_queue: list[tuple[str, str]] = []
+        self.generation_task: asyncio.Task[Any] | None = None
+        self.active_preparation_key: tuple[str, str] | None = None
         self.active_stream_artifacts: dict[str, tuple[str, list[str]]] = {}
-        self.stream_generation = 0
+        self.speculation_limit = get_int(
+            "live.tts_delivery.speculative_bubble_limit",
+            8,
+            min_value=0,
+        )
+        self.speculation_budget = self.speculation_limit
+        self.speculation_exhaustion_reported = False
+
+    @property
+    def auto_speak_enabled(self) -> bool:
+        return tts_settings_enabled(self.runtime.tts_settings) and bool(
+            self.runtime.tts_settings.get("auto_speak")
+        )
+
+    def prepare_definitive_part(
+        self,
+        *,
+        lane_id: str,
+        turn_id: str,
+        part_id: str,
+    ) -> bool:
+        runtime = self.runtime
+        if self.auto_speak_enabled or not tts_settings_enabled(runtime.tts_settings):
+            return False
+        if self.speculation_budget <= 0:
+            if not self.speculation_exhaustion_reported:
+                self.speculation_exhaustion_reported = True
+                _metric(
+                    "tts_speculation_budget",
+                    sess=runtime.session_id,
+                    action="exhausted",
+                    remaining=0,
+                )
+            return False
+        part = self._current_part(turn_id, part_id)
+        if part is None or not part.is_closed or not self.part_target_text(part):
+            return False
+        key = (turn_id, part_id)
+        existing = self.preparations.get(key)
+        if existing is not None and self._record_is_current(existing):
+            return False
+        if existing is not None:
+            self._drop_record(existing)
+        record = self._new_preparation(
+            lane_id=lane_id,
+            turn_id=turn_id,
+            part_id=part_id,
+            reason="speculative",
+        )
+        if record is None:
+            return False
+        self.speculation_budget -= 1
+        self._enqueue(record)
+        _metric(
+            "tts_speculation_budget",
+            sess=runtime.session_id,
+            action="consume",
+            remaining=self.speculation_budget,
+        )
+        return True
+
+    def reset_speculation_budget(self, *, reason: str) -> None:
+        self.speculation_budget = self.speculation_limit
+        self.speculation_exhaustion_reported = False
+        _metric(
+            "tts_speculation_budget",
+            sess=self.runtime.session_id,
+            action="reset",
+            reason=str(reason or "playback_intent"),
+            remaining=self.speculation_budget,
+        )
 
     async def replay(self, payload: dict[str, Any]) -> None:
         runtime = self.runtime
@@ -58,9 +173,16 @@ class TtsDelivery:
         part = next((item for item in turn.parts if item.part_id == part_id), None)
         if part is None or part.speech_state != "spoken" or not tts_settings_enabled(runtime.tts_settings):
             return
+        self.reset_speculation_budget(reason="replay_tts")
         text = self.part_target_text(part)
-        tts_payload = self.cached_turn_artifacts.get((turn.turn_id, part_id))
-        if not text or tts_payload is None:
+        record = self.preparations.get((turn.turn_id, part_id))
+        if (
+            not text
+            or record is None
+            or record.state != "ready"
+            or record.tts_payload is None
+            or not self._record_is_current(record)
+        ):
             part.speech_state = "pending"
             runtime._refresh_turn_state()
             await runtime._send_turn_update(reason="tts_replay_unavailable")
@@ -76,25 +198,17 @@ class TtsDelivery:
                 )
             )
             return
-        await runtime.lifecycle.send(
-            event(
-                "tts_replay_ready",
-                runtime.session_id,
-                lane_id=lane_id,
-                turn_id=turn.turn_id,
-                part_id=part_id,
-                text=text,
-                tts=dict(tts_payload),
-            )
-        )
+        await self._deliver_ready_artifact(record, playback_kind="replay")
 
     async def run_speak_sequence(
         self,
         lane_id: str,
         turn_id: str,
         part_ids: list[str],
+        *,
+        generation_reason: str = "demand",
     ) -> None:
-        """Synthesize selected bubbles in order while browser playback overlaps."""
+        """Subscribe selected bubbles in order while playback overlaps generation."""
         runtime = self.runtime
         lane = runtime.lanes[lane_id]
         current_task = asyncio.current_task()
@@ -111,67 +225,195 @@ class TtsDelivery:
                 text = self.part_target_text(target)
                 if not text:
                     continue
-                sub_task = asyncio.create_task(
-                    self.synthesize_turn_clip(lane.lane_id, turn_id, text, [part_id])
+                await self._play_part(
+                    lane_id=lane.lane_id,
+                    turn_id=turn_id,
+                    part_id=part_id,
+                    generation_reason=generation_reason,
                 )
-                try:
-                    await sub_task
-                except asyncio.CancelledError:
-                    await cancel_task(sub_task)
-                    raise
         finally:
             if lane.tts_task is current_task:
                 lane.tts_task = None
 
-    async def synthesize_turn_clip(
+    async def _play_part(
         self,
+        *,
         lane_id: str,
         turn_id: str,
-        text: str,
-        speaking_part_ids: list[str],
+        part_id: str,
+        generation_reason: str,
     ) -> None:
+        if not tts_settings_enabled(self.runtime.tts_settings):
+            return
+        key = (turn_id, part_id)
+        record = self.preparations.get(key)
+        if record is not None and not self._record_is_current(record):
+            self._drop_record(record)
+            record = None
+        if record is None or record.state in {"failed", "cancelled"}:
+            if record is not None:
+                self._drop_record(record)
+            record = self._new_preparation(
+                lane_id=lane_id,
+                turn_id=turn_id,
+                part_id=part_id,
+                reason=generation_reason,
+            )
+            if record is None:
+                return
+            self._record_playback_path(record, "demand_miss")
+            await self._prioritize_explicit(record)
+            await self._subscribe(record)
+            self._enqueue(record, priority=True)
+        elif record.state == "ready":
+            self._record_playback_path(record, "ready_hit")
+            await self._subscribe(record)
+            await self._deliver_ready_artifact(record, playback_kind="first")
+            return
+        else:
+            self._record_playback_path(record, "joined_generation")
+            await self._subscribe(record)
+            if record.state == "queued":
+                self._move_to_front(record.key)
+            await self._cancel_unrelated_speculation(record.key)
+        if record.done is not None:
+            await asyncio.shield(record.done)
+
+    def _new_preparation(
+        self,
+        *,
+        lane_id: str,
+        turn_id: str,
+        part_id: str,
+        reason: str,
+    ) -> _Preparation | None:
         runtime = self.runtime
-        lane = runtime.lanes[lane_id]
-        current_task = asyncio.current_task()
-        reference_wav_path, low_quality = _last_speech_reference_choice(
-            lane,
-            runtime.tts_settings,
-        )
+        if not tts_settings_enabled(runtime.tts_settings):
+            return None
+        lane = runtime.lanes.get(lane_id)
+        part = self._current_part(turn_id, part_id)
+        if lane is None or part is None:
+            return None
+        text = self.part_target_text(part)
+        if not text:
+            return None
+        settings = deepcopy(runtime.tts_settings)
+        reference_wav_path, low_quality = _last_speech_reference_choice(lane, settings)
         if reference_wav_path is not None or tts_uses_asr_reference_wav(
             lane.target_language,
-            settings=runtime.tts_settings,
+            settings=settings,
         ):
-            self._set_part_reference_quality(speaking_part_ids, low_quality=low_quality)
-        reference_prompt_text = _last_speech_prompt_text(lane, reference_wav_path)
-        source_audio_duration_ms = _source_bubble_duration_ms(lane)
+            self._set_part_reference_quality([part_id], low_quality=low_quality)
+        return _Preparation(
+            lane_id=lane_id,
+            turn_id=turn_id,
+            part_id=part_id,
+            text=text,
+            target_language=lane.target_language,
+            settings=settings,
+            settings_key=_synthesis_settings_key(settings),
+            reason=str(reason or "demand"),
+            reference_wav_path=reference_wav_path,
+            reference_prompt_text=_last_speech_prompt_text(lane, reference_wav_path),
+            source_audio_duration_ms=_source_bubble_duration_ms(lane),
+            low_quality_reference=low_quality,
+            done=asyncio.get_running_loop().create_future(),
+        )
+
+    def _enqueue(self, record: _Preparation, *, priority: bool = False) -> None:
+        self.preparations[record.key] = record
+        if priority:
+            self.generation_queue.insert(0, record.key)
+        else:
+            self.generation_queue.append(record.key)
+        self._ensure_worker()
+
+    def _ensure_worker(self) -> None:
+        if self.generation_task is None or self.generation_task.done():
+            self.generation_task = asyncio.create_task(self._run_generation_queue())
+
+    async def _run_generation_queue(self) -> None:
+        current_task = asyncio.current_task()
+        try:
+            while self.generation_queue:
+                key = self.generation_queue.pop(0)
+                record = self.preparations.get(key)
+                if record is None or record.state != "queued" or record.cancelled:
+                    continue
+                self.active_preparation_key = key
+                await self._generate(record)
+                self.active_preparation_key = None
+        finally:
+            self.active_preparation_key = None
+            if self.generation_task is current_task:
+                self.generation_task = None
+
+    async def _generate(self, record: _Preparation) -> None:
+        runtime = self.runtime
+        lane = runtime.lanes[record.lane_id]
         loop = asyncio.get_running_loop()
-        stream_artifact_id = ""
-        stream_generation = self.stream_generation
         cancellation = TtsSynthesisCancellation()
+        record.cancellation = cancellation
+        record.state = "generating"
+        _metric(
+            "tts_preparation",
+            sess=runtime.session_id,
+            lane=record.lane_id,
+            part=record.part_id,
+            reason=record.reason,
+            state="started",
+            queue_ms=round((time.monotonic() - record.created_mono) * 1000.0, 2),
+        )
 
-        async def deliver_from_synthesis(
-            payload: dict[str, Any],
-            *,
-            before_send: Callable[[], None] | None = None,
-        ) -> None:
-            if (
-                cancellation.cancelled
-                or runtime.lifecycle.closed
-                or stream_generation != self.stream_generation
-                or not self._turn_is_speaking(turn_id)
-            ):
+        async def deliver_from_synthesis(kind: str, payload: dict[str, Any]) -> None:
+            if not self._record_is_current(record):
                 raise _StaleTtsStream()
-            if before_send is not None:
-                before_send()
-            await runtime.lifecycle.send(payload)
+            if kind == "started":
+                record.started_tts = dict(payload)
+                record.artifact_id = str(payload.get("artifact_id") or "").strip()
+                if record.artifact_id:
+                    self.active_stream_artifacts[record.artifact_id] = (
+                        record.turn_id,
+                        [record.part_id],
+                    )
+                if record.subscribed:
+                    await self._send_started(record)
+                return
+            pcm = bytes(payload.get("pcm") or b"")
+            if not pcm:
+                return
+            if not record.first_pcm_seen:
+                record.first_pcm_seen = True
+                fields: dict[str, Any] = {
+                    "sess": runtime.session_id,
+                    "lane": record.lane_id,
+                    "part": record.part_id,
+                    "reason": record.reason,
+                    "preparation_ms": round(
+                        (time.monotonic() - record.created_mono) * 1000.0,
+                        2,
+                    ),
+                }
+                if record.subscribed_mono is not None:
+                    fields["subscription_ms"] = round(
+                        (time.monotonic() - record.subscribed_mono) * 1000.0,
+                        2,
+                    )
+                _metric("tts_first_pcm", **fields)
+            record.chunks.append(
+                {
+                    "artifact_id": str(payload.get("artifact_id") or ""),
+                    "sequence_number": int(payload.get("sequence_number") or 0),
+                    "first_sample": int(payload.get("first_sample") or 0),
+                    "pcm_base64": base64.b64encode(pcm).decode("ascii"),
+                }
+            )
+            if record.subscribed:
+                await self._forward_buffered_chunks(record)
 
-        def send_from_synthesis(
-            payload: dict[str, Any],
-            *,
-            before_send: Callable[[], None] | None = None,
-        ) -> None:
+        def send_from_synthesis(kind: str, payload: dict[str, Any]) -> None:
             future = asyncio.run_coroutine_threadsafe(
-                deliver_from_synthesis(payload, before_send=before_send),
+                deliver_from_synthesis(kind, payload),
                 loop,
             )
             try:
@@ -181,143 +423,269 @@ class TtsDelivery:
                 raise
 
         def stream_started(tts: dict[str, Any]) -> None:
-            nonlocal stream_artifact_id
-            stream_artifact_id = str(tts.get("artifact_id") or "").strip()
-
-            def mark_active() -> None:
-                if stream_artifact_id:
-                    self.active_stream_artifacts[stream_artifact_id] = (
-                        turn_id,
-                        list(speaking_part_ids),
-                    )
-
-            send_from_synthesis(
-                event(
-                    "tts_stream_started",
-                    runtime.session_id,
-                    lane_id=lane.lane_id,
-                    turn_id=turn_id,
-                    part_ids=list(speaking_part_ids),
-                    tts=tts,
-                ),
-                before_send=mark_active,
-            )
+            send_from_synthesis("started", tts)
 
         def audio_chunk(chunk: dict[str, Any]) -> None:
-            pcm = bytes(chunk.get("pcm") or b"")
-            if not pcm:
-                return
-            send_from_synthesis(
-                event(
-                    "tts_stream_chunk",
-                    runtime.session_id,
-                    lane_id=lane.lane_id,
-                    turn_id=turn_id,
-                    artifact_id=str(chunk.get("artifact_id") or ""),
-                    sequence_number=int(chunk.get("sequence_number") or 0),
-                    first_sample=int(chunk.get("first_sample") or 0),
-                    pcm_base64=base64.b64encode(pcm).decode("ascii"),
-                )
-            )
+            send_from_synthesis("chunk", chunk)
 
         try:
             tts_payload = await asyncio.to_thread(
                 self.bridge.synthesize,
                 session_id=runtime.session_id,
-                text=text,
-                language=lane.target_language,
+                text=record.text,
+                language=record.target_language,
                 fairness_key=runtime.tts_fairness_key,
-                settings=runtime.tts_settings,
-                reference_wav_path=reference_wav_path,
-                reference_prompt_text=reference_prompt_text,
-                source_audio_duration_ms=source_audio_duration_ms,
+                settings=record.settings,
+                reference_wav_path=record.reference_wav_path,
+                reference_prompt_text=record.reference_prompt_text,
+                source_audio_duration_ms=record.source_audio_duration_ms,
                 on_stream_started=stream_started,
                 on_audio_chunk=audio_chunk,
                 cancellation=cancellation,
             )
         except asyncio.CancelledError:
             cancellation.cancel()
-            self.active_stream_artifacts.pop(stream_artifact_id, None)
+            self.active_stream_artifacts.pop(record.artifact_id, None)
+            record.state = "cancelled"
+            self._resolve_done(record)
             raise
         except _StaleTtsStream:
             cancellation.cancel()
-            self.active_stream_artifacts.pop(stream_artifact_id, None)
+            self.active_stream_artifacts.pop(record.artifact_id, None)
+            record.state = "cancelled"
+            self._resolve_done(record)
             return
         except TtsReferenceUnavailableError as exc:
             LOGGER.warning(
                 "tts skipped (reference unavailable) lane=%s turn=%s lang=%s: %s",
                 lane.lane_id,
-                turn_id,
-                lane.target_language,
+                record.turn_id,
+                record.target_language,
                 exc,
             )
-            if self._turn_is_speaking(turn_id):
+            record.state = "failed"
+            if record.subscribed and self._turn_is_current(record.turn_id):
                 self._set_part_speech_state(
-                    speaking_part_ids,
+                    [record.part_id],
                     expected="speaking",
                     replacement="spoken",
                 )
                 runtime._refresh_turn_state()
                 await runtime._send_turn_update(reason="tts_skipped")
+            self._resolve_done(record)
             return
         except Exception as exc:
-            self.active_stream_artifacts.pop(stream_artifact_id, None)
-            if self._turn_is_speaking(turn_id):
-                if stream_artifact_id:
-                    await runtime.lifecycle.send(
-                        event(
-                            "tts_stream_failed",
-                            runtime.session_id,
-                            lane_id=lane.lane_id,
-                            turn_id=turn_id,
-                            artifact_id=stream_artifact_id,
-                        )
-                    )
+            self.active_stream_artifacts.pop(record.artifact_id, None)
+            record.state = "cancelled" if record.cancelled else "failed"
+            if record.cancelled:
+                self._resolve_done(record)
+                return
+            if record.subscribed and self._turn_is_current(record.turn_id):
+                await self._send_stream_failed(record)
                 self._set_part_speech_state(
-                    speaking_part_ids,
+                    [record.part_id],
                     expected="speaking",
                     replacement="pending",
                 )
                 runtime._refresh_turn_state()
                 await runtime._send_turn_update(reason="tts_failed")
-            await runtime.lifecycle.send(
-                event(
-                    "error",
-                    runtime.session_id,
-                    code="tts_failed",
-                    message=str(exc),
-                    lane_id=lane.lane_id,
-                    turn_id=turn_id,
+                await runtime.lifecycle.send(
+                    event(
+                        "error",
+                        runtime.session_id,
+                        code="tts_failed",
+                        message=str(exc),
+                        lane_id=lane.lane_id,
+                        turn_id=record.turn_id,
+                    )
                 )
+            _metric(
+                "tts_preparation",
+                sess=runtime.session_id,
+                lane=record.lane_id,
+                part=record.part_id,
+                reason=record.reason,
+                state="failed",
             )
+            self._resolve_done(record)
             return
-        finally:
-            if lane.tts_task is current_task:
-                lane.tts_task = None
 
-        if not self._turn_is_speaking(turn_id):
+        if not self._record_is_current(record):
+            record.state = "cancelled"
+            self._resolve_done(record)
             return
         artifact_id = str(tts_payload.get("artifact_id") or "").strip()
         self.active_stream_artifacts.pop(artifact_id, None)
-        if artifact_id:
+        record.artifact_id = artifact_id
+        record.tts_payload = dict(tts_payload)
+        record.state = "ready"
+        if artifact_id and record.subscribed:
             lane.pending_tts[artifact_id] = {
-                "turn_id": turn_id,
+                "turn_id": record.turn_id,
                 "artifact_id": artifact_id,
-                "text": text,
-                "part_ids": list(speaking_part_ids),
+                "text": record.text,
+                "part_ids": [record.part_id],
                 "tts": dict(tts_payload),
             }
-            for part_id in speaking_part_ids:
-                self.cached_turn_artifacts[(turn_id, part_id)] = dict(tts_payload)
-        await runtime.lifecycle.send(
+        if record.subscribed:
+            await runtime.lifecycle.send(
+                event(
+                    "tts_stream_complete",
+                    runtime.session_id,
+                    lane_id=lane.lane_id,
+                    turn_id=record.turn_id,
+                    tts=tts_payload,
+                )
+            )
+        record.chunks.clear()
+        record.forwarded_chunks = 0
+        _metric(
+            "tts_preparation",
+            sess=runtime.session_id,
+            lane=record.lane_id,
+            part=record.part_id,
+            reason=record.reason,
+            state="ready",
+        )
+        self._resolve_done(record)
+
+    async def _subscribe(self, record: _Preparation) -> None:
+        if not record.subscribed:
+            record.subscribed = True
+            record.subscribed_mono = time.monotonic()
+            record.playback_kind = "first"
+            if not record.used:
+                record.used = True
+                _metric(
+                    "tts_prepared_artifact",
+                    sess=self.runtime.session_id,
+                    lane=record.lane_id,
+                    part=record.part_id,
+                    action="used",
+                    reason=record.reason,
+                )
+        if record.state == "generating":
+            await self._send_started(record)
+            await self._forward_buffered_chunks(record)
+
+    async def _send_started(self, record: _Preparation) -> None:
+        if record.started_sent or record.started_tts is None:
+            return
+        record.started_sent = True
+        await self.runtime.lifecycle.send(
             event(
-                "tts_stream_complete",
-                runtime.session_id,
-                lane_id=lane.lane_id,
-                turn_id=turn_id,
-                tts=tts_payload,
+                "tts_stream_started",
+                self.runtime.session_id,
+                lane_id=record.lane_id,
+                turn_id=record.turn_id,
+                part_ids=[record.part_id],
+                playback_kind=record.playback_kind,
+                tts=dict(record.started_tts),
             )
         )
+
+    async def _forward_buffered_chunks(self, record: _Preparation) -> None:
+        await self._send_started(record)
+        chunks = record.chunks
+        record.chunks = []
+        for chunk in chunks:
+            await self.runtime.lifecycle.send(
+                event(
+                    "tts_stream_chunk",
+                    self.runtime.session_id,
+                    lane_id=record.lane_id,
+                    turn_id=record.turn_id,
+                    **chunk,
+                )
+            )
+            record.forwarded_chunks += 1
+
+    async def _deliver_ready_artifact(
+        self,
+        record: _Preparation,
+        *,
+        playback_kind: str,
+    ) -> None:
+        if record.tts_payload is None or not self._record_is_current(record):
+            return
+        record.used = True
+        if playback_kind == "first":
+            lane = self.runtime.lanes[record.lane_id]
+            lane.pending_tts[record.artifact_id] = {
+                "turn_id": record.turn_id,
+                "artifact_id": record.artifact_id,
+                "text": record.text,
+                "part_ids": [record.part_id],
+                "tts": dict(record.tts_payload),
+            }
+        await self.runtime.lifecycle.send(
+            event(
+                "tts_artifact_ready",
+                self.runtime.session_id,
+                lane_id=record.lane_id,
+                turn_id=record.turn_id,
+                part_id=record.part_id,
+                part_ids=[record.part_id],
+                text=record.text,
+                playback_kind=playback_kind,
+                tts=dict(record.tts_payload),
+            )
+        )
+
+    async def _prioritize_explicit(self, record: _Preparation) -> None:
+        await self._cancel_unrelated_speculation(record.key)
+
+    async def _cancel_unrelated_speculation(
+        self,
+        keep_key: tuple[str, str],
+    ) -> None:
+        active = self.preparations.get(self.active_preparation_key or ("", ""))
+        if (
+            active is None
+            or active.key == keep_key
+            or active.reason != "speculative"
+            or active.subscribed
+        ):
+            return
+        self._drop_record(active)
+
+    def _move_to_front(self, key: tuple[str, str]) -> None:
+        self.generation_queue = [queued for queued in self.generation_queue if queued != key]
+        self.generation_queue.insert(0, key)
+
+    async def settings_changed(
+        self,
+        previous: dict[str, Any],
+        current: dict[str, Any],
+    ) -> None:
+        synthesis_changed = _synthesis_settings_key(previous) != _synthesis_settings_key(current)
+        auto_disabled = bool(previous.get("auto_speak")) and not bool(current.get("auto_speak"))
+        changed_parts = False
+        for record in list(self.preparations.values()):
+            cancel_for_auto = (
+                auto_disabled
+                and record.reason == "automatic"
+                and record.state in {"queued", "generating"}
+                and record.forwarded_chunks == 0
+            )
+            if not synthesis_changed and not cancel_for_auto:
+                continue
+            pending = self.runtime.lanes[record.lane_id].pending_tts
+            if record.state == "ready" and record.artifact_id in pending:
+                self.preparations.pop(record.key, None)
+                continue
+            if record.subscribed and record.state in {"queued", "generating"}:
+                await self._send_stream_failed(record)
+                self._set_part_speech_state(
+                    [record.part_id],
+                    expected="speaking",
+                    replacement="pending",
+                )
+                changed_parts = True
+            self._drop_record(record)
+        if changed_parts:
+            self.runtime._refresh_turn_state()
+            await self.runtime._send_turn_update(reason="tts_settings_changed")
 
     async def stop(self, payload: dict[str, Any]) -> None:
         runtime = self.runtime
@@ -332,39 +700,33 @@ class TtsDelivery:
         current_part_ids = {
             str(part_id) for part_id in current_pending.get("part_ids", [])
         }
-        active_artifact_ids = [
-            active_id
-            for active_id, (active_turn_id, _part_ids) in self.active_stream_artifacts.items()
-            if active_turn_id == turn_id
-        ]
-
-        self.stream_generation += 1
         task = lane.tts_task
         lane.tts_task = None
         await cancel_task(task)
 
-        for active_id in active_artifact_ids:
-            self.active_stream_artifacts.pop(active_id, None)
-            await runtime.lifecycle.send(
-                event(
-                    "tts_stream_failed",
-                    runtime.session_id,
-                    lane_id=lane_id,
-                    turn_id=turn_id,
-                    artifact_id=active_id,
-                )
-            )
+        for record in list(self.preparations.values()):
+            if record.turn_id != turn_id or not record.subscribed:
+                continue
+            if record.state in {"queued", "generating"}:
+                await self._send_stream_failed(record)
+                self._drop_record(record)
+            else:
+                record.subscribed = False
 
         lane.pending_tts.clear()
         for part in turn.parts:
             if part.speech_state != "speaking":
                 continue
             cache_key = (turn_id, part.part_id)
-            if part.part_id in current_part_ids and cache_key in self.cached_turn_artifacts:
+            record = self.preparations.get(cache_key)
+            if (
+                part.part_id in current_part_ids
+                and record is not None
+                and record.state == "ready"
+            ):
                 part.speech_state = "spoken"
             else:
                 part.speech_state = "pending"
-                self.cached_turn_artifacts.pop(cache_key, None)
         runtime._refresh_turn_state()
         await runtime._send_turn_update(reason="tts_stopped")
 
@@ -391,17 +753,110 @@ class TtsDelivery:
         stable_turn_id = str(turn_id or "").strip()
         if not stable_turn_id:
             return
-        self.stream_generation += 1
-        for cache_key in [key for key in self.cached_turn_artifacts if key[0] == stable_turn_id]:
-            self.cached_turn_artifacts.pop(cache_key, None)
+        for record in list(self.preparations.values()):
+            if record.turn_id == stable_turn_id:
+                self._drop_record(record)
         for artifact_id, (active_turn_id, _part_ids) in list(self.active_stream_artifacts.items()):
             if active_turn_id == stable_turn_id:
                 self.active_stream_artifacts.pop(artifact_id, None)
 
     def clear(self) -> None:
-        self.stream_generation += 1
-        self.cached_turn_artifacts.clear()
+        for record in list(self.preparations.values()):
+            self._drop_record(record)
+        self.generation_queue.clear()
+        if self.generation_task is not None:
+            self.generation_task.cancel()
+        self.generation_task = None
+        self.active_preparation_key = None
         self.active_stream_artifacts.clear()
+
+    def _drop_record(self, record: _Preparation) -> None:
+        previous_state = record.state
+        was_cancelled = record.cancelled
+        record.cancelled = True
+        if record.cancellation is not None:
+            record.cancellation.cancel()
+        self.generation_queue = [key for key in self.generation_queue if key != record.key]
+        if self.preparations.get(record.key) is record:
+            self.preparations.pop(record.key, None)
+        if record.artifact_id:
+            self.active_stream_artifacts.pop(record.artifact_id, None)
+        if previous_state in {"queued", "generating"}:
+            record.state = "cancelled"
+            self._resolve_done(record)
+        if record.state == "ready" and not record.used:
+            _metric(
+                "tts_prepared_artifact",
+                sess=self.runtime.session_id,
+                lane=record.lane_id,
+                part=record.part_id,
+                action="unused",
+                reason=record.reason,
+            )
+        if not was_cancelled and previous_state in {"queued", "generating"}:
+            _metric(
+                "tts_preparation",
+                sess=self.runtime.session_id,
+                lane=record.lane_id,
+                part=record.part_id,
+                reason=record.reason,
+                state="cancelled",
+            )
+
+    async def _send_stream_failed(self, record: _Preparation) -> None:
+        if not record.started_sent or not record.artifact_id:
+            return
+        await self.runtime.lifecycle.send(
+            event(
+                "tts_stream_failed",
+                self.runtime.session_id,
+                lane_id=record.lane_id,
+                turn_id=record.turn_id,
+                artifact_id=record.artifact_id,
+            )
+        )
+
+    def _record_is_current(self, record: _Preparation) -> bool:
+        if (
+            record.cancelled
+            or self.runtime.lifecycle.closed
+            or self.preparations.get(record.key) is not record
+            or not tts_settings_enabled(self.runtime.tts_settings)
+            or record.settings_key != _synthesis_settings_key(self.runtime.tts_settings)
+        ):
+            return False
+        part = self._current_part(record.turn_id, record.part_id)
+        return (
+            part is not None
+            and self.part_target_text(part) == record.text
+            and self.runtime.lanes[record.lane_id].target_language == record.target_language
+        )
+
+    def _current_part(self, turn_id: str, part_id: str) -> TurnPart | None:
+        if not self._turn_is_current(turn_id):
+            return None
+        return next(
+            (part for part in self.runtime.current_turn.parts if part.part_id == part_id),
+            None,
+        )
+
+    def _turn_is_current(self, turn_id: str) -> bool:
+        return self.runtime.current_turn.turn_id == turn_id
+
+    @staticmethod
+    def _resolve_done(record: _Preparation) -> None:
+        if record.done is not None and not record.done.done():
+            record.done.set_result(None)
+
+    def _record_playback_path(self, record: _Preparation, path: str) -> None:
+        _metric(
+            "tts_playback_path",
+            sess=self.runtime.session_id,
+            lane=record.lane_id,
+            part=record.part_id,
+            reason=record.reason,
+            path=path,
+        )
 
     def record_asr_reference(self, lane: ConversationLane) -> None:
         """Keep the latest ASR WAV that is suitable as a voice reference."""
@@ -422,10 +877,6 @@ class TtsDelivery:
             if part.part_id in selection:
                 part.low_quality_reference = low_quality
 
-    def _turn_is_speaking(self, turn_id: str) -> bool:
-        turn = self.runtime.current_turn
-        return turn.turn_id == turn_id and getattr(turn.state, "value", "") == "open_speaking"
-
     def _set_part_speech_state(
         self,
         part_ids: list[str],
@@ -437,6 +888,12 @@ class TtsDelivery:
         for part in self.runtime.current_turn.parts:
             if part.part_id in selection and part.speech_state == expected:
                 part.speech_state = replacement
+
+
+def _synthesis_settings_key(settings: dict[str, Any] | None) -> str:
+    payload = deepcopy(settings or {})
+    payload.pop("auto_speak", None)
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
 
 
 def _wav_duration_ms(path: str) -> int:

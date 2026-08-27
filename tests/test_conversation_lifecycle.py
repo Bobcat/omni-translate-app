@@ -77,6 +77,7 @@ def _runtime(*, vad_error: Exception | None = None) -> SimpleNamespace:
         side_a_language="Dutch",
         side_b_language="English",
         live_settings={"asr": {"backend": "test"}},
+        tts_settings={"enabled": True, "auto_speak": False},
         lanes={"a_to_b": lane},
         current_turn=object(),
         asr_bridge=asr_bridge,
@@ -102,6 +103,10 @@ class ConversationLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(runtime.asr_bridge.closed)
         self.assertTrue(runtime.tts_delivery.cleared)
         self.assertEqual(runtime.websocket.sent[0]["type"], "ready")
+        self.assertEqual(
+            runtime.websocket.sent[0]["tts_settings"],
+            {"enabled": True, "auto_speak": False},
+        )
         close_session.assert_called_once_with(runtime.session_id, reason="closed")
 
     async def test_vad_failure_reports_error_and_still_closes_resources(self) -> None:
