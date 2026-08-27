@@ -1,4 +1,4 @@
-# Review prompt: voice session runtime and storage guardrails
+# Review prompt: voice session duration and storage guardrails
 
 Review PR #23, `feature/voice-session-guardrails` against `main`. Review only;
 do not modify the branch.
