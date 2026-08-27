@@ -55,16 +55,37 @@ export function handleMessage(msg) {
     applyTurnUpdate(msg);
     return;
   }
-  if (msg.type === 'tts_clip_ready') {
+  if (msg.type === 'tts_stream_started') {
     if (!shouldApplyCurrentTurnMessage(msg)) return;
     if (msg.tts) {
-      audioQueue.enqueue({
+      audioQueue.startPcmStream({
         ...msg.tts,
         laneId: msg.lane_id,
         turnId: msg.turn_id,
         artifactId: msg.tts.artifact_id,
+        partIds: msg.part_ids || [],
       });
     }
+    updateActionButtons();
+    return;
+  }
+  if (msg.type === 'tts_stream_chunk') {
+    if (!shouldApplyCurrentTurnMessage(msg)) return;
+    audioQueue.appendPcmChunk({
+      artifactId: msg.artifact_id,
+      sequenceNumber: msg.sequence_number,
+      pcmBase64: msg.pcm_base64,
+    });
+    return;
+  }
+  if (msg.type === 'tts_stream_complete') {
+    if (!shouldApplyCurrentTurnMessage(msg)) return;
+    if (msg.tts) audioQueue.completePcmStream(msg.tts);
+    updateActionButtons();
+    return;
+  }
+  if (msg.type === 'tts_stream_failed') {
+    audioQueue.failPcmStream(msg.artifact_id);
     updateActionButtons();
     return;
   }

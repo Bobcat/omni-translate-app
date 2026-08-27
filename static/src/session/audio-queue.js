@@ -34,8 +34,10 @@ export const audioQueue = new AudioQueue({
   },
   onItemEnded: (item) => {
     if (item.replay) return;
-    const speakingPart = (state.currentTurn?.parts || []).find((p) => p.speechState === 'speaking');
-    if (speakingPart) speakingPart.speechState = 'spoken';
+    const selection = new Set(item.partIds || []);
+    for (const part of state.currentTurn?.parts || []) {
+      if (selection.has(part.partId) && part.speechState === 'speaking') part.speechState = 'spoken';
+    }
     state.socket?.ttsPlaybackComplete({
       laneId: item.laneId,
       turnId: item.turnId,

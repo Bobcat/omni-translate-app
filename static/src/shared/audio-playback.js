@@ -1,5 +1,14 @@
 export class AudioQueue {
-  constructor({ audio, resumeButton, onStatus, onPlaybackStart, onPlaybackIdle, onPlaybackComplete, onItemEnded }) {
+  constructor({
+    audio,
+    resumeButton,
+    onStatus,
+    onPlaybackStart,
+    onPlaybackIdle,
+    onPlaybackComplete,
+    onItemEnded,
+    audioContextFactory = defaultAudioContextFactory,
+  }) {
     this.audio = audio;
     this.resumeButton = resumeButton;
     this.onStatus = onStatus;
@@ -10,7 +19,11 @@ export class AudioQueue {
     this.queue = [];
     this.current = null;
     this.blocked = false;
+    this.audioContextFactory = audioContextFactory;
+    this.pcmContext = null;
+    this.pcmStreams = new Map();
     this.audio.addEventListener('ended', () => {
+      if (this.current?.kind === 'pcm') return;
       const ended = this.current;
       const playbackWillComplete = this.queue.length === 0;
       if (ended) {
@@ -36,6 +49,7 @@ export class AudioQueue {
     if (!item?.url) return;
     this.queue.push({
       ...item,
+      kind: 'url',
       url: String(item.url),
       durationMs: Number(item.duration_ms || 0),
     });
@@ -46,7 +60,113 @@ export class AudioQueue {
     }
   }
 
+  preparePcmPlayback() {
+    const context = this.ensurePcmContext();
+    if (!context) return false;
+    if (context.state === 'suspended') {
+      context.resume().then(() => {
+        this.blocked = false;
+        this.render();
+      }).catch(() => {
+        this.blocked = true;
+        this.render();
+      });
+    }
+    return true;
+  }
+
+  startPcmStream(item) {
+    const artifactId = String(item?.artifactId || item?.artifact_id || '').trim();
+    const sampleRateHz = Number(item?.sampleRateHz || item?.sample_rate_hz || 0);
+    const channelCount = Number(item?.channelCount || item?.channel_count || 0);
+    if (!artifactId || sampleRateHz <= 0 || channelCount <= 0 || this.pcmStreams.has(artifactId)) return false;
+    const streamItem = {
+      ...item,
+      kind: 'pcm',
+      artifactId,
+      durationMs: 0,
+      stream: {
+        sampleRateHz,
+        channelCount,
+        nextSequence: 0,
+        pendingChunks: [],
+        activeSources: new Set(),
+        nextStartAt: 0,
+        completed: false,
+        playbackStarted: false,
+        playbackStopped: false,
+      },
+    };
+    this.pcmStreams.set(artifactId, streamItem);
+    this.queue.push(streamItem);
+    if (!this.current) this.playNext();
+    else this.render();
+    return true;
+  }
+
+  appendPcmChunk({ artifactId, sequenceNumber, pcmBase64 }) {
+    const item = this.pcmStreams.get(String(artifactId || ''));
+    if (!item || item.stream.completed || item.stream.playbackStopped) return false;
+    const sequence = Number(sequenceNumber);
+    if (!Number.isInteger(sequence) || sequence !== item.stream.nextSequence) {
+      this.failPcmStream(item.artifactId);
+      return false;
+    }
+    let pcm;
+    try {
+      pcm = decodeBase64Bytes(pcmBase64);
+    } catch {
+      this.failPcmStream(item.artifactId);
+      return false;
+    }
+    const frameBytes = item.stream.channelCount * 2;
+    if (!pcm.length || pcm.length % frameBytes) {
+      this.failPcmStream(item.artifactId);
+      return false;
+    }
+    item.stream.nextSequence += 1;
+    item.stream.pendingChunks.push(pcm);
+    if (this.current === item) this.schedulePendingPcm(item);
+    return true;
+  }
+
+  completePcmStream(tts) {
+    const artifactId = String(tts?.artifact_id || tts?.artifactId || '').trim();
+    const item = this.pcmStreams.get(artifactId);
+    if (!item) return false;
+    item.url = String(tts?.url || '');
+    item.durationMs = Number(tts?.duration_ms || 0);
+    item.stream.completed = true;
+    if (item.stream.playbackStopped) {
+      this.pcmStreams.delete(artifactId);
+      this.onItemEnded?.(item);
+      return true;
+    }
+    if (this.current === item) {
+      this.schedulePendingPcm(item);
+      this.finishPcmIfReady(item);
+    }
+    return true;
+  }
+
+  failPcmStream(artifactId) {
+    const id = String(artifactId || '').trim();
+    const item = this.pcmStreams.get(id);
+    if (!item) return false;
+    this.pcmStreams.delete(id);
+    item.stream.playbackStopped = true;
+    this.stopPcmSources(item);
+    this.queue = this.queue.filter((queued) => queued !== item);
+    if (this.current === item) {
+      this.current = null;
+      this.playNext();
+    }
+    this.render();
+    return true;
+  }
+
   clear() {
+    this.clearPcmStreams();
     this.queue = [];
     this.current = null;
     this.audio.pause();
@@ -57,13 +177,25 @@ export class AudioQueue {
   }
 
   stop() {
-    const ended = this.current;
+    const stopped = [this.current, ...this.queue].filter(Boolean);
+    for (const item of stopped) {
+      if (item.kind === 'pcm') {
+        item.stream.playbackStopped = true;
+        item.stream.pendingChunks = [];
+        this.stopPcmSources(item);
+        if (item.stream.completed) {
+          this.pcmStreams.delete(item.artifactId);
+          this.onItemEnded?.(item);
+        }
+      } else {
+        this.onItemEnded?.(item);
+      }
+    }
     this.queue = [];
     this.current = null;
     this.audio.pause();
     this.audio.removeAttribute('src');
     this.audio.load();
-    if (ended) this.onItemEnded?.(ended);
     this.onPlaybackIdle?.();
     this.render();
   }
@@ -77,7 +209,16 @@ export class AudioQueue {
     return this.queue.some((item) => !item.replay);
   }
 
+  currentArtifactId() {
+    return String(this.current?.artifactId || '');
+  }
+
   playOrResume() {
+    if (this.current?.kind === 'pcm') {
+      this.preparePcmPlayback();
+      this.schedulePendingPcm(this.current);
+      return;
+    }
     if (!this.audio.src && this.queue.length) {
       this.playNext();
       return;
@@ -99,6 +240,11 @@ export class AudioQueue {
       return;
     }
     this.current = next;
+    if (next.kind === 'pcm') {
+      this.schedulePendingPcm(next);
+      this.render();
+      return;
+    }
     this.audio.src = next.url;
     this.audio.load();
     this.audio.play().catch(() => {
@@ -110,14 +256,113 @@ export class AudioQueue {
 
   render() {
     const hasAudio = this.hasAudio();
-    this.resumeButton.hidden = !hasAudio || (!this.blocked && !this.audio.paused);
+    const pcmBlocked = this.current?.kind === 'pcm' && this.blocked;
+    const urlBlocked = this.current?.kind !== 'pcm' && this.blocked && this.audio.paused;
+    this.resumeButton.hidden = !hasAudio || (!pcmBlocked && !urlBlocked);
     this.onStatus?.(this.statusText());
   }
 
   statusText() {
     if (this.blocked) return 'Audio ready';
+    if (this.current?.kind === 'pcm') {
+      if (!this.current.stream.playbackStarted) return 'Preparing audio';
+      return this.queue.length ? `Playing audio, ${this.queue.length} queued` : 'Playing audio';
+    }
     if (this.current && !this.audio.paused) return this.queue.length ? `Playing audio, ${this.queue.length} queued` : 'Playing audio';
     if (this.queue.length) return `${this.queue.length} audio clips queued`;
     return '';
   }
+
+  ensurePcmContext() {
+    if (!this.pcmContext) this.pcmContext = this.audioContextFactory?.() || null;
+    return this.pcmContext;
+  }
+
+  schedulePendingPcm(item) {
+    if (this.current !== item || item.stream.playbackStopped) return;
+    const context = this.ensurePcmContext();
+    if (!context) {
+      this.failPcmStream(item.artifactId);
+      return;
+    }
+    while (item.stream.pendingChunks.length) {
+      const pcm = item.stream.pendingChunks[0];
+      const frameCount = pcm.length / (item.stream.channelCount * 2);
+      const buffer = context.createBuffer(
+        item.stream.channelCount,
+        frameCount,
+        item.stream.sampleRateHz,
+      );
+      const view = new DataView(pcm.buffer, pcm.byteOffset, pcm.byteLength);
+      for (let channel = 0; channel < item.stream.channelCount; channel += 1) {
+        const samples = buffer.getChannelData(channel);
+        for (let frame = 0; frame < frameCount; frame += 1) {
+          const offset = ((frame * item.stream.channelCount) + channel) * 2;
+          samples[frame] = view.getInt16(offset, true) / 32768;
+        }
+      }
+      const source = context.createBufferSource();
+      source.buffer = buffer;
+      source.connect(context.destination);
+      const startAt = Math.max(context.currentTime + 0.03, item.stream.nextStartAt);
+      item.stream.nextStartAt = startAt + buffer.duration;
+      item.stream.activeSources.add(source);
+      source.addEventListener('ended', () => {
+        item.stream.activeSources.delete(source);
+        this.finishPcmIfReady(item);
+      }, { once: true });
+      source.start(startAt);
+      item.stream.pendingChunks.shift();
+      if (!item.stream.playbackStarted) {
+        item.stream.playbackStarted = true;
+        this.onPlaybackStart?.(item);
+      }
+    }
+    this.render();
+  }
+
+  finishPcmIfReady(item) {
+    if (
+      this.current !== item
+      || item.stream.playbackStopped
+      || !item.stream.completed
+      || item.stream.pendingChunks.length
+      || item.stream.activeSources.size
+    ) return;
+    const playbackWillComplete = this.queue.length === 0;
+    this.pcmStreams.delete(item.artifactId);
+    this.current = null;
+    this.onItemEnded?.(item);
+    this.playNext();
+    if (playbackWillComplete) this.onPlaybackComplete?.(item);
+  }
+
+  stopPcmSources(item) {
+    for (const source of [...item.stream.activeSources]) {
+      try { source.stop(); } catch {}
+    }
+    item.stream.activeSources.clear();
+  }
+
+  clearPcmStreams() {
+    for (const item of this.pcmStreams.values()) {
+      item.stream.playbackStopped = true;
+      this.stopPcmSources(item);
+    }
+    this.pcmStreams.clear();
+  }
+}
+
+function defaultAudioContextFactory() {
+  const AudioContextClass = globalThis.AudioContext || globalThis.webkitAudioContext;
+  return AudioContextClass ? new AudioContextClass() : null;
+}
+
+function decodeBase64Bytes(value) {
+  const binary = globalThis.atob(String(value || ''));
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
 }

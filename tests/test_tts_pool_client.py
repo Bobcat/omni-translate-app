@@ -61,6 +61,8 @@ def _successful_events() -> list[tts_pb2.SynthesisEvent]:
 class TtsPoolClientTests(unittest.TestCase):
     def test_synthesis_uses_binary_reference_and_validates_stream(self) -> None:
         stub = _RecordingStub(_successful_events())
+        started_events = []
+        audio_chunks = []
         payload = {
             "model": "nanovllm_voxcpm",
             "input": "Hallo",
@@ -83,6 +85,8 @@ class TtsPoolClientTests(unittest.TestCase):
                 payload,
                 fairness_key="principal_test",
                 timeout_s=10.0,
+                on_started=started_events.append,
+                on_audio_chunk=audio_chunks.append,
             )
 
         self.assertEqual(stub.request.fairness_key, "principal_test")
@@ -92,6 +96,10 @@ class TtsPoolClientTests(unittest.TestCase):
         self.assertEqual(result.metrics["queue_ms"], 1.5)
         self.assertEqual(result.metadata["engine"], "fake")
         self.assertTrue(result.wav_bytes().startswith(b"RIFF"))
+        self.assertEqual(started_events[0].response_id, "ttsresp_test")
+        self.assertEqual(started_events[0].sample_rate_hz, 16_000)
+        self.assertEqual(audio_chunks[0].sequence_number, 0)
+        self.assertEqual(audio_chunks[0].pcm, b"\x01\x00\x02\x00")
 
     def test_out_of_order_chunk_is_rejected(self) -> None:
         events = _successful_events()

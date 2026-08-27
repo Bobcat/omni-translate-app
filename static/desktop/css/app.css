@@ -576,6 +576,18 @@ body {
   border-color: var(--danger-border);
 }
 
+.bubble-speak-button.is-preparing {
+  cursor: progress;
+}
+
+.bubble-speak-button.is-preparing svg {
+  animation: omni-spin 0.8s linear infinite;
+}
+
+.bubble-speak-button.is-preparing svg circle {
+  opacity: 0.25;
+}
+
 .voice-actionbar {
   display: flex;
   align-items: center;

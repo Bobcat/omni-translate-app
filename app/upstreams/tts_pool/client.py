@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import io
 import threading
-from typing import Any
+from typing import Any, Callable
 import wave
 
 import grpc
@@ -24,6 +24,22 @@ _CHANNEL_LOCK = threading.Lock()
 
 class TtsPoolRpcError(RuntimeError):
     pass
+
+
+@dataclass(frozen=True)
+class TtsStreamStarted:
+    response_id: str
+    model: str
+    sample_rate_hz: int
+    channel_count: int
+    scheduler_queue_wait_ms: float
+
+
+@dataclass(frozen=True)
+class TtsAudioChunk:
+    sequence_number: int
+    first_sample: int
+    pcm: bytes
 
 
 @dataclass(frozen=True)
@@ -81,6 +97,8 @@ def synthesize_tts(
     *,
     fairness_key: str,
     timeout_s: float,
+    on_started: Callable[[TtsStreamStarted], None] | None = None,
+    on_audio_chunk: Callable[[TtsAudioChunk], None] | None = None,
 ) -> TtsSynthesisResult:
     stable_key = str(fairness_key or "").strip()
     if not stable_key:
@@ -108,6 +126,16 @@ def synthesize_tts(
                 if event.started.sample_rate_hz <= 0 or event.started.channel_count <= 0:
                     raise ValueError("tts_pool_invalid_audio_format")
                 started = event.started
+                if on_started is not None:
+                    on_started(
+                        TtsStreamStarted(
+                            response_id=started.response_id,
+                            model=started.model,
+                            sample_rate_hz=int(started.sample_rate_hz),
+                            channel_count=int(started.channel_count),
+                            scheduler_queue_wait_ms=float(started.scheduler_queue_wait_ms),
+                        )
+                    )
             elif kind == "audio_chunk":
                 if started is None:
                     raise ValueError("tts_pool_audio_before_started")
@@ -117,7 +145,16 @@ def synthesize_tts(
                 frame_bytes = int(started.channel_count) * 2
                 if len(chunk.pcm) % frame_bytes:
                     raise ValueError("tts_pool_invalid_pcm_chunk")
-                chunks.append(bytes(chunk.pcm))
+                pcm = bytes(chunk.pcm)
+                chunks.append(pcm)
+                if on_audio_chunk is not None:
+                    on_audio_chunk(
+                        TtsAudioChunk(
+                            sequence_number=int(chunk.sequence_number),
+                            first_sample=int(chunk.first_sample),
+                            pcm=pcm,
+                        )
+                    )
                 next_sequence += 1
                 next_sample += len(chunk.pcm) // frame_bytes
             elif kind == "completed":
@@ -130,6 +167,11 @@ def synthesize_tts(
         status = exc.code().name.lower()
         detail = str(exc.details() or code)
         raise TtsPoolRpcError(f"tts_pool_grpc_{status}: {code}: {detail}") from exc
+    except Exception:
+        cancel = getattr(call, "cancel", None)
+        if callable(cancel):
+            cancel()
+        raise
 
     if started is None or completed is None:
         raise ValueError("tts_pool_incomplete_event_stream")

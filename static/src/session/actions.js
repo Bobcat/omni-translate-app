@@ -31,6 +31,7 @@ export function speakNow() {
     return;
   }
   if (state.currentTurn.speakableTargetText && state.currentTurn.state !== TURN_STATES.OPEN_SPEAKING && state.socket?.speakNow()) {
+    audioQueue.preparePcmPlayback();
     state.speakNowPending = true;
     state.speakInflightFilter = {
       turnId: String(state.currentTurn.turnId || ''),

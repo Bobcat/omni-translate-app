@@ -10,7 +10,7 @@ import time
 import uuid
 import wave
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import httpx
 
@@ -21,6 +21,8 @@ from app.config import get_setting
 from app.config import get_str
 from app.config import rooted_path
 from app.upstreams.tts_pool.client import synthesize_tts
+from app.upstreams.tts_pool.client import TtsAudioChunk
+from app.upstreams.tts_pool.client import TtsStreamStarted
 from app.upstreams.http import get_upstream_http_client
 
 
@@ -248,6 +250,8 @@ class TTSBridge:
         reference_wav_path: str | None = None,
         reference_prompt_text: str | None = None,
         source_audio_duration_ms: int | None = None,
+        on_stream_started: Callable[[dict[str, Any]], None] | None = None,
+        on_audio_chunk: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
         call_started = time.perf_counter()
         safe_text = str(text or "").strip()
@@ -265,11 +269,41 @@ class TTSBridge:
             reference_prompt_text=reference_prompt_text,
             source_audio_duration_ms=source_audio_duration_ms,
         )
+
+        def handle_started(started: TtsStreamStarted) -> None:
+            if on_stream_started is None:
+                return
+            on_stream_started(
+                {
+                    "artifact_id": artifact_id,
+                    "response_id": started.response_id,
+                    "model": started.model,
+                    "sample_rate_hz": started.sample_rate_hz,
+                    "channel_count": started.channel_count,
+                    "encoding": "pcm_s16le",
+                    "scheduler_queue_wait_ms": started.scheduler_queue_wait_ms,
+                }
+            )
+
+        def handle_audio_chunk(chunk: TtsAudioChunk) -> None:
+            if on_audio_chunk is None:
+                return
+            on_audio_chunk(
+                {
+                    "artifact_id": artifact_id,
+                    "sequence_number": chunk.sequence_number,
+                    "first_sample": chunk.first_sample,
+                    "pcm": chunk.pcm,
+                }
+            )
+
         request_started = time.perf_counter()
         response = synthesize_tts(
             request_payload,
             fairness_key=fairness_key,
             timeout_s=_tts_pool_timeout_s(),
+            on_started=handle_started if on_stream_started is not None else None,
+            on_audio_chunk=handle_audio_chunk if on_audio_chunk is not None else None,
         )
         request_wall_ms = (time.perf_counter() - request_started) * 1000.0
         audio_bytes = response.wav_bytes()

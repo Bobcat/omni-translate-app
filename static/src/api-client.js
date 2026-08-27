@@ -334,12 +334,25 @@ export class SessionSocket {
     return true;
   }
 
-  replayTts({ laneId, text }) {
+  replayTts({ laneId, partId }) {
     if (!this.isOpen()) return false;
+    const id = String(partId || '').trim();
+    if (!id) return false;
     this.ws.send(JSON.stringify({
       type: 'replay_tts',
       lane_id: laneId,
-      text: String(text || ''),
+      part_id: id,
+    }));
+    return true;
+  }
+
+  stopTts({ laneId, turnId, artifactId }) {
+    if (!this.isOpen()) return false;
+    this.ws.send(JSON.stringify({
+      type: 'stop_tts',
+      lane_id: String(laneId || ''),
+      turn_id: String(turnId || ''),
+      artifact_id: String(artifactId || ''),
     }));
     return true;
   }
