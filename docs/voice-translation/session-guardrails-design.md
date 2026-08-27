@@ -54,16 +54,26 @@ data/asr_chunks/<session-id>/
 data/tts/<session-id>/
 ```
 
-ASR and TTS writes share one lock around usage calculation and file writing, so
-concurrent writes cannot both reserve the same remaining capacity. Replacing a
-file counts only the replacement size. A write that would exceed the cap is
-rejected before bytes are written.
+The first artifact write after a process start scans both directories. Later
+writes update a running byte total. Each session has its own lock around the
+total and file write, so concurrent writes cannot both reserve the same
+remaining capacity and unrelated sessions do not block each other. Replacing a
+file counts only the replacement size. Closing the session releases its
+process-local accounting state.
+
+A write that would exceed the cap is rejected before bytes are written. This
+hard boundary covers writes owned by the app process. External changes to an
+active session directory are unsupported.
 
 The TTS pool can finish one final synthesis before the app knows the complete
 WAV size. If that WAV does not fit, the app does not store it and ends the
 session with reason `session_storage_limit`. Avoiding that last synthesis would
 require an audio-size estimate or a reservation protocol with the TTS pool;
 that is outside this change.
+
+Speculative TTS uses the same budget. It can therefore reach the cap and end a
+session even when the generated speech was never requested for playback. The
+storage boundary takes precedence over preserving an active session.
 
 ## Browser behavior
 

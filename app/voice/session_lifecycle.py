@@ -11,6 +11,7 @@ from fastapi import status
 from app.config import get_int
 from app.protocol import event
 from app.sessions import SESSIONS
+from app.voice.session_storage import release_session_artifact_tracking
 from app.voice.tasks import cancel_task
 
 if TYPE_CHECKING:
@@ -84,6 +85,8 @@ class ConversationLifecycle:
             )
             while not self.closed:
                 kind, incoming = await self.wait_for_input()
+                if self.closed:
+                    break
                 if kind == "session_duration_limit":
                     await self.end_for_duration_limit()
                     break
@@ -198,6 +201,8 @@ class ConversationLifecycle:
             )
         with contextlib.suppress(Exception):
             await self.runtime.websocket.close(code=status.WS_1000_NORMAL_CLOSURE)
+        if self.asr_ready is not None:
+            self.asr_ready.set()
 
     async def pause_listening(self) -> None:
         runtime = self.runtime
@@ -235,7 +240,10 @@ class ConversationLifecycle:
             lane.translation_task = None
             lane.tts_task = None
         runtime.asr_bridge.close()
-        SESSIONS.close(runtime.session_id, reason=self.close_reason)
+        try:
+            SESSIONS.close(runtime.session_id, reason=self.close_reason)
+        finally:
+            release_session_artifact_tracking(runtime.session_id)
 
     async def send(self, payload: dict[str, Any]) -> None:
         async with self.send_lock:
@@ -251,5 +259,15 @@ def _format_duration(seconds: int | float) -> str:
 
 
 def _format_bytes(byte_count: int) -> str:
-    mib = int(byte_count) / (1024 * 1024)
-    return f"{mib:g} MiB"
+    size = max(0, int(byte_count))
+    for unit, divisor in (
+        ("TiB", 1024**4),
+        ("GiB", 1024**3),
+        ("MiB", 1024**2),
+        ("KiB", 1024),
+    ):
+        if size >= divisor:
+            value = size / divisor
+            formatted = f"{value:.1f}".rstrip("0").rstrip(".")
+            return f"{formatted} {unit}"
+    return f"{size} byte" if size == 1 else f"{size} bytes"

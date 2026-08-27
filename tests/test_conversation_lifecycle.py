@@ -9,6 +9,7 @@ from unittest.mock import patch
 from fastapi import status
 
 from app.voice.session_lifecycle import ConversationLifecycle
+from app.voice.session_lifecycle import _format_bytes
 
 
 class _WebSocket:
@@ -139,6 +140,29 @@ class ConversationLifecycleTests(unittest.IsolatedAsyncioTestCase):
             runtime.session_id,
             reason="session_duration_limit",
         )
+
+    async def test_background_guardrail_wakes_the_waiting_run_loop(self) -> None:
+        runtime = _runtime(websocket=_BlockingWebSocket())
+        lifecycle = ConversationLifecycle(runtime)
+
+        with patch("app.voice.session_lifecycle.SESSIONS.close") as close_session:
+            run_task = asyncio.create_task(lifecycle.run())
+            while not runtime.asr_bridge.started:
+                await asyncio.sleep(0)
+            await lifecycle.end_for_storage_limit(limit_bytes=256 * 1024 * 1024)
+            await asyncio.wait_for(run_task, timeout=0.1)
+
+        runtime._process_asr.assert_not_awaited()
+        close_session.assert_called_once_with(
+            runtime.session_id,
+            reason="session_storage_limit",
+        )
+
+    def test_storage_limit_message_uses_readable_units(self) -> None:
+        self.assertEqual(_format_bytes(1), "1 byte")
+        self.assertEqual(_format_bytes(1536), "1.5 KiB")
+        self.assertEqual(_format_bytes(256 * 1024**2), "256 MiB")
+        self.assertEqual(_format_bytes(1024**4), "1 TiB")
 
     async def test_vad_failure_reports_error_and_still_closes_resources(self) -> None:
         runtime = _runtime(vad_error=RuntimeError("vad unavailable"))
