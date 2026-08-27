@@ -125,6 +125,8 @@
     "session_ttl_s": 900,
     "session_export_ttl_s": 900,
     "session_cleanup_interval_s": 60,
+    "max_session_duration_s": 900,
+    "max_session_artifact_bytes": 268435456,
     "tts_delivery": {
       "speculative_bubble_limit": 8
     },

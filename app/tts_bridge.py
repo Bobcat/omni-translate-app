@@ -25,6 +25,7 @@ from app.upstreams.tts_pool.client import TtsAudioChunk
 from app.upstreams.tts_pool.client import TtsSynthesisCancellation
 from app.upstreams.tts_pool.client import TtsStreamStarted
 from app.upstreams.http import get_upstream_http_client
+from app.voice.session_storage import write_session_artifact
 
 
 TTS_ROOT = (REPO_ROOT / "data" / "tts").resolve()
@@ -312,7 +313,7 @@ class TTSBridge:
         audio_bytes = response.wav_bytes()
 
         write_started = time.perf_counter()
-        path.write_bytes(audio_bytes)
+        write_session_artifact(session_id, path, audio_bytes)
         artifact_write_ms = (time.perf_counter() - write_started) * 1000.0
         total_wall_ms = (time.perf_counter() - call_started) * 1000.0
 
