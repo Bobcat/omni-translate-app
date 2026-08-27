@@ -1,8 +1,8 @@
 # Responsive TTS delivery for voice translation
 
-Status: streaming delivery is merged. Speculative generation and automatic
-speaking are implemented on `feature/speculative-auto-voice-tts` and await
-review.
+Status: streaming delivery is merged. Speculative generation, automatic
+speaking, and the first review corrections are implemented on
+`feature/speculative-auto-voice-tts` and await merge.
 
 ## Decision summary
 
@@ -79,6 +79,11 @@ The backend uses these WebSocket events:
 | `tts_stream_failed` | Ends an incomplete or cancelled browser stream. |
 | `tts_artifact_ready` | Supplies a ready WAV URL for first playback or Replay, identified by `playback_kind`. |
 
+`tts_stream_started` and `tts_artifact_ready` also carry a
+`playback_trigger`: `automatic` for automatic speaking and `explicit` for a
+Speak or Replay action. The clients use this field only for the microphone
+policy after playback.
+
 The browser decodes each PCM chunk and schedules it through the Web Audio API.
 It does not wait for `tts_stream_complete` before starting playback. Chunks for
 multiple bubbles remain ordered in one shared audio queue.
@@ -147,7 +152,10 @@ must not mark a bubble as speaking or pause the active ASR/translation turn.
 
 One voice session runs at most one generation task at a time. Its queue keeps
 bubble order. Completing one generation may overlap with browser playback of an
-earlier bubble.
+earlier bubble. PCM forwarding is serialized per preparation so a manual
+subscription cannot interleave buffered chunks with newly arriving chunks. A
+send failure settles that preparation and its completion future without
+stopping later queue entries.
 
 ## Manual mode
 
@@ -162,6 +170,11 @@ For every eligible definitive bubble:
 
 A valid `speak_part`, `speak_now`, or `replay_tts` request resets the budget to
 the configured limit. Stop does not reset it.
+
+For Replay, valid intent means that the requested part belongs to the active
+lane, was spoken, and TTS is enabled. Artifact availability is checked after
+that intent reset. An unavailable cached artifact therefore still resets the
+budget, then returns the part to pending so the user can request fresh speech.
 
 A playback request has three paths:
 
@@ -213,7 +226,11 @@ is also a user gesture. If playback is still blocked, the existing resume-audio
 control remains the recovery path.
 
 The current capture-muting policy remains in force during playback so output
-audio is not fed back into ASR.
+audio is not fed back into ASR. Speech during that interval is intentionally not
+captured. After automatic playback, the existing microphone session resumes.
+After an explicit Speak action, the microphone switches off as before. A URL
+playback error or missing URL settles the item through the same failure path as
+an invalid PCM stream, which also releases capture muting.
 
 ## Implementation boundaries
 
@@ -229,7 +246,9 @@ automatic-playback policy.
 The shared browser audio implementation remains in
 [`static/src/shared/audio-playback.js`](../../static/src/shared/audio-playback.js)
 because mobile and desktop voice workflows both use it. Each workflow owns its
-session messages, visible setting, and bubble rendering.
+session messages, visible setting, and bubble rendering. The shared
+post-playback microphone decision lives in
+[`static/src/shared/voice-playback.js`](../../static/src/shared/voice-playback.js).
 
 ## Staleness and cancellation
 
@@ -318,6 +337,8 @@ priority before increasing the rollout.
 - [x] Invalidate preparations when their content or synthesis key changes.
 - [x] Add bounded cleanup and speculation outcome metrics.
 - [x] Test the initial budget, exhaustion, reset, join, reuse, invalidation, and cancellation paths.
+- [x] Serialize buffered and live PCM forwarding when a click joins generation.
+- [x] Keep the generation worker alive when one browser send fails.
 
 ### Phase 3: automatic speaking
 
@@ -330,6 +351,9 @@ priority before increasing the rollout.
 - [x] Avoid automatic playback of bubbles finalized before the setting was enabled.
 - [x] Cancel queued automatic work and stop new work when the setting is disabled.
 - [x] Test autoplay blocking, runtime setting changes, ordering, stop, and replay.
+- [x] Resume an existing microphone session after automatic playback while
+  retaining turn-ending behavior for explicit Speak.
+- [x] Settle missing and failed ready-artifact URLs.
 
 ## Acceptance checks
 
@@ -346,6 +370,7 @@ Automatic mode is complete when:
 - no Speak click is required;
 - toggling the mode does not read old bubbles aloud;
 - disabling the mode prevents new automatic playback;
+- automatic playback temporarily mutes capture and resumes it afterwards;
 - Replay uses the completed artifact without new synthesis.
 
 ## Open decisions
