@@ -1,8 +1,8 @@
 # Responsive TTS delivery for voice translation
 
-Status: streaming delivery is implemented on `feature/responsive-voice-tts`.
-Speculative generation and automatic speaking are approved designs and are not
-implemented yet.
+Status: streaming delivery is merged. Speculative generation, automatic
+speaking, and the first review corrections are implemented on
+`feature/speculative-auto-voice-tts` and await merge.
 
 ## Decision summary
 
@@ -77,7 +77,12 @@ The backend uses these WebSocket events:
 | `tts_stream_chunk` | Carries one ordered PCM16LE chunk as base64. |
 | `tts_stream_complete` | Supplies final artifact metadata and its replay URL. |
 | `tts_stream_failed` | Ends an incomplete or cancelled browser stream. |
-| `tts_replay_ready` | Supplies the cached WAV URL for a specific turn part. |
+| `tts_artifact_ready` | Supplies a ready WAV URL for first playback or Replay, identified by `playback_kind`. |
+
+`tts_stream_started` and `tts_artifact_ready` also carry a
+`playback_trigger`: `automatic` for automatic speaking and `explicit` for a
+Speak or Replay action. The clients use this field only for the microphone
+policy after playback.
 
 The browser decodes each PCM chunk and schedules it through the Web Audio API.
 It does not wait for `tts_stream_complete` before starting playback. Chunks for
@@ -103,7 +108,7 @@ The server-owned speculation limit belongs to live voice delivery:
     }
   },
   "tts": {
-    "auto_speak": false
+    "auto_speak": true
   }
 }
 ```
@@ -111,9 +116,9 @@ The server-owned speculation limit belongs to live voice delivery:
 `live.tts_delivery.speculative_bubble_limit` is a non-negative integer. `0`
 disables speculative generation. Clients cannot raise this server-owned limit.
 
-`tts.auto_speak` is the server default for the user-facing session setting. The
+`tts.auto_speak` is the server default for the user-facing setting. The
 client may change it for the active voice session through the existing TTS
-settings boundary. The UI label is **Vertalingen automatisch uitspreken**.
+settings boundary. The UI label is **Automatically speak translations**.
 
 Automatic speaking requires `tts.enabled`. Disabling TTS disables both
 speculative generation and automatic speaking.
@@ -147,7 +152,10 @@ must not mark a bubble as speaking or pause the active ASR/translation turn.
 
 One voice session runs at most one generation task at a time. Its queue keeps
 bubble order. Completing one generation may overlap with browser playback of an
-earlier bubble.
+earlier bubble. PCM forwarding is serialized per preparation so a manual
+subscription cannot interleave buffered chunks with newly arriving chunks. A
+send failure settles that preparation and its completion future without
+stopping later queue entries.
 
 ## Manual mode
 
@@ -162,6 +170,11 @@ For every eligible definitive bubble:
 
 A valid `speak_part`, `speak_now`, or `replay_tts` request resets the budget to
 the configured limit. Stop does not reset it.
+
+For Replay, valid intent means that the requested part belongs to the active
+lane, was spoken, and TTS is enabled. Artifact availability is checked after
+that intent reset. An unavailable cached artifact therefore still resets the
+budget, then returns the part to pending so the user can request fresh speech.
 
 A playback request has three paths:
 
@@ -213,7 +226,11 @@ is also a user gesture. If playback is still blocked, the existing resume-audio
 control remains the recovery path.
 
 The current capture-muting policy remains in force during playback so output
-audio is not fed back into ASR.
+audio is not fed back into ASR. Speech during that interval is intentionally not
+captured. After automatic playback, the existing microphone session resumes.
+After an explicit Speak action, the microphone switches off as before. A URL
+playback error or missing URL settles the item through the same failure path as
+an invalid PCM stream, which also releases capture muting.
 
 ## Implementation boundaries
 
@@ -229,7 +246,9 @@ automatic-playback policy.
 The shared browser audio implementation remains in
 [`static/src/shared/audio-playback.js`](../../static/src/shared/audio-playback.js)
 because mobile and desktop voice workflows both use it. Each workflow owns its
-session messages, visible setting, and bubble rendering.
+session messages, visible setting, and bubble rendering. The shared
+post-playback microphone decision lives in
+[`static/src/shared/voice-playback.js`](../../static/src/shared/voice-playback.js).
 
 ## Staleness and cancellation
 
@@ -307,29 +326,34 @@ priority before increasing the rollout.
 
 ### Phase 2: speculative generation in manual mode
 
-- [ ] Add `live.tts_delivery.speculative_bubble_limit` with default `8`.
-- [ ] Separate preparation state from playback state.
-- [ ] Start preparation for definitive target bubbles while the budget is positive.
-- [ ] Reset the budget after valid Speak or Replay intent.
-- [ ] Let a click subscribe to buffered and future chunks of an active generation.
-- [ ] Reuse a ready artifact without a new TTS-pool request.
-- [ ] Replace replay-only URL delivery with generic `tts_artifact_ready` delivery.
-- [ ] Prioritize explicit per-session requests over unrelated speculative work.
-- [ ] Invalidate preparations when their content or synthesis key changes.
-- [ ] Add bounded cleanup and speculation outcome metrics.
-- [ ] Test the initial budget, exhaustion, reset, join, reuse, invalidation, and cancellation paths.
+- [x] Add `live.tts_delivery.speculative_bubble_limit` with default `8`.
+- [x] Separate preparation state from playback state.
+- [x] Start preparation for definitive target bubbles while the budget is positive.
+- [x] Reset the budget after valid Speak or Replay intent.
+- [x] Let a click subscribe to buffered and future chunks of an active generation.
+- [x] Reuse a ready artifact without a new TTS-pool request.
+- [x] Replace replay-only URL delivery with generic `tts_artifact_ready` delivery.
+- [x] Prioritize explicit per-session requests over unrelated speculative work.
+- [x] Invalidate preparations when their content or synthesis key changes.
+- [x] Add bounded cleanup and speculation outcome metrics.
+- [x] Test the initial budget, exhaustion, reset, join, reuse, invalidation, and cancellation paths.
+- [x] Serialize buffered and live PCM forwarding when a click joins generation.
+- [x] Keep the generation worker alive when one browser send fails.
 
 ### Phase 3: automatic speaking
 
-- [ ] Add validated `tts.auto_speak` session state with a `false` server default.
-- [ ] Add **Vertalingen automatisch uitspreken** to both voice interfaces.
-- [ ] Unlock the AudioContext from the setting or session-start gesture.
-- [ ] Enqueue each newly definitive target bubble for subscribed TTS generation.
-- [ ] Ignore the speculation budget while automatic speaking is enabled.
-- [ ] Preserve generation and playback order across multiple bubbles.
-- [ ] Avoid automatic playback of bubbles finalized before the setting was enabled.
-- [ ] Cancel queued automatic work and stop new work when the setting is disabled.
-- [ ] Test autoplay blocking, runtime setting changes, ordering, stop, and replay.
+- [x] Add validated `tts.auto_speak` state with a `true` server default.
+- [x] Add **Automatically speak translations** to both voice interfaces.
+- [x] Unlock the AudioContext from the setting or session-start gesture.
+- [x] Enqueue each newly definitive target bubble for subscribed TTS generation.
+- [x] Ignore the speculation budget while automatic speaking is enabled.
+- [x] Preserve generation and playback order across multiple bubbles.
+- [x] Avoid automatic playback of bubbles finalized before the setting was enabled.
+- [x] Cancel queued automatic work and stop new work when the setting is disabled.
+- [x] Test autoplay blocking, runtime setting changes, ordering, stop, and replay.
+- [x] Resume an existing microphone session after automatic playback while
+  retaining turn-ending behavior for explicit Speak.
+- [x] Settle missing and failed ready-artifact URLs.
 
 ## Acceptance checks
 
@@ -346,10 +370,13 @@ Automatic mode is complete when:
 - no Speak click is required;
 - toggling the mode does not read old bubbles aloud;
 - disabling the mode prevents new automatic playback;
+- automatic playback temporarily mutes capture and resumes it afterwards;
 - Replay uses the completed artifact without new synthesis.
 
 ## Open decisions
 
-- Whether the automatic-speaking preference persists across browser reloads or
-  remains session-scoped.
 - What measured explicit-request latency warrants TTS-pool priority support.
+
+The browser stores the automatic-speaking preference in `localStorage`. Mobile
+and desktop use the same preference. A browser without a stored choice starts
+from the server default in `config/settings.json`.

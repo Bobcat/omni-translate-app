@@ -11,6 +11,7 @@ import { audioQueue } from './session/audio-queue.js';
 import {
   applyTtsConfig,
   mergeStoredTtsConfigIntoState,
+  handleTtsAutoSpeakChange,
   handleTtsBackendChange,
   handleTtsSettingChange,
   handleTtsSettingsClick,
@@ -198,6 +199,7 @@ async function init() {
   els.audioSettingsReset.addEventListener('click', resetAudioSettings);
   els.tuningSettingsGroups.addEventListener('change', handleTuningSettingChange);
   els.ttsBackendSelect.addEventListener('change', handleTtsBackendChange);
+  els.ttsAutoSpeak?.addEventListener('change', handleTtsAutoSpeakChange);
   els.ttsSettingsGroups.addEventListener('change', handleTtsSettingChange);
   els.ttsSettingsGroups.addEventListener('click', handleTtsSettingsClick);
   els.targetText.addEventListener('click', handleTargetTextClick);

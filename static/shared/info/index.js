@@ -307,10 +307,11 @@ export const INFO_CATEGORIES = [
         title: 'Current models',
         bullets: [
           'Speech recognition: WhisperX with the Whisper large-v3 model.',
-          'Fast text and live translation: a Gemma 4 E4B instruction model.',
+          'Fast text and live translation: a Gemma 4 E4B instruction model served through vLLM.',
           'Document, image and best-quality translation: a Gemma 4 26B-A4B instruction model served through vLLM.',
           'Text recognition: PaddleOCR with PP-OCRv5.',
           'Page-layout recognition: PP-DocLayout_plus-L.',
+          'Image background reconstruction: LaMa, used selectively to rebuild non-uniform backgrounds after source text is removed.',
           'Speech generation: Kokoro and VoxCPM2, including a NanoVLLM-based VoxCPM2 backend.',
         ],
       },
@@ -324,7 +325,7 @@ export const INFO_CATEGORIES = [
       {
         title: 'Current infrastructure',
         paragraphs: [
-          'The current system runs on self-hosted consumer-grade hardware. The pool services keep models ready, divide limited GPU capacity between jobs and prevent one type of work from blocking everything else.',
+          'The current system runs on self-hosted consumer-grade hardware, paired with a workstation-class GPU for demanding model workloads. The pool services keep models ready, divide limited GPU capacity between jobs and prevent one type of work from blocking everything else.',
           'This is a practical constraint, not a design ideal. I would prefer to run Omni Translate on a dedicated NVIDIA datacenter accelerator such as an H200, hosted in the EEA. Keeping that class of hardware available continuously costs thousands of euros per month, which is not viable for a personal project at this stage.',
         ],
       },

@@ -41,6 +41,18 @@ export class AudioQueue {
       this.render();
     });
     this.audio.addEventListener('pause', () => this.render());
+    this.audio.addEventListener('error', () => {
+      const failed = this.current;
+      if (failed?.kind !== 'url') return;
+      this.current = null;
+      this.blocked = false;
+      this.audio.pause();
+      this.audio.removeAttribute('src');
+      this.audio.load();
+      this.onItemFailed?.(failed, 'url_playback_failed');
+      if (this.queue.length) this.playNext();
+      else this.render();
+    });
     this.resumeButton.addEventListener('click', () => {
       this.playOrResume();
     });
@@ -48,18 +60,23 @@ export class AudioQueue {
   }
 
   enqueue(item) {
-    if (!item?.url) return;
-    this.queue.push({
+    const queued = {
       ...item,
       kind: 'url',
-      url: String(item.url),
-      durationMs: Number(item.duration_ms || 0),
-    });
+      url: String(item?.url || ''),
+      durationMs: Number(item?.duration_ms || 0),
+    };
+    if (!queued.url) {
+      this.onItemFailed?.(queued, 'missing_audio_url');
+      return false;
+    }
+    this.queue.push(queued);
     if (!this.current) {
       this.playNext();
     } else {
       this.render();
     }
+    return true;
   }
 
   preparePcmPlayback() {

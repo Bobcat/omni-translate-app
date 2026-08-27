@@ -85,6 +85,7 @@ export function loadTtsGlobalConfig() {
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== 'object') return null;
     const out = {};
+    if (typeof parsed.auto_speak === 'boolean') out.auto_speak = parsed.auto_speak;
     if (typeof parsed.backend === 'string' && parsed.backend) out.backend = parsed.backend;
     if (parsed.kokoro_voices && typeof parsed.kokoro_voices === 'object') {
       const voices = {};
@@ -118,6 +119,7 @@ export function loadTtsGlobalConfig() {
 export function persistTtsGlobalConfig(ttsSettings) {
   try {
     const payload = {
+      auto_speak: Boolean(ttsSettings.auto_speak),
       backend: String(ttsSettings.backend || ''),
       kokoro_voices: { ...(ttsSettings.kokoro?.voices || {}) },
     };
@@ -134,6 +136,23 @@ export function persistTtsGlobalConfig(ttsSettings) {
       }
       if (Object.keys(cleaned).length) payload.ultimate_cloning = cleaned;
     }
+    localStorage.setItem(TTS_GLOBAL_STORAGE_KEY, JSON.stringify(payload));
+  } catch (_) {
+    // ignore quota / disabled storage
+  }
+}
+
+export function loadAutoSpeakPreference() {
+  const config = loadTtsGlobalConfig();
+  return typeof config?.auto_speak === 'boolean' ? config.auto_speak : null;
+}
+
+export function persistAutoSpeakPreference(enabled) {
+  try {
+    const payload = {
+      ...(loadTtsGlobalConfig() || {}),
+      auto_speak: Boolean(enabled),
+    };
     localStorage.setItem(TTS_GLOBAL_STORAGE_KEY, JSON.stringify(payload));
   } catch (_) {
     // ignore quota / disabled storage

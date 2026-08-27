@@ -65,6 +65,7 @@ class ConversationLifecycle:
                     side_a_language=runtime.side_a_language,
                     side_b_language=runtime.side_b_language,
                     live_settings=deepcopy(runtime.live_settings),
+                    tts_settings=deepcopy(runtime.tts_settings),
                     lanes={
                         lane_id: runtime._lane_payload(lane)
                         for lane_id, lane in runtime.lanes.items()

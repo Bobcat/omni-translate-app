@@ -307,6 +307,7 @@ class TTSBridgeTests(unittest.TestCase):
         })
 
         self.assertEqual(errors, {})
+        self.assertTrue(settings["auto_speak"])
         self.assertEqual(settings["backend"], "voxcpm2")
         self.assertEqual(
             settings["voxcpm2"]["languages"]["nl"],
@@ -615,6 +616,7 @@ class TTSBridgeTests(unittest.TestCase):
         self.assertFalse(reference_sources[0]["disabled"])
         self.assertFalse(reference_sources[1]["disabled"])
         ultimate = payload["voxcpm2"]["ultimate_cloning"]
+        self.assertTrue(payload["auto_speak"])
         self.assertTrue(ultimate["stable_generated"]["enabled"])
         self.assertTrue(ultimate["stable_generated"]["also_use_as_reference"])
         self.assertFalse(ultimate["last_speech"]["enabled"])

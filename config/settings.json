@@ -125,6 +125,9 @@
     "session_ttl_s": 900,
     "session_export_ttl_s": 900,
     "session_cleanup_interval_s": 60,
+    "tts_delivery": {
+      "speculative_bubble_limit": 8
+    },
     "audio": {
       "sample_rate_hz": 16000,
       "channels": 1
@@ -202,6 +205,7 @@
   },
   "tts": {
     "enabled": false,
+    "auto_speak": true,
     "backend": "kokoro",
     "voxcpm2": {
       "ultimate_cloning": {

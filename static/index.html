@@ -461,6 +461,14 @@
 
             <div class="settings-page" id="settingsAudioPage" hidden>
               <section class="setting-group voice-output-main" aria-label="TTS options">
+                <label class="toggle-row" for="ttsAutoSpeak">
+                  <span>Automatically speak translations</span>
+                  <span class="switch">
+                    <input id="ttsAutoSpeak" type="checkbox" role="switch">
+                    <span class="switch-track" aria-hidden="true"></span>
+                    <span class="switch-thumb" aria-hidden="true"></span>
+                  </span>
+                </label>
                 <label class="select-row" for="ttsBackendSelect">
                   <span>Engine</span>
                   <select id="ttsBackendSelect"></select>
@@ -549,6 +557,6 @@
       </div>
 
     </main>
-    <script type="module" src="/src/app.js?v=20260827-voice-tts-replay-stop-3"></script>
+    <script type="module" src="/src/app.js?v=20260827-voice-tts-review-1"></script>
   </body>
 </html>

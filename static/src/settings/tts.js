@@ -108,6 +108,9 @@ export function mergeStoredTtsConfigIntoState() {
   }
   const ttsGlobal = loadTtsGlobalConfig();
   if (ttsGlobal) {
+    if (typeof ttsGlobal.auto_speak === 'boolean') {
+      state.ttsSettings.auto_speak = ttsGlobal.auto_speak;
+    }
     if (ttsGlobal.backend) state.ttsSettings.backend = ttsGlobal.backend;
     if (ttsGlobal.kokoro_voices) {
       state.ttsSettings.kokoro = state.ttsSettings.kokoro || { voices: {} };
@@ -133,6 +136,7 @@ export function mergeStoredTtsConfigIntoState() {
 export function sessionTtsSettingsPayload() {
   return {
     enabled: Boolean(state.ttsSettings.enabled),
+    auto_speak: Boolean(state.ttsSettings.auto_speak),
     backend: String(state.ttsSettings.backend || ''),
     kokoro: { voices: { ...(state.ttsSettings.kokoro?.voices || {}) } },
     voxcpm2: {
@@ -203,6 +207,15 @@ export function handleTtsBackendChange() {
   persistTtsGlobalConfig(state.ttsSettings);
   renderTtsSettings({ preserveScroll: true });
   submitTtsSettings();
+}
+
+export function handleTtsAutoSpeakChange() {
+  if (!els.ttsAutoSpeak || els.ttsAutoSpeak.disabled) return;
+  state.ttsSettings.auto_speak = Boolean(els.ttsAutoSpeak.checked);
+  if (state.ttsSettings.auto_speak) _audioQueue?.preparePcmPlayback();
+  persistTtsGlobalConfig(state.ttsSettings);
+  submitTtsSettings();
+  renderTtsSettings({ preserveScroll: true });
 }
 
 export function handleTtsSettingChange(event) {
@@ -382,6 +395,10 @@ function expandSelectedBackendGroup(previousBackend) {
 
 export function renderTtsSettings({ preserveScroll = false } = {}) {
   els.ttsOutputState.textContent = ttsSummary();
+  if (els.ttsAutoSpeak) {
+    els.ttsAutoSpeak.checked = Boolean(state.ttsSettings.auto_speak);
+    els.ttsAutoSpeak.disabled = state.ttsUpdateBusy || !state.ttsSettings.enabled;
+  }
   if (!els.ttsBackendSelect) return;
   renderTtsBackendSelect();
   if (!els.ttsSettingsGroups || els.settingsSheet.hidden || state.settingsPage !== 'audio') return;

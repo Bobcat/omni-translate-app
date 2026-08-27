@@ -288,9 +288,17 @@ class ConversationRuntime:
                 )
             )
             return
+        previous = self.tts_settings
         self.tts_settings = settings
+        await self.tts_delivery.settings_changed(previous, settings)
         SESSIONS.update(self.session_id, tts_settings=deepcopy(settings))
-        await self.lifecycle.send(event("tts_settings", self.session_id))
+        await self.lifecycle.send(
+            event(
+                "tts_settings",
+                self.session_id,
+                tts_settings=deepcopy(settings),
+            )
+        )
 
     async def _handle_audio(self, raw_bytes: bytes) -> None:
         if not self.lifecycle.listening:
@@ -639,6 +647,8 @@ class ConversationRuntime:
                 )
             )
             return
+        if reason in {"speak_now", "speak_part"}:
+            self.tts_delivery.reset_speculation_budget(reason=reason)
         selection = set(speaking_part_ids)
         self._close_asr_scope_for_turn(lane)
         self._accept_visible_previews_for_parts(lane, part_ids=selection)
@@ -652,6 +662,7 @@ class ConversationRuntime:
                 lane.lane_id,
                 turn.turn_id,
                 list(speaking_part_ids),
+                generation_reason="automatic" if reason == "auto_speak" else "demand",
             )
         )
 
@@ -994,6 +1005,16 @@ class ConversationRuntime:
         self._reset_lane_text_scope(lane)
         self._refresh_turn_state()
         await self._send_turn_update(reason=f"bubble_close:{reason}")
+        if not _part_target_text(part):
+            return
+        if self.tts_delivery.auto_speak_enabled:
+            await self._dispatch_speak_sequence([part.part_id], reason="auto_speak")
+            return
+        self.tts_delivery.prepare_definitive_part(
+            lane_id=lane.lane_id,
+            turn_id=turn.turn_id,
+            part_id=part.part_id,
+        )
 
     def _refresh_turn_state(self) -> None:
         turn = self.current_turn
