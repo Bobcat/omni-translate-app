@@ -307,7 +307,7 @@ export const INFO_CATEGORIES = [
         title: 'Current models',
         bullets: [
           'Speech recognition: WhisperX with the Whisper large-v3 model.',
-          'Fast text and live translation: a Gemma 4 E4B instruction model.',
+          'Fast text and live translation: a Gemma 4 E4B instruction model served through vLLM.',
           'Document, image and best-quality translation: a Gemma 4 26B-A4B instruction model served through vLLM.',
           'Text recognition: PaddleOCR with PP-OCRv5.',
           'Page-layout recognition: PP-DocLayout_plus-L.',

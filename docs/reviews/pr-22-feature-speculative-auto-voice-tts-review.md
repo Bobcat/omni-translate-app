@@ -111,6 +111,7 @@ concrete failure sequence over style comments.
 
 ### Help and information copy
 
+- Confirm both Gemma instruction models are identified as vLLM-served.
 - Confirm LaMa is described as a selectively used image-background model, not
   as a mandatory step for every image.
 - Confirm the hardware wording distinguishes a workstation GPU from a
