@@ -1,14 +1,43 @@
 # Review prompt: voice session duration and storage guardrails
 
-Review PR #23, `feature/voice-session-guardrails` against `main`. Review only;
-do not modify the branch.
+PR #23 is merged as `fc58534`. Perform a focused re-review of the corrections
+in `c351c1d`. Review only; do not modify the branch.
+
+The re-review is requested because the original review contained one MEDIUM
+finding: every artifact write rescanned the full session under a process-wide
+lock. Confirm that the replacement removes that cost without weakening the hard
+storage boundary.
 
 ## Required context
 
 Read these documents before reviewing the code:
 
+- [`docs/reviews/pr-23-feature-voice-session-guardrails-findings.md`](pr-23-feature-voice-session-guardrails-findings.md), including **Resolution**
 - [`docs/voice-translation/session-guardrails-design.md`](../voice-translation/session-guardrails-design.md)
 - [`docs/voice-translation/tts-delivery-design.md`](../voice-translation/tts-delivery-design.md), especially **Storage and cleanup**
+
+## Focused re-review scope
+
+Inspect `git diff aa87023..c351c1d`. Verify these points:
+
+- The first app-owned write scans existing ASR and TTS files once. Later writes
+  update one running total without rescanning.
+- ASR and TTS writes for one session share a lock and total. Different sessions
+  do not share their write lock.
+- Exact-limit, rejected, replacement, failed, and concurrent writes leave the
+  counter equal to the files on disk.
+- Closing a session releases its accounting entry without allowing late work to
+  bypass the cap or creating an unbounded process-memory registry.
+- Missing files during the initial scan do not fail the session. Other
+  filesystem errors are not silently ignored.
+- The background guardrail wake-up cannot cancel the `ended` notification or
+  leave the run loop waiting for the duration deadline.
+- Strict session-id validation and scaled byte formatting cover the original
+  LOW findings without adding a compatibility path.
+
+Use unchanged PR paths only as context for these fixes. Record the re-review
+under a new **Re-review** section in the findings document and give an explicit
+merge-quality verdict, even though the PR is already merged.
 
 ## Change under review
 
@@ -114,7 +143,8 @@ git diff --check main...HEAD
 ```
 
 The post-fix author run passed 269 Python tests and 91 JavaScript tests. Inspect
-the full diff from `main`; do not review only the last commit.
+the focused fix diff as well as any surrounding lifecycle code needed to assess
+it.
 
 ## Review response
 

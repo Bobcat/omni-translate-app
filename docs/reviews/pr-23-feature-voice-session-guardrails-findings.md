@@ -1,7 +1,8 @@
 # Review findings: voice session runtime and storage guardrails
 
-Review of PR #23, `feature/voice-session-guardrails`, at `d5719ad`, against
-`main` at `682114f`. Answers the prompt in
+Review of PR #23, `feature/voice-session-guardrails`. First reviewed at
+`d5719ad` against `main` at `682114f`; re-reviewed after the fixes at `e4627ac`.
+Answers the prompt in
 [`pr-23-feature-voice-session-guardrails-review.md`](pr-23-feature-voice-session-guardrails-review.md).
 
 All required checks pass, matching the author's run:
@@ -42,12 +43,149 @@ session.
 
 Finding 5 remains accepted. The session ends immediately and both clients clear
 their audio queues on `ended`; restoring temporary bubble state would not be
-observable. No further review round was requested.
+observable.
+
+A focused re-review was requested after merge because Finding 1 was MEDIUM. It
+must verify the incremental per-session accounting in `c351c1d`, the hard-cap
+concurrency guarantees, accounting-state release, and the background run-loop
+wake-up. The result belongs in a new **Re-review** section in this document.
 
 The post-fix author run passed 269 Python tests and 91 JavaScript tests. It adds
 coverage for incremental scanning, concurrent ASR/TTS writes, strict session-id
 validation, readable limit units, and the background-close wake-up. The original
 exact-limit and rejected-partial-file test remains in place.
+
+## Re-review at `e4627ac`
+
+Independent re-review of the fixes in `c351c1d`. PR #23 was merged as `fc58534`
+before this round. All required checks confirmed:
+
+| Check | Result |
+| --- | --- |
+| `node --input-type=module --check < static/src/app.js` | pass |
+| `python -m py_compile app/main.py` | pass |
+| `python -m unittest discover -s tests` | 269 tests, pass |
+| `node --test tests/js/` | 91 tests, pass |
+| `git diff --check origin/main...HEAD` | clean |
+
+**All five findings and the run-loop risk are correctly resolved.** One latent
+residual is recorded as finding 6 below; it is LOW and unreachable with the
+current callers.
+
+Three of the fixes are better than what the review proposed: strict id validation
+instead of a fourth sanitizer, an incremental counter instead of only a
+per-session lock, and waking the run loop through the existing `asr_ready` event
+instead of a new mechanism.
+
+### Finding 1 — resolved, with a large measured effect
+
+Re-measured with 4096 files in the session directory:
+
+```
+first write   10.8 ms      (one scan per directory, at session start)
+later writes   0.167 ms    average over 50 writes
+cumulative    ~0.68 s      over ~4000 writes   (was ~30 s)
+```
+
+The per-write cost is now flat instead of growing, and the peak moved to session
+start rather than the moment the cap comes into view. The scan really is
+one-off: **2 directory scans across 20 writes**, not 40.
+
+The critical invariant holds — ASR and TTS still share one usage record and one
+lock, so the cap cannot silently double:
+
+```
+ASR and TTS share usage record : True   same lock: True
+concurrent 400+400 with 500 left: [('ok','r1'), ('rejected','r2')]  disk 900 <= 1000
+exact-limit write               : ACCEPTED
+one byte over                   : REJECTED, partial file left = False
+cached total vs disk            : equal
+```
+
+### Finding 2 — resolved
+
+`_directory_bytes` now takes one `stat()` per path and catches only
+`FileNotFoundError`; other filesystem errors still fail the write. `_file_size`
+does the same for the file being replaced. `S_ISREG` replaces `is_file()` with no
+behavioural change.
+
+### Finding 3 — resolved
+
+Readable across the whole range:
+
+```
+1 -> "1 byte"          1536 -> "1.5 KiB"        268435456 -> "256 MiB"
+1610612736 -> "1.5 GiB"   1099511627776 -> "1 TiB"    0 -> "0 bytes"
+```
+
+The `.rstrip("0").rstrip(".")` keeps "256 MiB" clean instead of "256.0 MiB".
+
+### Finding 4 — resolved
+
+Divergence now fails loudly instead of silently:
+
+```
+''  '   '                       -> session_id_required
+'../escape'  'a/b'  'conv.2026.abc'  -> invalid_session_id
+```
+
+### Run-loop risk — resolved
+
+Verified with a WebSocket whose `receive()` never returns, ending the session
+from a background task:
+
+```
+run loop exited        : True after 9 ms
+ended event            : ('session_storage_limit', '...reached the 256 MiB storage limit.')
+websocket close code   : 1000
+lifecycle.close_reason : session_storage_limit
+```
+
+Previously the loop waited until the duration deadline. Accounting release was
+verified separately: usage entries for the session go **1 -> 0** on `close()`.
+
+### Finding 5 — accepted
+
+The reasoning in the Resolution matches what this review checked earlier: both
+clients clear their audio queues on `ended`, so restoring temporary bubble state
+would not be observable.
+
+### Design document
+
+Both items previously listed as unresolved risks are now written down: that
+speculative TTS can consume the budget and end a session, and that external
+changes to an active session directory are unsupported. The second is the right
+way to bound the new cache.
+
+### 6. LOW — an `extra_directory` outside both roots now splits the lock, not just the count
+
+**Where** — `app/voice/session_storage.py`, the `_session_usage` key
+`(token, directories)`.
+
+The directories tuple is part of the key. For the real writers it always
+coincides, because ASR and TTS both write inside the two roots, which is why they
+share one record. A path outside them produces a second record:
+
+```
+extra_directory outside the roots -> same usage record: False | same lock: False
+keys for this session in _SESSION_USAGE: 2
+```
+
+Two records means two locks, and then two concurrent writes can claim the same
+remaining capacity. Before this commit that case was only a counting error; it is
+now a concurrency gap as well. Unreachable with the current callers.
+
+**Smallest safe correction** — key on `token` alone and keep the directories out
+of the key.
+
+### Noted for later, not blocking
+
+The running total is only correct as long as nothing else touches the session
+directories. That is now documented, but `app/tts_bridge.py:239`
+(`TTSBridge.clear_session`) still exists and is called from nowhere. If it is
+ever wired up while a session is live, the counter stays too high and sessions
+end early — a dead function that breaks exactly the assumption just recorded.
+Removing it or marking it is cheap.
 
 ## Findings
 
