@@ -357,7 +357,7 @@ class TtsDelivery:
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:
-                    self._settle_unexpected_generation_failure(record, exc)
+                    await self._settle_unexpected_generation_failure(record, exc)
                 finally:
                     self.active_preparation_key = None
         finally:
@@ -849,7 +849,7 @@ class TtsDelivery:
             )
         )
 
-    def _settle_unexpected_generation_failure(
+    async def _settle_unexpected_generation_failure(
         self,
         record: _Preparation,
         exc: Exception,
@@ -876,6 +876,26 @@ class TtsDelivery:
                 replacement="pending",
             )
             self.runtime._refresh_turn_state()
+            try:
+                await self._send_stream_failed(record)
+            except Exception:
+                LOGGER.warning(
+                    "could not report failed TTS stream lane=%s turn=%s part=%s",
+                    record.lane_id,
+                    record.turn_id,
+                    record.part_id,
+                    exc_info=True,
+                )
+            try:
+                await self.runtime._send_turn_update(reason="tts_failed")
+            except Exception:
+                LOGGER.warning(
+                    "could not report TTS turn recovery lane=%s turn=%s part=%s",
+                    record.lane_id,
+                    record.turn_id,
+                    record.part_id,
+                    exc_info=True,
+                )
         _metric(
             "tts_preparation",
             sess=self.runtime.session_id,

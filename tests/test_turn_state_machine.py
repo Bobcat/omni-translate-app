@@ -527,6 +527,19 @@ class TurnStateMachineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(first_record.state, "failed")
         self.assertTrue(first_record.done.done())
         self.assertEqual(first.speech_state, "pending")
+        self.assertTrue(
+            any(
+                item["type"] == "tts_stream_failed"
+                and item["artifact_id"] == "buffered_1"
+                for item in websocket.sent
+            )
+        )
+        self.assertTrue(
+            any(
+                item["type"] == "turn_update" and item["reason"] == "tts_failed"
+                for item in websocket.sent
+            )
+        )
         self.assertEqual(second_record.state, "ready")
         self.assertTrue(second_record.done.done())
         self.assertFalse(runtime.tts_delivery.generation_queue)
