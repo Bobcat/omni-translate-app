@@ -1,7 +1,7 @@
 # Review findings: speculative and automatic voice TTS
 
-Review of PR #22, `feature/speculative-auto-voice-tts`, at `ff72325`. Answers the
-prompt in
+Review of PR #22, `feature/speculative-auto-voice-tts`. First reviewed at
+`ff72325`; re-reviewed after the fixes at `73e0a7d`. Answers the prompt in
 [`pr-22-feature-speculative-auto-voice-tts-review.md`](pr-22-feature-speculative-auto-voice-tts-review.md).
 
 The base is `origin/main` at `bd0e554`, which contains the merge of PR #21. A
@@ -45,6 +45,179 @@ completion, cancellation, or session cleanup.
 
 The full post-fix run passes 259 Python tests and 89 JavaScript tests. Static
 module syntax, `app/main.py` compilation, and `git diff --check` also pass.
+
+## Re-review at `73e0a7d`
+
+Independent re-review of the fixes in `ed459a8`, `8f31eec` and `73e0a7d`, against
+`origin/main` at `bd0e554`. All required checks confirmed:
+
+| Check | Result |
+| --- | --- |
+| `node --input-type=module --check < static/src/app.js` | pass |
+| `python -m py_compile app/main.py` | pass |
+| `python -m unittest discover -s tests` | 259 tests, pass |
+| `node --test tests/js/` | 89 tests, pass |
+| `git diff --check origin/main...HEAD` | clean |
+
+**Verdict: no blockers. The PR can be approved.** Findings 1 to 4 are fixed and
+the fixes were verified by re-running the original reproductions. Findings 8 and
+9 below are LOW and need not block the merge.
+
+### Verification of each fix
+
+**Finding 1, chunk order — fixed.** The original reproduction now passes, as does
+a harder variant with twelve chunks and every forwarded chunk held for 20 ms,
+which widens the interleaving window considerably:
+
+```
+forwarded chunk sequence numbers: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+```
+
+The per-preparation `forward_lock` covers it. Lock order is `forward_lock` then
+`send_lock`, and no path takes them the other way round, so there is no deadlock.
+`_send_started` outside the lock is safe because `started_sent` is set
+synchronously before the await, which keeps the started event first in the
+`send_lock` queue. `SuspendingChunkWebSocket` in the new regression test blocks on
+an `asyncio.Event` rather than on timing, which is stronger than the probe that
+found the bug.
+
+**Finding 2, generation worker — fixed.** Same scenario, failing
+`tts_stream_complete`:
+
+```
+worker/queue afterwards:  None  []          (queue drained)
+second record state:      ready
+Speak hung:               False
+lane.tts_task still set:  False
+```
+
+All three corrections are present: `_resolve_done` in a `finally` inside
+`_generate`, a per-record `except Exception` in the worker that re-raises
+`CancelledError`, and `_ensure_worker()` in `_move_to_front`.
+
+**Finding 3, microphone — fixed.** Verified through
+`shouldStopMicrophoneAfterPlayback` against the real queue wiring:
+
+```
+automatic     -> micStopped=0, onItemEnded=['a1']   (still settles to the server)
+explicit      -> micStopped=1
+no trigger    -> micStopped=1                        (old behaviour as a safe default)
+```
+
+The chain holds end to end. `shouldSendMicrophoneAudio()` blocks upload on both
+`captureMutedForPlayback` and `OPEN_SPEAKING`
+(`static/src/session/lifecycle.js:334`, desktop
+`static/desktop/src/views/voice/session.js:559`). `onPlaybackIdle` releases the
+muting, `playback_complete` takes the turn out of `OPEN_SPEAKING`, and `micState`
+stays `LISTENING`, so the session genuinely resumes.
+
+ASR input is still dropped during playback — the probe still loses three commits
+— but the design document now records that as intended, to keep TTS output out of
+ASR. That makes it a documented decision rather than a defect.
+
+**Finding 4, WAV URLs — fixed.**
+
+```
+failed load    -> onItemFailed ['a1','url_playback_failed'], current cleared
+missing URL    -> enqueue returns false, onItemFailed ['a1','missing_audio_url']
+error on item 1 -> item 2 takes over and settles normally (no cascade)
+```
+
+The `removeAttribute('src')` plus `load()` in the error handler cannot trigger a
+second `error` on the next item: with `src` absent the resource selection
+algorithm aborts without firing an error, and `this.current` is already `null` by
+then.
+
+**Findings 5, 6 and 7 — conclusions are technically sound.**
+
+- Finding 5 holds. The only visible rule is
+  `.target-pane .turn-part.is-spoken.is-low-quality-ref`
+  (`static/styles/voice.css:46`), and `is-spoken` is added only for
+  `speechState === 'spoken'`. Desktop never adds the class. A purely speculative
+  preparation shows nothing. The flag written on the part is not stale either: if
+  the bubble is later spoken from a different preparation, `_new_preparation`
+  recomputes it.
+- Finding 6 is a legitimate design choice and the ordering is now stated in the
+  design document.
+- Finding 7 holds as a bounded tradeoff. The buffer is released by the list swap,
+  by `record.chunks.clear()`, and by dropping the record.
+
+### 8. LOW — `_settle_unexpected_generation_failure` notifies no one
+
+**Where** — `app/voice/tts_delivery.py:852`.
+
+The handler returns the part to `pending` and calls `_refresh_turn_state()`, but
+sends neither `tts_stream_failed` nor `_send_turn_update`.
+
+**Observed** — automatic speaking with one failing `tts_stream_complete` send and
+a healthy socket afterwards:
+
+```
+server-side part.speech_state : pending
+server-side turn state        : open_active_unspoken
+pending_tts                   : {}
+worker/queue                  : None []
+tts events the client got     : ['tts_stream_started', 'tts_stream_chunk']
+turn_update reasons           : ['bubble_close:sentence_boundary', 'auto_speak']
+```
+
+The server recovers completely. The browser is left with an open PCM stream in
+`pcmStreams` and a last turn update that still says `speaking`, so it shows Stop
+and its queue stays wedged until the user presses Stop or another turn update
+arrives.
+
+**Honest limitation** — this needs a *transient* send failure. On a real
+WebSocket a failed send normally means the connection is gone, in which case none
+of this matters. Hence LOW.
+
+**Smallest safe correction** — make the handler `async` and send
+`tts_stream_failed` plus `_send_turn_update` on a best-effort basis, wrapped in
+its own `try/except` so a second failure cannot kill the worker again.
+
+### 9. LOW — the desktop modulepreload cache key no longer matches the script tag
+
+**Where** — `static/desktop/index.html:88` against `static/desktop/index.html:165`.
+
+```
+<link rel="modulepreload" href="app.js?v=20260827-info-hardware-2">
+<script type="module" src="app.js?v=20260827-voice-tts-review-1">
+```
+
+The fix commit raised only the script tag. Two different URLs mean the preload is
+never hit: one wasted fetch, a "preloaded but not used" warning, and the preload
+no longer does what the comment above it asks for ("Keep in sync with the imports
+in app.js"). It serves no stale code, because the script tag wins. Mobile is
+unaffected, having no modulepreload. This is separate from the known follow-up on
+transitive module invalidation.
+
+**Smallest safe correction** — set line 88 to the same value as line 165.
+
+### Resolution after re-review
+
+Findings 8 and 9 were fixed in `7e06bdc`:
+
+- Unexpected generation failures now send `tts_stream_failed` and a recovered
+  `turn_update` on a best-effort basis. Each recovery send has its own error
+  boundary, so another socket failure cannot stop the generation worker. The
+  existing transient-failure test now verifies both browser messages.
+- The desktop `modulepreload` and module script now use the same cache-keyed
+  `app.js` URL.
+
+The post-fix run still passes 259 Python tests and 89 JavaScript tests. Static
+module syntax, `app/main.py` compilation, and `git diff --check` also pass.
+
+### Still noted, not blocking
+
+The risks and gaps listed at the end of this document still stand. The three that
+matter most for later work:
+
+- the default `FakeWebSocket.send_json` still does not suspend, so send
+  interleavings other than chunk ordering remain invisible to the suite;
+- no test reaches `_close_current_bubble` through the production ASR route;
+- iOS background playback is still untested on a device, and automatic speaking
+  increases the exposure.
+
+## Original review at `ff72325`
 
 At review time, all required checks passed, matching the author's run:
 
