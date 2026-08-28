@@ -4,8 +4,10 @@ import test from 'node:test';
 import {
   loadAutoSpeakPreference,
   loadTtsGlobalConfig,
+  loadVoiceCloningPreference,
   persistAutoSpeakPreference,
   persistTtsGlobalConfig,
+  persistVoiceCloningPreference,
 } from '../../static/src/domain/storage.js';
 
 const values = new Map();
@@ -50,4 +52,13 @@ test('mobile TTS persistence includes the automatic-speaking choice', () => {
   });
 
   assert.equal(loadAutoSpeakPreference(), true);
+});
+
+test('speaker voice-cloning preference is separate and survives reload', () => {
+  assert.equal(loadVoiceCloningPreference(), null);
+
+  persistVoiceCloningPreference(true);
+
+  assert.equal(loadVoiceCloningPreference(), true);
+  assert.equal(loadTtsGlobalConfig(), null);
 });

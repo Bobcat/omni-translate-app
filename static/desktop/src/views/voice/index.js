@@ -1,7 +1,7 @@
 import { iconMarkup } from '../../shared/icons.js';
 import { populateLanguageSelect, recordLanguageMru } from '../../shared/languages.js';
 import { micHaloVisual } from '../../../../src/shared/mic-level-visual.js';
-import { createVoiceSession, visibleText } from './session.js';
+import { createVoiceSession, visibleText } from './session.js?v=20260828-voice-cloning-1';
 
 // Voice translation view, wired to the same backend session flow as the
 // mobile app (see ./session.js for the protocol state machine). Layout:
@@ -59,6 +59,13 @@ export function createVoiceWorkflow() {
           <span class="switch-slider" aria-hidden="true"></span>
         </span>
       </label>
+      <label class="field switch-field voice-cloning" for="voiceCloning">
+        <span>Clone speaker voice</span>
+        <span class="switch">
+          <input id="voiceCloning" type="checkbox" role="switch">
+          <span class="switch-slider" aria-hidden="true"></span>
+        </span>
+      </label>
       <button type="button" class="resume-audio-btn" id="voiceResumeAudio" hidden>Resume audio</button>
     </div>
   `;
@@ -75,6 +82,7 @@ export function createVoiceWorkflow() {
   const speakNowBtn = container.querySelector('#voiceSpeakNow');
   const statusEl = container.querySelector('#voiceStatus');
   const autoSpeakInput = container.querySelector('#voiceAutoSpeak');
+  const voiceCloningInput = container.querySelector('#voiceCloning');
   const resumeBtn = container.querySelector('#voiceResumeAudio');
 
   const session = createVoiceSession({
@@ -103,6 +111,7 @@ export function createVoiceWorkflow() {
   translateNowBtn.addEventListener('click', () => session.translateNow());
   speakNowBtn.addEventListener('click', () => session.speakNow());
   autoSpeakInput.addEventListener('change', () => session.setAutoSpeak(autoSpeakInput.checked));
+  voiceCloningInput.addEventListener('change', () => session.setVoiceCloning(voiceCloningInput.checked));
 
   // Bubble actions (replay / speak / stop) on the target lane, one
   // delegated listener — same affordances as the mobile transcript.
@@ -132,6 +141,7 @@ export function createVoiceWorkflow() {
     renderPanes();
     renderButtons();
     renderAutoSpeak();
+    renderVoiceCloning();
     renderStatus();
   }
 
@@ -290,6 +300,17 @@ export function createVoiceWorkflow() {
     autoSpeakInput.disabled = !session.state.ttsEnabled;
   }
 
+  function renderVoiceCloning() {
+    const { state } = session;
+    voiceCloningInput.checked = Boolean(state.voiceCloningEnabled);
+    voiceCloningInput.disabled = state.starting || !state.ttsEnabled || !state.voiceCloningAvailable;
+    const label = state.voiceCloningAvailable
+      ? 'Clone speaker voice'
+      : 'Voice cloning requires the active VoxCPM backend';
+    voiceCloningInput.setAttribute('aria-label', label);
+    voiceCloningInput.title = label;
+  }
+
   function renderMicLevel(value, listening) {
     const halo = micHaloVisual(value, { listening });
     micToggleBtn.style.setProperty('--mic-toggle-halo-scale', halo.scale);
@@ -308,7 +329,14 @@ export function createVoiceWorkflow() {
     } else if (state.status === 'connecting') {
       text = 'Connecting…';
     } else {
-      text = state.audioStatus || '';
+      const cloningState = state.voiceCloningStatus[session.currentLaneId()]?.state;
+      if (state.live && state.voiceCloningEnabled && cloningState === 'preparing') {
+        text = 'Preparing voice cloning · Speak naturally for a few more seconds.';
+      } else if (state.audioStatus) {
+        text = state.audioStatus;
+      } else if (state.live && state.voiceCloningEnabled && cloningState === 'ready') {
+        text = 'Voice cloning ready';
+      }
     }
     statusEl.textContent = text;
     statusEl.classList.toggle('is-error', isError);

@@ -10,6 +10,7 @@ export const APP_STORAGE_KEYS = Object.freeze({
   VOXCPM2_VOICE_CONFIG: 'voxcpm2_voice_config',
   IMAGE_RENDER_SETTINGS: 'image_render_settings',
   APPEARANCE_SETTINGS: 'appearance_settings',
+  VOICE_CLONING: 'voice_cloning',
 });
 export const TTS_GLOBAL_STORAGE_KEY = APP_STORAGE_KEYS.TTS_GLOBAL;
 export const RECENT_LANGUAGES_KEY = APP_STORAGE_KEYS.RECENT_LANGUAGES;
@@ -18,6 +19,7 @@ export const SETUP_LANGUAGES_KEY = APP_STORAGE_KEYS.SETUP_LANGUAGES;
 export const VOXCPM2_VOICE_CONFIG_STORAGE_KEY = APP_STORAGE_KEYS.VOXCPM2_VOICE_CONFIG;
 export const IMAGE_RENDER_SETTINGS_KEY = APP_STORAGE_KEYS.IMAGE_RENDER_SETTINGS;
 export const APPEARANCE_SETTINGS_KEY = APP_STORAGE_KEYS.APPEARANCE_SETTINGS;
+export const VOICE_CLONING_STORAGE_KEY = APP_STORAGE_KEYS.VOICE_CLONING;
 export const RECENT_MAX = 4;
 
 // Appearance settings (settings-sheet Appearance page): two independent axes —
@@ -154,6 +156,25 @@ export function persistAutoSpeakPreference(enabled) {
       auto_speak: Boolean(enabled),
     };
     localStorage.setItem(TTS_GLOBAL_STORAGE_KEY, JSON.stringify(payload));
+  } catch (_) {
+    // ignore quota / disabled storage
+  }
+}
+
+export function loadVoiceCloningPreference() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(VOICE_CLONING_STORAGE_KEY) || '{}');
+    return typeof saved.enabled === 'boolean' ? saved.enabled : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+export function persistVoiceCloningPreference(enabled) {
+  try {
+    localStorage.setItem(VOICE_CLONING_STORAGE_KEY, JSON.stringify({
+      enabled: Boolean(enabled),
+    }));
   } catch (_) {
     // ignore quota / disabled storage
   }

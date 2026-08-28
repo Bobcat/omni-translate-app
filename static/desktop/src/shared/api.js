@@ -60,7 +60,12 @@ export async function getEntitlements() {
 
 // Voice sessions pin the language pair and the voice view's automatic-speaking
 // choice. Other live/TTS settings stay at server defaults.
-export async function createVoiceSession({ sideA, sideB, autoSpeak = true }) {
+export async function createVoiceSession({
+  sideA,
+  sideB,
+  autoSpeak = true,
+  voiceCloning = false,
+}) {
   const response = await fetch('/api/sessions', {
     method: 'POST',
     headers: authHeaders({ 'Content-Type': 'application/json', Accept: 'application/json' }),
@@ -68,6 +73,7 @@ export async function createVoiceSession({ sideA, sideB, autoSpeak = true }) {
       side_a_language: String(sideA || ''),
       side_b_language: String(sideB || ''),
       tts_settings: { auto_speak: Boolean(autoSpeak) },
+      voice_cloning: { enabled: Boolean(voiceCloning) },
     }),
   });
   await ensureOk(response);

@@ -1,6 +1,7 @@
 # Speaker voice cloning for voice translation
 
-Status: design proposal. No implementation is implied by this document.
+Status: phases 1–3 implemented on `feature/desktop-speaker-voice-cloning`.
+Phase 4 remains follow-up work after testing with real conversations.
 
 ## Decision summary
 
@@ -172,18 +173,21 @@ The runtime must retain the source WAV timeline offset. ASR segment timestamps
 are currently absolute within the session timeline; clipping a job WAV requires
 subtracting that WAV's start offset.
 
-Candidates are kept in a bounded deque per lane. The selector walks backward
+Candidates are kept in a bounded deque of at most 24 terminal ASR results per
+lane. The selector walks backward
 from the newest complete ASR segment and chooses a chronological set that:
 
 - has non-empty text and valid monotonic timestamps;
 - belongs to the same lane;
 - contains no duplicated or overlapping source interval;
-- meets the existing speech-quality policy;
+- forms a segment-only clip, so speech coverage and inter-segment silence are
+  controlled by construction;
 - reaches `min_duration_s`;
 - does not exceed `max_duration_s`.
 
-The duration is the selected audio span, including retained silence between
-segments. Selection may cross bubble and ASR-job boundaries. It may use a
+The duration is the sum of the selected complete segment clips, including any
+silence inside those segment boundaries. Selection may cross bubble and ASR-job
+boundaries. It may use a
 previous bubble or the end of a previous bubble to bring a short current bubble
 up to the minimum.
 
@@ -220,14 +224,14 @@ created time
 Code must not clip the audio in one path and assemble the transcript in another.
 If either output fails validation, the pair is unusable for Prompt mode.
 
-Small silence gaps may remain between selected speech segments. When clips from
-separate source WAVs are concatenated, the materializer may add one fixed,
-bounded silence gap. It must not duplicate spoken audio.
+Small silence gaps inside selected ASR segment boundaries remain. Clips from
+separate source WAVs are concatenated directly in chronological order. The
+materializer must not duplicate spoken audio.
 
 ## Reference lifecycle
 
-The selector updates after a definitive source bubble has valid ASR segments.
-It does not update from target translation text.
+The selector updates after a terminal ASR result has valid segments. It does
+not update from target translation text.
 
 Once the lane first reaches the configured minimum, it enters **Ready**. Later
 speech can replace the reference with a newer valid window. A replacement gets
@@ -244,7 +248,7 @@ by another session.
 
 ## Configuration
 
-The initial deployment settings are proposed as:
+The implementation uses these initial deployment settings:
 
 ```json
 {
@@ -368,31 +372,31 @@ metrics. They must not include transcript text.
 
 ### Phase 1: reference-window backend
 
-- [ ] Retain ASR WAV timeline offsets with segment provenance.
-- [ ] Add bounded per-lane recent-speech deques.
-- [ ] Select complete, non-overlapping ASR segments within configured bounds.
-- [ ] Materialize audio and transcript through one fail-closed function.
-- [ ] Count reference artifacts under the session storage cap.
-- [ ] Test cross-bubble selection, overlap rejection, boundary durations,
+- [x] Retain ASR WAV timeline offsets with segment provenance.
+- [x] Add bounded per-lane recent-speech deques.
+- [x] Select complete, non-overlapping ASR segments within configured bounds.
+- [x] Materialize audio and transcript through one fail-closed function.
+- [x] Count reference artifacts under the session storage cap.
+- [x] Test cross-bubble selection, overlap rejection, boundary durations,
   cleanup, and exact transcript membership.
 
 ### Phase 2: cloning session state
 
-- [ ] Add validated semantic `voice_cloning.enabled` session state.
-- [ ] Report `off`, `preparing`, and `ready` per lane.
-- [ ] Key TTS preparations by immutable reference identity.
-- [ ] Use Prompt + reference for product cloning.
-- [ ] Skip automatic, speculative, and manual generation while preparing.
-- [ ] Prohibit stable-sample fallback from cloning mode.
-- [ ] Test direction changes, option changes, stale references, and replay.
+- [x] Add validated semantic `voice_cloning.enabled` session state.
+- [x] Report `off`, `preparing`, and `ready` per lane.
+- [x] Key TTS preparations by immutable reference identity.
+- [x] Use Prompt + reference for product cloning.
+- [x] Skip automatic, speculative, and manual generation while preparing.
+- [x] Prohibit stable-sample fallback from cloning mode.
+- [x] Test direction changes, option changes, stale references, and replay.
 
 ### Phase 3: desktop UX
 
-- [ ] Add **Clone speaker voice** to the desktop voice surface.
-- [ ] Show Preparing and Ready status from backend events.
-- [ ] Explain a manual Speak skip without treating it as an error.
-- [ ] Keep automatic speaking independent from the cloning option.
-- [ ] Test the first bubbles, direction switching, reload, and session restart.
+- [x] Add **Clone speaker voice** to the desktop voice surface.
+- [x] Show Preparing and Ready status from backend events.
+- [x] Explain a manual Speak skip without treating it as an error.
+- [x] Keep automatic speaking independent from the cloning option.
+- [x] Test the first bubbles, direction switching, reload, and session restart.
 
 ### Phase 4: tune and migrate
 
@@ -420,15 +424,18 @@ The first product implementation is complete when:
 - replay reuses the original completed WAV;
 - reference metadata and artifacts remain bounded by the session lifecycle.
 
+## Resolved product decisions
+
+- **Clone speaker voice** is off by default.
+- The browser remembers the option in `localStorage`.
+- The option is available only when TTS is enabled and the active loaded backend
+  is VoxCPM-family. It does not switch backends automatically.
+- The Ready confirmation remains visible while the session is idle. Playback
+  status takes priority while audio is active.
+
 ## Open decisions
 
-- Whether **Clone speaker voice** is off or on by default.
-- Whether the browser remembers the option in `localStorage`.
-- Whether enabling cloning may select a compatible VoxCPM backend or is only
-  available when the deployment's configured backend already supports it.
 - Whether three seconds is acceptable after testing, or the first-ready default
   should move to the official five-second recommendation.
 - Whether a later version should use reliable word timestamps to split one long
   ASR segment.
-- Whether the Ready confirmation remains visible or disappears after a short
-  interval.

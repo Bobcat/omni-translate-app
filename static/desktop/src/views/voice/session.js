@@ -11,7 +11,7 @@
 // queue) survives view switches untouched; the view re-renders from
 // `state` on every `onChange`.
 
-import { SessionSocket } from '../../../../src/api-client.js';
+import { SessionSocket } from '../../../../src/api-client.js?v=20260828-voice-cloning-1';
 import { AudioCapture } from '../../../../src/shared/audio-capture.js';
 import { playMicOffCue, playMicOnCue } from '../../../../src/shared/audio-cue.js';
 import { AudioQueue } from '../../../../src/shared/audio-playback.js';
@@ -22,10 +22,12 @@ import { guessSetupLanguages, normalizeLanguageName } from '../../../../src/doma
 import {
   loadAutoSpeakPreference,
   loadSetupLanguages,
+  loadVoiceCloningPreference,
   persistAutoSpeakPreference,
   persistSetupLanguages,
-} from '../../../../src/domain/storage.js';
-import { getConfig, createVoiceSession as requestVoiceSession } from '../../shared/api.js';
+  persistVoiceCloningPreference,
+} from '../../../../src/domain/storage.js?v=20260828-voice-cloning-1';
+import { getConfig, createVoiceSession as requestVoiceSession } from '../../shared/api.js?v=20260828-voice-cloning-1';
 import {
   getDesktopMicrophoneState,
   setDesktopMicrophoneRuntime,
@@ -138,6 +140,9 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
     audioInputSampleRate: 16000,
     ttsEnabled: true,
     ttsAutoSpeak: loadAutoSpeakPreference() ?? true,
+    voiceCloningAvailable: false,
+    voiceCloningEnabled: loadVoiceCloningPreference() ?? false,
+    voiceCloningStatus: {},
     audioPlayback: null,
     captureMutedForPlayback: false,
     speakNowPending: false,
@@ -152,6 +157,7 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
 
   let speakNowPendingTimer = null;
   let vadHintTimer = null;
+  let configLoadPromise = null;
   // The AudioQueue constructor fires onStatus synchronously, before the
   // view's `const session = createVoiceSession(...)` binding exists — a
   // render then would hit the TDZ. The view renders itself right after
@@ -268,6 +274,7 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
     let capture = null;
     let trackedCapture = Promise.resolve();
     try {
+      await loadConfig();
       const capturePromise = createStartedCapture({ targetSampleRate: state.audioInputSampleRate });
       // Hand the started capture over as soon as it resolves — not only on the
       // happy path — so the catch below can stop it when the session request or
@@ -280,6 +287,7 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
         sideA: state.sideALanguage,
         sideB: state.sideBLanguage,
         autoSpeak: state.ttsAutoSpeak,
+        voiceCloning: state.voiceCloningAvailable && state.voiceCloningEnabled,
       });
       const sessionId = String(session.session?.session_id || session.session_id || '').trim();
       if (!sessionId) throw new Error('Missing session id');
@@ -650,6 +658,20 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
     emit();
   }
 
+  function setVoiceCloning(enabled) {
+    if (!state.ttsEnabled || !state.voiceCloningAvailable) return;
+    state.voiceCloningEnabled = Boolean(enabled);
+    persistVoiceCloningPreference(state.voiceCloningEnabled);
+    for (const laneId of LANE_IDS) {
+      state.voiceCloningStatus[laneId] = {
+        state: state.voiceCloningEnabled ? 'preparing' : 'off',
+        reason: state.voiceCloningEnabled ? 'insufficient_clear_speech' : 'disabled',
+      };
+    }
+    state.socket?.updateVoiceCloning({ enabled: state.voiceCloningEnabled });
+    emit();
+  }
+
   function swap() {
     if (state.starting) return;
     if (!state.live) {
@@ -758,6 +780,17 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
       emit();
       return;
     }
+    if (msg.type === 'voice_cloning_status') {
+      const laneId = String(msg.lane_id || '');
+      if (LANE_IDS.includes(laneId)) {
+        state.voiceCloningStatus[laneId] = {
+          state: String(msg.state || 'off'),
+          reason: String(msg.reason || ''),
+        };
+      }
+      emit();
+      return;
+    }
     if (msg.type === 'tts_settings') {
       state.ttsAutoSpeak = Boolean(msg.tts_settings?.auto_speak);
       emit();
@@ -798,6 +831,15 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
     }
     state.currentTurn = normalizeTurnPayload(msg.current_turn || createLocalTurn('a_to_b', state.lanes));
     state.ttsAutoSpeak = Boolean(msg.tts_settings?.auto_speak ?? state.ttsAutoSpeak);
+    state.voiceCloningEnabled = Boolean(msg.voice_cloning?.enabled ?? state.voiceCloningEnabled);
+    state.voiceCloningStatus = Object.fromEntries(
+      Object.entries(msg.voice_cloning_status || {})
+        .filter(([laneId]) => LANE_IDS.includes(laneId))
+        .map(([laneId, status]) => [laneId, {
+          state: String(status?.state || 'off'),
+          reason: String(status?.reason || ''),
+        }]),
+    );
     hideVadHint();
     emit();
   }
@@ -913,13 +955,21 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
 
   // One-shot fetch for TTS availability and the capture sample rate; the
   // defaults stand when the config cannot be loaded.
-  async function loadConfig() {
+  function loadConfig() {
+    if (!configLoadPromise) configLoadPromise = loadConfigOnce();
+    return configLoadPromise;
+  }
+
+  async function loadConfigOnce() {
     try {
       const config = await getConfig();
       state.audioInputSampleRate = config.audio_input?.sample_rate_hz || 16000;
       state.ttsEnabled = config.tts?.enabled !== false;
       state.ttsAutoSpeak = loadAutoSpeakPreference()
         ?? Boolean(config.tts?.auto_speak);
+      state.voiceCloningAvailable = Boolean(config.tts?.capabilities?.voice_cloning);
+      state.voiceCloningEnabled = state.voiceCloningAvailable
+        && Boolean(loadVoiceCloningPreference() ?? false);
       emit();
     } catch {
       // Defaults stand.
@@ -942,6 +992,7 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
     replayPart,
     stopAudio,
     setAutoSpeak,
+    setVoiceCloning,
     swap,
     setLanguage,
   };

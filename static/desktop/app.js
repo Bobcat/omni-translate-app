@@ -12,10 +12,10 @@ import {
 import { iconMarkup } from './src/shared/icons.js';
 import { VIEW_BUSY_EVENT } from './src/shared/view-activity.js';
 import { accountInitials } from '../shared/account-display.js';
-import { cancelImage, getConfig, getImageRequest } from './src/shared/api.js';
+import { cancelImage, getConfig, getImageRequest } from './src/shared/api.js?v=20260828-voice-cloning-1';
 import { initAuth, onAuthChange, onBeforeSignOut } from './src/auth.js';
 import { registerImageSignOutCancellation } from '../shared/image-operation-recovery.js';
-import { createVoiceWorkflow } from './src/views/voice/index.js';
+import { createVoiceWorkflow } from './src/views/voice/index.js?v=20260828-voice-cloning-1';
 import { createTextView } from './src/views/text/index.js';
 import { createImageView } from './src/views/image/index.js';
 import { createPdfView } from './src/views/pdf/index.js';

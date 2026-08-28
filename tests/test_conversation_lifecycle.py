@@ -67,6 +67,12 @@ class _TtsDelivery:
         self.cleared = True
 
 
+class _VoiceCloning:
+    @staticmethod
+    def status_payload(lane_id: str) -> dict:
+        return {"lane_id": lane_id, "state": "off", "reason": "disabled"}
+
+
 def _runtime(
     *,
     vad_error: Exception | None = None,
@@ -90,6 +96,8 @@ def _runtime(
         side_b_language="English",
         live_settings={"asr": {"backend": "test"}},
         tts_settings={"enabled": True, "auto_speak": False},
+        voice_cloning_settings={"enabled": False},
+        voice_cloning=_VoiceCloning(),
         lanes={"a_to_b": lane},
         current_turn=object(),
         asr_bridge=asr_bridge,

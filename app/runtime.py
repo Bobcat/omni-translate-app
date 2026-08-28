@@ -35,6 +35,9 @@ from app.sessions import SESSIONS
 from app.translation_bridge import TranslationBridge
 from app.tts_bridge import tts_settings_enabled
 from app.tts_bridge import tts_settings_snapshot
+from app.tts_bridge import tts_supports_voice_cloning
+from app.voice.cloning import normalize_voice_cloning_settings
+from app.voice.cloning import VoiceCloningWindow
 from app.voice.session_lifecycle import ConversationLifecycle
 from app.voice.session_storage import SessionArtifactLimitExceeded
 from app.voice.tasks import cancel_task
@@ -198,6 +201,12 @@ class ConversationRuntime:
                 target_language=self.side_a_language,
             ),
         }
+        self.voice_cloning_settings = dict(session.voice_cloning or {"enabled": False})
+        self.voice_cloning = VoiceCloningWindow(
+            session_id=self.session_id,
+            lane_ids=tuple(self.lanes),
+        )
+        self.voice_cloning.set_enabled(bool(self.voice_cloning_settings.get("enabled")))
         self.turn_counter = 1
         self.current_turn = self._new_turn(lane_id="a_to_b")
         self.closed_turns: list[ConversationTurn] = []
@@ -251,6 +260,9 @@ class ConversationRuntime:
         if msg_type == "update_tts_settings":
             await self._update_tts_settings(payload)
             return True
+        if msg_type == "update_voice_cloning":
+            await self._update_voice_cloning(payload)
+            return True
         if msg_type == "tts_playback_complete":
             await self.tts_delivery.playback_complete(payload)
             return True
@@ -289,6 +301,16 @@ class ConversationRuntime:
                 )
             )
             return
+        if self.voice_cloning.enabled and not tts_supports_voice_cloning(settings):
+            await self.lifecycle.send(
+                event(
+                    "error",
+                    self.session_id,
+                    code="invalid_tts_settings",
+                    message="Active speaker voice cloning requires the VoxCPM TTS backend",
+                )
+            )
+            return
         previous = self.tts_settings
         self.tts_settings = settings
         await self.tts_delivery.settings_changed(previous, settings)
@@ -300,6 +322,34 @@ class ConversationRuntime:
                 tts_settings=deepcopy(settings),
             )
         )
+
+    async def _update_voice_cloning(self, payload: dict[str, Any]) -> None:
+        settings, errors = normalize_voice_cloning_settings(
+            payload.get("settings"),
+            supported=tts_supports_voice_cloning(self.tts_settings),
+        )
+        if errors:
+            await self.lifecycle.send(
+                event(
+                    "error",
+                    self.session_id,
+                    code="invalid_voice_cloning_settings",
+                    message="; ".join(f"{key}: {value}" for key, value in errors.items()),
+                )
+            )
+            return
+        previous_enabled = bool(self.voice_cloning_settings.get("enabled"))
+        enabled = bool(settings.get("enabled"))
+        self.voice_cloning_settings = settings
+        self.voice_cloning.set_enabled(enabled)
+        if previous_enabled != enabled:
+            _metric(
+                "voice_cloning_setting",
+                sess=self.session_id,
+                enabled=enabled,
+            )
+        SESSIONS.update(self.session_id, voice_cloning=deepcopy(settings))
+        await self._send_voice_cloning_status()
 
     async def _handle_audio(self, raw_bytes: bytes) -> None:
         if not self.lifecycle.listening:
@@ -357,6 +407,42 @@ class ConversationRuntime:
             lane.last_asr_backend = result_backend
             lane.last_asr_wav_path = str(job.wav_path)
             self.tts_delivery.record_asr_reference(lane)
+            previous_reference = self.voice_cloning.reference(lane.lane_id)
+            try:
+                reference_changed = await asyncio.to_thread(
+                    self.voice_cloning.record_asr_result,
+                    lane_id=lane.lane_id,
+                    request_id=str(result.request_id or job.request_id),
+                    wav_path=str(job.wav_path),
+                    wav_t0_ms=job.t0_ms,
+                    wav_t1_ms=job.t1_ms,
+                    segments=result_segments,
+                )
+            except SessionArtifactLimitExceeded as exc:
+                lane.asr_inflight = None
+                await self.lifecycle.end_for_storage_limit(limit_bytes=exc.limit_bytes)
+                return
+            except (OSError, ValueError):
+                reference_changed = False
+                _metric(
+                    "voice_cloning_reference",
+                    sess=self.session_id,
+                    lane=lane.lane_id,
+                    state="rejected",
+                    reason="materialization_failed",
+                )
+            if reference_changed:
+                reference = self.voice_cloning.reference(lane.lane_id)
+                await self._send_voice_cloning_status(lane_id=lane.lane_id)
+                _metric(
+                    "voice_cloning_reference",
+                    sess=self.session_id,
+                    lane=lane.lane_id,
+                    state="ready",
+                    first=previous_reference is None,
+                    duration_ms=int(reference.duration_ms if reference else 0),
+                    segments=int(reference.segment_count if reference else 0),
+                )
             apply = lane.asr_runner.apply_result(
                 ASRResult(
                     sequence_id=self._sequence_from_request(job.request_id),
@@ -590,6 +676,7 @@ class ConversationRuntime:
         self.current_turn = self._new_turn(lane_id=next_lane_id)
         self._reset_lane_text_scope(self._current_lane())
         await self._send_turn_update(reason="next_turn", previous_turn=previous_turn)
+        await self._send_voice_cloning_status(lane_id=next_lane_id)
 
     async def _speak_now(self) -> None:
         turn = self.current_turn
@@ -651,6 +738,26 @@ class ConversationRuntime:
                     message="Audio output is off",
                 )
             )
+            return
+        if self.voice_cloning.enabled and self.voice_cloning.reference(lane.lane_id) is None:
+            _metric(
+                "voice_cloning_tts_skip",
+                sess=self.session_id,
+                lane=lane.lane_id,
+                trigger=reason,
+            )
+            if reason in {"speak_now", "speak_part"}:
+                await self.lifecycle.send(
+                    event(
+                        "tts_status",
+                        self.session_id,
+                        state="skipped",
+                        reason="voice_clone_preparing",
+                        lane_id=lane.lane_id,
+                        turn_id=turn.turn_id,
+                        message="Speak naturally for a few more seconds before using voice cloning",
+                    )
+                )
             return
         if reason in {"speak_now", "speak_part"}:
             self.tts_delivery.reset_speculation_budget(reason=reason)
@@ -1059,6 +1166,17 @@ class ConversationRuntime:
         if translation is not None:
             payload["translation"] = translation
         await self.lifecycle.send(payload)
+
+    async def _send_voice_cloning_status(self, *, lane_id: str | None = None) -> None:
+        lane_ids = [lane_id] if lane_id in self.lanes else list(self.lanes)
+        for current_lane_id in lane_ids:
+            await self.lifecycle.send(
+                event(
+                    "voice_cloning_status",
+                    self.session_id,
+                    **self.voice_cloning.status_payload(current_lane_id),
+                )
+            )
 
     def _discard_inflight(self) -> None:
         # Frontend sends this when the user stops the mic so the server

@@ -670,6 +670,7 @@ body {
 .voice-statusrow {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 12px;
 }
 
@@ -678,7 +679,8 @@ body {
   margin: 0;
 }
 
-.voice-auto-speak {
+.voice-auto-speak,
+.voice-cloning {
   white-space: nowrap;
 }
 

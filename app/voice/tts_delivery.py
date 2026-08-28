@@ -18,6 +18,7 @@ from app.live_metrics import log_event as _metric
 from app.protocol import event
 from app.tts_bridge import TtsReferenceUnavailableError
 from app.tts_bridge import get_tts_bridge
+from app.tts_bridge import product_voice_cloning_settings
 from app.tts_bridge import tts_settings_enabled
 from app.tts_bridge import tts_uses_asr_reference_wav
 from app.upstreams.tts_pool.client import TtsSynthesisCancellation
@@ -53,6 +54,7 @@ class _Preparation:
     reference_prompt_text: str | None
     source_audio_duration_ms: int | None
     low_quality_reference: bool
+    reference_id: str | None = None
     state: str = "queued"
     subscribed: bool = False
     used: bool = False
@@ -310,12 +312,36 @@ class TtsDelivery:
         if not text:
             return None
         settings = deepcopy(runtime.tts_settings)
-        reference_wav_path, low_quality = _last_speech_reference_choice(lane, settings)
-        if reference_wav_path is not None or tts_uses_asr_reference_wav(
-            lane.target_language,
-            settings=settings,
-        ):
-            self._set_part_reference_quality([part_id], low_quality=low_quality)
+        reference_id = None
+        if runtime.voice_cloning.enabled:
+            reference = runtime.voice_cloning.reference(lane_id)
+            if reference is None:
+                _metric(
+                    "voice_cloning_tts_skip",
+                    sess=runtime.session_id,
+                    lane=lane_id,
+                    trigger=reason,
+                )
+                return None
+            settings = product_voice_cloning_settings(
+                settings,
+                language=lane.target_language,
+                max_duration_s=runtime.voice_cloning.max_duration_ms / 1000.0,
+            )
+            reference_id = reference.reference_id
+            reference_wav_path = reference.wav_path
+            reference_prompt_text = reference.prompt_text
+            source_audio_duration_ms = reference.duration_ms
+            low_quality = False
+        else:
+            reference_wav_path, low_quality = _last_speech_reference_choice(lane, settings)
+            reference_prompt_text = _last_speech_prompt_text(lane, reference_wav_path)
+            source_audio_duration_ms = _source_bubble_duration_ms(lane)
+            if reference_wav_path is not None or tts_uses_asr_reference_wav(
+                lane.target_language,
+                settings=settings,
+            ):
+                self._set_part_reference_quality([part_id], low_quality=low_quality)
         return _Preparation(
             lane_id=lane_id,
             turn_id=turn_id,
@@ -323,12 +349,13 @@ class TtsDelivery:
             text=text,
             target_language=lane.target_language,
             settings=settings,
-            settings_key=_synthesis_settings_key(settings),
+            settings_key=_synthesis_settings_key(runtime.tts_settings, reference_id=reference_id),
             reason=str(reason or "demand"),
             reference_wav_path=reference_wav_path,
-            reference_prompt_text=_last_speech_prompt_text(lane, reference_wav_path),
-            source_audio_duration_ms=_source_bubble_duration_ms(lane),
+            reference_prompt_text=reference_prompt_text,
+            source_audio_duration_ms=source_audio_duration_ms,
             low_quality_reference=low_quality,
+            reference_id=reference_id,
             done=asyncio.get_running_loop().create_future(),
         )
 
@@ -919,7 +946,10 @@ class TtsDelivery:
             or self.runtime.lifecycle.closed
             or self.preparations.get(record.key) is not record
             or not tts_settings_enabled(self.runtime.tts_settings)
-            or record.settings_key != _synthesis_settings_key(self.runtime.tts_settings)
+            or record.settings_key != _synthesis_settings_key(
+                self.runtime.tts_settings,
+                reference_id=record.reference_id,
+            )
         ):
             return False
         part = self._current_part(record.turn_id, record.part_id)
@@ -987,9 +1017,15 @@ class TtsDelivery:
                 part.speech_state = replacement
 
 
-def _synthesis_settings_key(settings: dict[str, Any] | None) -> str:
+def _synthesis_settings_key(
+    settings: dict[str, Any] | None,
+    *,
+    reference_id: str | None = None,
+) -> str:
     payload = deepcopy(settings or {})
     payload.pop("auto_speak", None)
+    if reference_id:
+        payload["voice_cloning_reference_id"] = reference_id
     return json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
 
 

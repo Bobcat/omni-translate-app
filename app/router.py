@@ -56,6 +56,8 @@ from app.translation_bridge import translation_language_code
 from app.tts_bridge import artifact_path
 from app.tts_bridge import tts_settings_payload
 from app.tts_bridge import tts_settings_snapshot
+from app.tts_bridge import tts_supports_voice_cloning
+from app.voice.cloning import normalize_voice_cloning_settings
 from app.voice_library import discard_pending_stable_sample
 from app.voice_library import generate_stable_sample
 from app.voice_library import keep_pending_stable_sample
@@ -69,6 +71,7 @@ class CreateSessionRequest(BaseModel):
     side_b_language: str | None = None
     live_settings: dict[str, Any] | None = None
     tts_settings: dict[str, Any] | None = None
+    voice_cloning: dict[str, Any] | None = None
 
 
 class GenerateStableVoiceSampleRequest(BaseModel):
@@ -625,12 +628,19 @@ async def create_session(request: Request, payload: CreateSessionRequest) -> dic
     tts_settings, tts_errors = tts_settings_snapshot(payload.tts_settings)
     if tts_errors:
         raise HTTPException(status_code=422, detail={"tts_settings": tts_errors})
+    voice_cloning, cloning_errors = normalize_voice_cloning_settings(
+        payload.voice_cloning,
+        supported=tts_supports_voice_cloning(tts_settings),
+    )
+    if cloning_errors:
+        raise HTTPException(status_code=422, detail={"voice_cloning": cloning_errors})
     principal, _, _ = resolve_request_context(request)
     session = SESSIONS.create_session(
         side_a_language=side_a_language,
         side_b_language=side_b_language,
         live_settings=live_settings,
         tts_settings=tts_settings,
+        voice_cloning=voice_cloning,
         tts_fairness_key=tts_fairness_key_for_principal(principal),
     )
     session_id = str(session["session_id"])

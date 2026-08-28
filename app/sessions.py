@@ -42,6 +42,7 @@ class ConversationSession:
     close_reason: str = ""
     live_settings: dict[str, Any] = field(default_factory=default_live_settings)
     tts_settings: dict[str, Any] = field(default_factory=dict)
+    voice_cloning: dict[str, Any] = field(default_factory=lambda: {"enabled": False})
     pc_events: list[dict[str, Any]] = field(default_factory=list)
     pc_export_path: str = ""
 
@@ -59,6 +60,7 @@ class ConversationSessionManager:
         tts_fairness_key: str,
         live_settings: dict[str, Any] | None = None,
         tts_settings: dict[str, Any] | None = None,
+        voice_cloning: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         now = time.time()
         self.cleanup_expired(now=now)
@@ -73,6 +75,7 @@ class ConversationSessionManager:
             tts_fairness_key=str(tts_fairness_key or ""),
             live_settings=dict(live_settings or default_live_settings()),
             tts_settings=dict(tts_settings or {}),
+            voice_cloning=dict(voice_cloning or {"enabled": False}),
         )
         with self._lock:
             self._sessions[session_id] = sess
@@ -177,6 +180,7 @@ class ConversationSessionManager:
             "side_b_language": sess.side_b_language,
             "live_settings": dict(sess.live_settings or {}),
             "tts_settings": dict(sess.tts_settings or {}),
+            "voice_cloning": dict(sess.voice_cloning or {"enabled": False}),
             "pc_events_count": len(sess.pc_events),
             "pc_export_path": sess.pc_export_path,
         }
