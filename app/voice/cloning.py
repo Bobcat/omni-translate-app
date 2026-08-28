@@ -250,8 +250,6 @@ def _overlaps(left: tuple[int, int], right: tuple[int, int]) -> bool:
 def _reference_id(lane_id: str, selected: tuple[_SegmentCandidate, ...]) -> str:
     identity = [
         [
-            candidate.request_id,
-            candidate.segment_id,
             candidate.t0_ms,
             candidate.t1_ms,
             candidate.text,

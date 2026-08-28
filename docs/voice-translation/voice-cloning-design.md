@@ -129,6 +129,10 @@ Readiness belongs to a conversation direction, not to the session as a whole.
 Each direction has its own recent-speech window. Switching to a direction that
 is still collecting returns the visible state to **Preparing**.
 
+During a live session, the desktop language bar follows the backend's current
+turn. It reverses source and target labels after a direction change instead of
+continuing to display the fixed side-A and side-B setup order.
+
 This proof of concept assumes one speaker identity per direction. Multiple
 people speaking on the same side can mix identities because speaker recognition
 and diarization are out of scope.
@@ -221,6 +225,11 @@ source request ids
 created time
 ```
 
+The reference identity is derived from the lane and the selected segment
+intervals and text. Request-local ASR and segment identifiers are deliberately
+excluded: rolling ASR jobs can return the same selected speech under new job
+identifiers, and that must reuse the existing materialized pair.
+
 Code must not clip the audio in one path and assemble the transcript in another.
 If either output fails validation, the pair is unusable for Prompt mode.
 
@@ -241,6 +250,12 @@ An existing TTS preparation remains keyed to the reference identity it started
 with. A reference update does not rewrite or invalidate a completed WAV. A
 queued preparation that has not started may use the new reference only if its
 preparation key is replaced before generation.
+
+Changing the cloning option discards unused speculative preparations created
+for the previous voice mode. Preparations already subscribed for playback and
+completed replay audio keep their original voice. Disabling cloning also clears
+the recent-speech window, so re-enabling returns each lane to **Preparing** until
+enough new speech has been captured.
 
 The reference deque and materialized clips are deleted through the existing
 voice-session cleanup lifecycle. Nothing is stored in browser storage or reused

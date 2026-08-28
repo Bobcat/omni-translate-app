@@ -11,7 +11,7 @@
 // queue) survives view switches untouched; the view re-renders from
 // `state` on every `onChange`.
 
-import { SessionSocket } from '../../../../src/api-client.js?v=20260828-voice-cloning-1';
+import { SessionSocket } from '../../../../src/api-client.js?v=20260828-voice-cloning-2';
 import { AudioCapture } from '../../../../src/shared/audio-capture.js';
 import { playMicOffCue, playMicOnCue } from '../../../../src/shared/audio-cue.js';
 import { AudioQueue } from '../../../../src/shared/audio-playback.js';
@@ -26,8 +26,8 @@ import {
   persistAutoSpeakPreference,
   persistSetupLanguages,
   persistVoiceCloningPreference,
-} from '../../../../src/domain/storage.js?v=20260828-voice-cloning-1';
-import { getConfig, createVoiceSession as requestVoiceSession } from '../../shared/api.js?v=20260828-voice-cloning-1';
+} from '../../../../src/domain/storage.js?v=20260828-voice-cloning-2';
+import { getConfig, createVoiceSession as requestVoiceSession } from '../../shared/api.js?v=20260828-voice-cloning-2';
 import {
   getDesktopMicrophoneState,
   setDesktopMicrophoneRuntime,

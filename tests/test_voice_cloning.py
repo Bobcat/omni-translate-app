@@ -120,6 +120,37 @@ class VoiceCloningWindowTests(unittest.TestCase):
         self.assertEqual(reference.duration_ms, 3000)
         self.assertEqual(reference.source_request_ids, ("asr_new",))
 
+    def test_same_rolling_selection_is_not_materialized_again(self) -> None:
+        window = self.window()
+        first = self.wav("rolling-first", duration_ms=3000, sample=300)
+        second = self.wav("rolling-second", duration_ms=3000, sample=300)
+        segments = [
+            {"segment_id": "job-local-id", "t0_ms": 0, "t1_ms": 3000, "text": "Same words"},
+        ]
+        self.assertTrue(window.record_asr_result(
+            lane_id="a_to_b",
+            request_id="asr_rolling_1",
+            wav_path=str(first),
+            wav_t0_ms=0,
+            wav_t1_ms=3000,
+            segments=segments,
+        ))
+
+        changed = window.record_asr_result(
+            lane_id="a_to_b",
+            request_id="asr_rolling_2",
+            wav_path=str(second),
+            wav_t0_ms=0,
+            wav_t1_ms=3000,
+            segments=[{**segments[0], "segment_id": "different-job-local-id"}],
+        )
+
+        self.assertFalse(changed)
+        self.assertEqual(
+            len(list((self.root / "tts" / self.session_id).rglob("clone_*.wav"))),
+            1,
+        )
+
     def test_segment_larger_than_maximum_is_not_cut(self) -> None:
         window = self.window(min_ms=2000, max_ms=3000)
         source = self.wav("long", duration_ms=5000)
@@ -303,6 +334,90 @@ class VoiceCloningDeliveryTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertIsNone(preparation)
+
+    async def test_unsupported_target_language_fails_closed(self) -> None:
+        settings, _ = tts_settings_snapshot({"enabled": True, "backend": "voxcpm2"})
+        reference = VoiceCloningReference(
+            reference_id="clone_a_to_b_test",
+            wav_path="/tmp/reference.wav",
+            prompt_text="Exact source words",
+            duration_ms=3200,
+            segment_count=1,
+            source_request_ids=("asr_1",),
+            created_mono=1.0,
+        )
+        part = SimpleNamespace(part_id="part_1", target="Translated words")
+        runtime = SimpleNamespace(
+            session_id="conv_delivery_unsupported_language",
+            tts_settings=settings,
+            voice_cloning=SimpleNamespace(
+                enabled=True,
+                max_duration_ms=10_000,
+                reference=lambda _lane_id: reference,
+            ),
+            lanes={"a_to_b": SimpleNamespace(target_language="Klingon")},
+            current_turn=SimpleNamespace(turn_id="turn_1", parts=[part]),
+        )
+        delivery = TtsDelivery(runtime, part_target_text=lambda item: item.target)
+
+        preparation = delivery._new_preparation(
+            lane_id="a_to_b",
+            turn_id="turn_1",
+            part_id="part_1",
+            reason="speculative",
+        )
+
+        self.assertIsNone(preparation)
+
+    async def test_mode_toggle_drops_only_unused_preparations_from_previous_mode(self) -> None:
+        settings, _ = tts_settings_snapshot({"enabled": True, "backend": "voxcpm2"})
+        reference = VoiceCloningReference(
+            reference_id="clone_a_to_b_test",
+            wav_path="/tmp/reference.wav",
+            prompt_text="Exact source words",
+            duration_ms=3200,
+            segment_count=1,
+            source_request_ids=("asr_1",),
+            created_mono=1.0,
+        )
+        part = SimpleNamespace(part_id="part_1", target="Translated words")
+        runtime = SimpleNamespace(
+            session_id="conv_delivery_toggle_test",
+            tts_settings=settings,
+            voice_cloning=SimpleNamespace(
+                enabled=True,
+                max_duration_ms=10_000,
+                reference=lambda _lane_id: reference,
+            ),
+            lanes={"a_to_b": SimpleNamespace(target_language="English")},
+            current_turn=SimpleNamespace(turn_id="turn_1", parts=[part]),
+        )
+        delivery = TtsDelivery(runtime, part_target_text=lambda item: item.target)
+        unused = delivery._new_preparation(
+            lane_id="a_to_b",
+            turn_id="turn_1",
+            part_id="part_1",
+            reason="speculative",
+        )
+        delivery.preparations[unused.key] = unused
+
+        delivery.voice_cloning_mode_changed(enabled=False)
+
+        self.assertNotIn(unused.key, delivery.preparations)
+        self.assertTrue(unused.cancelled)
+
+        subscribed = delivery._new_preparation(
+            lane_id="a_to_b",
+            turn_id="turn_1",
+            part_id="part_1",
+            reason="demand",
+        )
+        subscribed.subscribed = True
+        delivery.preparations[subscribed.key] = subscribed
+
+        delivery.voice_cloning_mode_changed(enabled=False)
+
+        self.assertIs(delivery.preparations[subscribed.key], subscribed)
 
 
 class VoiceCloningRuntimeTests(unittest.IsolatedAsyncioTestCase):

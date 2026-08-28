@@ -3,7 +3,7 @@
 import {
   getDesktopAppearance,
   setDesktopAppearance,
-} from '../../shared/appearance.js';
+} from '../../shared/appearance.js?v=20260828-voice-cloning-2';
 import {
   getDesktopMicrophoneState,
   resetDesktopMicrophoneSettings,

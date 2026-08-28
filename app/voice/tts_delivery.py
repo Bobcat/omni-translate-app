@@ -323,11 +323,21 @@ class TtsDelivery:
                     trigger=reason,
                 )
                 return None
-            settings = product_voice_cloning_settings(
-                settings,
-                language=lane.target_language,
-                max_duration_s=runtime.voice_cloning.max_duration_ms / 1000.0,
-            )
+            try:
+                settings = product_voice_cloning_settings(
+                    settings,
+                    language=lane.target_language,
+                    max_duration_s=runtime.voice_cloning.max_duration_ms / 1000.0,
+                )
+            except ValueError:
+                _metric(
+                    "voice_cloning_tts_skip",
+                    sess=runtime.session_id,
+                    lane=lane_id,
+                    trigger=reason,
+                    cause="unsupported_target_language",
+                )
+                return None
             reference_id = reference.reference_id
             reference_wav_path = reference.wav_path
             reference_prompt_text = reference.prompt_text
@@ -755,6 +765,13 @@ class TtsDelivery:
             self.runtime._refresh_turn_state()
             await self.runtime._send_turn_update(reason="tts_settings_changed")
 
+    def voice_cloning_mode_changed(self, *, enabled: bool) -> None:
+        """Drop unused preparations made under the previous product voice mode."""
+        for record in list(self.preparations.values()):
+            if record.subscribed or bool(record.reference_id) == bool(enabled):
+                continue
+            self._drop_record(record)
+
     async def stop(self, payload: dict[str, Any]) -> None:
         runtime = self.runtime
         turn = runtime.current_turn
@@ -948,6 +965,8 @@ class TtsDelivery:
             or not tts_settings_enabled(self.runtime.tts_settings)
             or record.settings_key != _synthesis_settings_key(
                 self.runtime.tts_settings,
+                # A preparation keeps the immutable reference it started with.
+                # A newer lane reference applies only to future preparations.
                 reference_id=record.reference_id,
             )
         ):

@@ -5,7 +5,7 @@
 import {
   loadAppearanceSettings,
   saveAppearanceSettings,
-} from '../../../src/domain/storage.js';
+} from '../../../src/domain/storage.js?v=20260828-voice-cloning-2';
 
 const darkMedia = window.matchMedia('(prefers-color-scheme: dark)');
 

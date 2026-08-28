@@ -1,9 +1,9 @@
 import { iconMarkup } from '../../shared/icons.js';
 import { populateLanguageSelect, recordLanguageMru } from '../../shared/languages.js';
-import { translateText } from '../../shared/api.js';
+import { translateText } from '../../shared/api.js?v=20260828-voice-cloning-2';
 import { publishViewBusy } from '../../shared/view-activity.js';
 import { guessSetupLanguages } from '../../../../src/domain/languages.js';
-import { loadSetupLanguages, persistSetupLanguages } from '../../../../src/domain/storage.js';
+import { loadSetupLanguages, persistSetupLanguages } from '../../../../src/domain/storage.js?v=20260828-voice-cloning-2';
 import { createTranslationRunner } from './translation-runner.js';
 
 // Text translation view — the classic typed/pasted-text workflow. The timing

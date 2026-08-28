@@ -6,7 +6,7 @@ import {
   getImageRequest,
   translateImage,
   retranslateImage,
-} from '../../shared/api.js';
+} from '../../shared/api.js?v=20260828-voice-cloning-2';
 import { publishViewBusy } from '../../shared/view-activity.js';
 import { onAuthChange } from '../../auth.js';
 import {

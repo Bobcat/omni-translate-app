@@ -36,6 +36,7 @@ from app.translation_bridge import TranslationBridge
 from app.tts_bridge import tts_settings_enabled
 from app.tts_bridge import tts_settings_snapshot
 from app.tts_bridge import tts_supports_voice_cloning
+from app.tts_bridge import tts_supports_voice_cloning_language
 from app.voice.cloning import normalize_voice_cloning_settings
 from app.voice.cloning import VoiceCloningWindow
 from app.voice.session_lifecycle import ConversationLifecycle
@@ -343,6 +344,7 @@ class ConversationRuntime:
         self.voice_cloning_settings = settings
         self.voice_cloning.set_enabled(enabled)
         if previous_enabled != enabled:
+            self.tts_delivery.voice_cloning_mode_changed(enabled=enabled)
             _metric(
                 "voice_cloning_setting",
                 sess=self.session_id,
@@ -756,6 +758,30 @@ class ConversationRuntime:
                         lane_id=lane.lane_id,
                         turn_id=turn.turn_id,
                         message="Speak naturally for a few more seconds before using voice cloning",
+                    )
+                )
+            return
+        if (
+            self.voice_cloning.enabled
+            and not tts_supports_voice_cloning_language(lane.target_language)
+        ):
+            _metric(
+                "voice_cloning_tts_skip",
+                sess=self.session_id,
+                lane=lane.lane_id,
+                trigger=reason,
+                cause="unsupported_target_language",
+            )
+            if reason in {"speak_now", "speak_part"}:
+                await self.lifecycle.send(
+                    event(
+                        "tts_status",
+                        self.session_id,
+                        state="skipped",
+                        reason="voice_clone_unsupported_language",
+                        lane_id=lane.lane_id,
+                        turn_id=turn.turn_id,
+                        message="Voice cloning is unavailable for this target language",
                     )
                 )
             return

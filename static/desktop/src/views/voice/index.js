@@ -1,7 +1,8 @@
 import { iconMarkup } from '../../shared/icons.js';
 import { populateLanguageSelect, recordLanguageMru } from '../../shared/languages.js';
 import { micHaloVisual } from '../../../../src/shared/mic-level-visual.js';
-import { createVoiceSession, visibleText } from './session.js?v=20260828-voice-cloning-1';
+import { createVoiceSession, visibleText } from './session.js?v=20260828-voice-cloning-2';
+import { visibleVoiceDirection } from './direction.js?v=20260828-voice-cloning-2';
 
 // Voice translation view, wired to the same backend session flow as the
 // mobile app (see ./session.js for the protocol state machine). Layout:
@@ -147,15 +148,16 @@ export function createVoiceWorkflow() {
 
   function renderLanguageBar() {
     const { state } = session;
-    populateLanguageSelect(sourcePill, state.sideALanguage);
-    populateLanguageSelect(targetPill, state.sideBLanguage);
+    const direction = visibleVoiceDirection(state);
+    populateLanguageSelect(sourcePill, direction.sourceLanguage);
+    populateLanguageSelect(targetPill, direction.targetLanguage);
     // Language choice is a setup-time decision; during a live session the
     // controls label the pair but stay locked.
     const locked = state.live || state.starting;
     sourcePill.disabled = locked;
     targetPill.disabled = locked;
-    sourcePill.setAttribute('aria-label', `Source language: ${state.sideALanguage}`);
-    targetPill.setAttribute('aria-label', `Target language: ${state.sideBLanguage}`);
+    sourcePill.setAttribute('aria-label', `Source language: ${direction.sourceLanguage}`);
+    targetPill.setAttribute('aria-label', `Target language: ${direction.targetLanguage}`);
     swapBtn.disabled = state.starting;
     vadBadge.hidden = !state.vadVisible;
     endSessionBtn.hidden = !state.live;
@@ -330,10 +332,10 @@ export function createVoiceWorkflow() {
       text = 'Connecting…';
     } else {
       const cloningState = state.voiceCloningStatus[session.currentLaneId()]?.state;
-      if (state.live && state.voiceCloningEnabled && cloningState === 'preparing') {
-        text = 'Preparing voice cloning · Speak naturally for a few more seconds.';
-      } else if (state.audioStatus) {
+      if (state.audioStatus) {
         text = state.audioStatus;
+      } else if (state.live && state.voiceCloningEnabled && cloningState === 'preparing') {
+        text = 'Preparing voice cloning · Speak naturally for a few more seconds.';
       } else if (state.live && state.voiceCloningEnabled && cloningState === 'ready') {
         text = 'Voice cloning ready';
       }

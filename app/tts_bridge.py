@@ -411,6 +411,10 @@ def tts_supports_voice_cloning(settings: dict[str, Any] | None = None) -> bool:
     return tts_settings_enabled(resolved) and _is_voxcpm_family_backend(resolved.get("backend"))
 
 
+def tts_supports_voice_cloning_language(language: str) -> bool:
+    return _bcp47_tag_for_language_name(language) is not None
+
+
 def product_voice_cloning_settings(
     settings: dict[str, Any],
     *,
