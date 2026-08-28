@@ -96,7 +96,8 @@ speaker audio is retained for cloning policy beyond the existing ASR lifecycle.
 
 The active conversation direction is in **Preparing** state. The desktop shows:
 
-> **Preparing voice cloning**  
+> **Preparing voice cloning**
+>
 > Speak naturally for a few more seconds. Cloning starts once enough clear
 > speech has been captured.
 
