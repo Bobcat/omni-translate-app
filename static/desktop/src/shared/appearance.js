@@ -5,7 +5,7 @@
 import {
   loadAppearanceSettings,
   saveAppearanceSettings,
-} from '../../../src/domain/storage.js?v=20260829-voice-modes-10';
+} from '../../../src/domain/storage.js?v=20260829-voice-modes-11';
 
 const darkMedia = window.matchMedia('(prefers-color-scheme: dark)');
 

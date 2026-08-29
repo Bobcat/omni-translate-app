@@ -11,14 +11,14 @@
 // queue) survives view switches untouched; the view re-renders from
 // `state` on every `onChange`.
 
-import { SessionSocket } from '../../../../src/api-client.js?v=20260829-voice-modes-10';
+import { SessionSocket } from '../../../../src/api-client.js?v=20260829-voice-modes-11';
 import { AudioCapture } from '../../../../src/shared/audio-capture.js';
 import { playMicOffCue, playMicOnCue } from '../../../../src/shared/audio-cue.js';
-import { AudioQueue } from '../../../../src/shared/audio-playback.js?v=20260829-voice-modes-10';
+import { AudioQueue } from '../../../../src/shared/audio-playback.js?v=20260829-voice-modes-11';
 import {
   setVoiceAudioSessionCaptureActive,
   usesIosVoiceAudioPath,
-} from '../../../../src/shared/audio-session.js?v=20260829-voice-modes-10';
+} from '../../../../src/shared/audio-session.js?v=20260829-voice-modes-11';
 import { shouldStopMicrophoneAfterPlayback } from '../../../../src/shared/voice-playback.js';
 import { voiceSessionEndMessage } from '../../../../src/shared/voice-session-end.js';
 import { createMicAutoOffController } from '../../../../src/shared/mic-auto-off-controller.js';
@@ -30,15 +30,18 @@ import {
   persistAutoSpeakPreference,
   persistSetupLanguages,
   persistVoiceModePreference,
-} from '../../../../src/domain/storage.js?v=20260829-voice-modes-10';
-import { getConfig, createVoiceSession as requestVoiceSession } from '../../shared/api.js?v=20260829-voice-modes-10';
+} from '../../../../src/domain/storage.js?v=20260829-voice-modes-11';
+import { getConfig, createVoiceSession as requestVoiceSession } from '../../shared/api.js?v=20260829-voice-modes-11';
 import {
   getDesktopMicrophoneState,
   setDesktopMicrophoneRuntime,
   setDesktopMicrophoneSettings,
   subscribeDesktopMicrophoneState,
 } from '../../shared/microphone-settings.js';
-import { publishViewBusy } from '../../shared/view-activity.js';
+import {
+  publishViewBusy,
+  publishViewRecording,
+} from '../../shared/view-activity.js?v=20260829-voice-modes-11';
 
 const LANE_IDS = ['a_to_b', 'b_to_a'];
 const STABLE_VOICE_MODES = ['female', 'male'];
@@ -159,6 +162,7 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
   let configLoadPromise = null;
   let iosCaptureResumeTask = null;
   let iosAutoOffWasArmed = false;
+  let publishedRecording = false;
   // The AudioQueue constructor fires onStatus synchronously, before the
   // view's `const session = createVoiceSession(...)` binding exists — a
   // render then would hit the TDZ. The view renders itself right after
@@ -186,6 +190,11 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
 
   function emit() {
     if (!constructed) return;
+    const recording = state.live && state.micState === MIC_STATES.LISTENING;
+    if (recording !== publishedRecording) {
+      publishedRecording = recording;
+      publishViewRecording('voice', recording);
+    }
     onChange?.();
   }
 

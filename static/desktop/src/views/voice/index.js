@@ -1,12 +1,12 @@
 import { iconMarkup } from '../../shared/icons.js';
 import { populateLanguageSelect, recordLanguageMru } from '../../shared/languages.js';
 import { micHaloVisual } from '../../../../src/shared/mic-level-visual.js';
-import { createVoiceSession, visibleText } from './session.js?v=20260829-voice-modes-10';
-import { visibleVoiceDirection } from './direction.js?v=20260829-voice-modes-10';
+import { createVoiceSession, visibleText } from './session.js?v=20260829-voice-modes-11';
+import { visibleVoiceDirection } from './direction.js?v=20260829-voice-modes-11';
 import {
   visibleVoiceCloningGuidance,
   visibleVoiceCloningStatus,
-} from './cloning-status.js?v=20260829-voice-modes-10';
+} from './cloning-status.js?v=20260829-voice-modes-11';
 
 // Voice translation view, wired to the same backend session flow as the
 // mobile app (see ./session.js for the protocol state machine). Layout:

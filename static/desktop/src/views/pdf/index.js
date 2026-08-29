@@ -9,8 +9,8 @@ import {
   getConfig,
   getEntitlements,
   getUsage,
-} from '../../shared/api.js?v=20260829-voice-modes-10';
-import { publishViewBusy } from '../../shared/view-activity.js';
+} from '../../shared/api.js?v=20260829-voice-modes-11';
+import { publishViewBusy } from '../../shared/view-activity.js?v=20260829-voice-modes-11';
 import { onAuthChange, whenAuthReady } from '../../auth.js';
 import { createAccountChangeGuard } from '../../shared/account-state.js';
 import { waitForCancellationSettlement } from './cancellation.js';

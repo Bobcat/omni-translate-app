@@ -10,19 +10,22 @@ import {
   bindMobileSidebarDismiss,
 } from '../foundation/spa-foundation/index.js';
 import { iconMarkup } from './src/shared/icons.js';
-import { VIEW_BUSY_EVENT } from './src/shared/view-activity.js';
+import {
+  VIEW_BUSY_EVENT,
+  VIEW_RECORDING_EVENT,
+} from './src/shared/view-activity.js?v=20260829-voice-modes-11';
 import { accountInitials } from '../shared/account-display.js';
-import { cancelImage, getConfig, getImageRequest } from './src/shared/api.js?v=20260829-voice-modes-10';
+import { cancelImage, getConfig, getImageRequest } from './src/shared/api.js?v=20260829-voice-modes-11';
 import { initAuth, onAuthChange, onBeforeSignOut } from './src/auth.js';
 import { registerImageSignOutCancellation } from '../shared/image-operation-recovery.js';
-import { createVoiceWorkflow } from './src/views/voice/index.js?v=20260829-voice-modes-10';
-import { createTextView } from './src/views/text/index.js?v=20260829-voice-modes-10';
-import { createImageView } from './src/views/image/index.js?v=20260829-voice-modes-10';
-import { createPdfView } from './src/views/pdf/index.js?v=20260829-voice-modes-10';
+import { createVoiceWorkflow } from './src/views/voice/index.js?v=20260829-voice-modes-11';
+import { createTextView } from './src/views/text/index.js?v=20260829-voice-modes-11';
+import { createImageView } from './src/views/image/index.js?v=20260829-voice-modes-11';
+import { createPdfView } from './src/views/pdf/index.js?v=20260829-voice-modes-11';
 import { createInfoView } from './src/views/info/index.js?v=20260823-third-party-notices-1';
-import { createSettingsView } from './src/views/settings/index.js?v=20260829-voice-modes-10';
-import { createAccountView } from './src/views/account/index.js?v=20260829-voice-modes-10';
-import { initDesktopAppearance } from './src/shared/appearance.js?v=20260829-voice-modes-10';
+import { createSettingsView } from './src/views/settings/index.js?v=20260829-voice-modes-11';
+import { createAccountView } from './src/views/account/index.js?v=20260829-voice-modes-11';
+import { initDesktopAppearance } from './src/shared/appearance.js?v=20260829-voice-modes-11';
 import { getInfoCategory } from '../shared/info/index.js?v=20260823-third-party-notices-1';
 
 const STORAGE_KEY = 'omni-translate.desktop.shell';
@@ -100,14 +103,22 @@ function saveSidebarState() {
 }
 
 function renderNav() {
-  const itemMarkup = (item, extraClass = '') => `
+  const itemMarkup = (item, extraClass = '') => {
+    const icon = item.id === 'voice'
+      ? `<span class="sidebar-icon-status">
+          ${iconMarkup(item.icon, 'sidebar-icon')}
+          <span class="sidebar-recording-dot" aria-hidden="true"></span>
+        </span>`
+      : iconMarkup(item.icon, 'sidebar-icon');
+    return `
       <li data-route="${item.route}" data-tooltip="${item.name}"${extraClass ? ` class="${extraClass}"` : ''}>
         <a data-nav-route="${item.route}" href="${routeUrl(item.route)}">
-          ${iconMarkup(item.icon, 'sidebar-icon')}
+          ${icon}
           <span class="link-text">${item.name}</span>
         </a>
       </li>
     `;
+  };
 
   const mainMarkup = NAV_ITEMS.map((item) => itemMarkup(item)).join('');
   const auxiliaryMarkup = AUX_ITEMS
@@ -180,10 +191,20 @@ ALL_NAV_ITEMS.forEach((item) => {
 // another view (the whole point of keep-alive is that the view keeps running
 // while detached).
 const busyViews = new Set();
+const recordingViews = new Set();
 
-function updateViewRunningState() {
+function updateViewActivityState() {
   navList.querySelectorAll('[data-route]').forEach((item) => {
-    item.classList.toggle('is-running', busyViews.has(String(item.dataset.route || '')));
+    const route = String(item.dataset.route || '');
+    const recording = recordingViews.has(route);
+    item.classList.toggle('is-running', busyViews.has(route));
+    item.classList.toggle('is-recording', recording);
+    const baseLabel = String(item.querySelector('.link-text')?.textContent || '').trim();
+    const accessibleLabel = recording ? `${baseLabel} — recording` : baseLabel;
+    item.dataset.tooltip = accessibleLabel;
+    const link = item.querySelector('[data-nav-route]');
+    if (recording) link?.setAttribute('aria-label', accessibleLabel);
+    else link?.removeAttribute('aria-label');
   });
 }
 
@@ -191,8 +212,19 @@ window.addEventListener(VIEW_BUSY_EVENT, (event) => {
   const view = String(event?.detail?.view || '');
   if (!view) return;
   if (event.detail.busy) busyViews.add(view);
-  else busyViews.delete(view);
-  updateViewRunningState();
+  else {
+    busyViews.delete(view);
+    recordingViews.delete(view);
+  }
+  updateViewActivityState();
+});
+
+window.addEventListener(VIEW_RECORDING_EVENT, (event) => {
+  const view = String(event?.detail?.view || '');
+  if (!view) return;
+  if (event.detail.recording && busyViews.has(view)) recordingViews.add(view);
+  else recordingViews.delete(view);
+  updateViewActivityState();
 });
 
 function updateSidebarUI(isOpen) {
