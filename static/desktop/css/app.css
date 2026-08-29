@@ -795,6 +795,21 @@ body {
   background: var(--success);
 }
 
+.voice-cloning-guidance {
+  margin: 0 3px;
+  color: var(--muted);
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+
+.voice-cloning-guidance-icon {
+  width: 14px;
+  height: 14px;
+  margin-right: 3px;
+  vertical-align: -0.18em;
+  color: currentColor;
+}
+
 .resume-audio-btn {
   padding: 6px 14px;
   border: 1px solid var(--border-control);

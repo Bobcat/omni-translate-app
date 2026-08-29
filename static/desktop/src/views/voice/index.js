@@ -1,9 +1,12 @@
 import { iconMarkup } from '../../shared/icons.js';
 import { populateLanguageSelect, recordLanguageMru } from '../../shared/languages.js';
 import { micHaloVisual } from '../../../../src/shared/mic-level-visual.js';
-import { createVoiceSession, visibleText } from './session.js?v=20260829-voice-modes-6';
-import { visibleVoiceDirection } from './direction.js?v=20260829-voice-modes-6';
-import { visibleVoiceCloningStatus } from './cloning-status.js?v=20260829-voice-modes-6';
+import { createVoiceSession, visibleText } from './session.js?v=20260829-voice-modes-10';
+import { visibleVoiceDirection } from './direction.js?v=20260829-voice-modes-10';
+import {
+  visibleVoiceCloningGuidance,
+  visibleVoiceCloningStatus,
+} from './cloning-status.js?v=20260829-voice-modes-10';
 
 // Voice translation view, wired to the same backend session flow as the
 // mobile app (see ./session.js for the protocol state machine). Layout:
@@ -73,6 +76,10 @@ export function createVoiceWorkflow() {
           </span>
         </label>
         <p class="voice-cloning-status" id="voiceCloningStatus" role="status" hidden></p>
+        <p class="voice-cloning-guidance" id="voiceCloningGuidance" role="note" hidden>
+          ${iconMarkup('triangle-alert', 'voice-cloning-guidance-icon')}
+          <span id="voiceCloningGuidanceText"></span>
+        </p>
       </div>
       <div class="voice-runtime-status">
         <p class="status-line" id="voiceStatus" role="status"></p>
@@ -94,6 +101,8 @@ export function createVoiceWorkflow() {
   const voiceModeField = container.querySelector('#voiceModeField');
   const voiceModeInputs = [...container.querySelectorAll('input[name="voiceMode"]')];
   const voiceCloningStatus = container.querySelector('#voiceCloningStatus');
+  const voiceCloningGuidance = container.querySelector('#voiceCloningGuidance');
+  const voiceCloningGuidanceText = container.querySelector('#voiceCloningGuidanceText');
   const resumeBtn = container.querySelector('#voiceResumeAudio');
 
   const session = createVoiceSession({
@@ -309,6 +318,9 @@ export function createVoiceWorkflow() {
     voiceCloningStatus.classList.toggle('is-ready', visibleStatus?.state === 'ready');
     voiceCloningStatus.textContent = visibleStatus?.text || '';
     voiceCloningStatus.hidden = !visibleStatus;
+    const guidance = visibleVoiceCloningGuidance(state);
+    voiceCloningGuidanceText.textContent = guidance;
+    voiceCloningGuidance.hidden = !guidance;
   }
 
   function renderMicLevel(value, listening) {

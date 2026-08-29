@@ -11,14 +11,14 @@
 // queue) survives view switches untouched; the view re-renders from
 // `state` on every `onChange`.
 
-import { SessionSocket } from '../../../../src/api-client.js?v=20260829-voice-modes-6';
+import { SessionSocket } from '../../../../src/api-client.js?v=20260829-voice-modes-10';
 import { AudioCapture } from '../../../../src/shared/audio-capture.js';
 import { playMicOffCue, playMicOnCue } from '../../../../src/shared/audio-cue.js';
-import { AudioQueue } from '../../../../src/shared/audio-playback.js?v=20260829-voice-modes-6';
+import { AudioQueue } from '../../../../src/shared/audio-playback.js?v=20260829-voice-modes-10';
 import {
   setVoiceAudioSessionCaptureActive,
   usesIosVoiceAudioPath,
-} from '../../../../src/shared/audio-session.js?v=20260829-voice-modes-6';
+} from '../../../../src/shared/audio-session.js?v=20260829-voice-modes-10';
 import { shouldStopMicrophoneAfterPlayback } from '../../../../src/shared/voice-playback.js';
 import { voiceSessionEndMessage } from '../../../../src/shared/voice-session-end.js';
 import { createMicAutoOffController } from '../../../../src/shared/mic-auto-off-controller.js';
@@ -30,8 +30,8 @@ import {
   persistAutoSpeakPreference,
   persistSetupLanguages,
   persistVoiceModePreference,
-} from '../../../../src/domain/storage.js?v=20260829-voice-modes-6';
-import { getConfig, createVoiceSession as requestVoiceSession } from '../../shared/api.js?v=20260829-voice-modes-6';
+} from '../../../../src/domain/storage.js?v=20260829-voice-modes-10';
+import { getConfig, createVoiceSession as requestVoiceSession } from '../../shared/api.js?v=20260829-voice-modes-10';
 import {
   getDesktopMicrophoneState,
   setDesktopMicrophoneRuntime,

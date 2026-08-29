@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { visibleVoiceCloningStatus } from '../../static/desktop/src/views/voice/cloning-status.js';
+import {
+  visibleVoiceCloningGuidance,
+  visibleVoiceCloningStatus,
+} from '../../static/desktop/src/views/voice/cloning-status.js';
 
 test('voice cloning status stays hidden outside a live enabled session', () => {
   assert.equal(visibleVoiceCloningStatus({
@@ -52,4 +55,22 @@ test('voice cloning status keeps ready state compact', () => {
     state: 'ready',
     text: 'Speaker voice ready',
   });
+});
+
+test('voice cloning guidance appears only while Clone speaker is available and selected', () => {
+  const cloneState = {
+    ttsEnabled: true,
+    voiceModeAvailable: true,
+    voiceMode: 'speaker_clone',
+  };
+  assert.equal(
+    visibleVoiceCloningGuidance(cloneState),
+    'For best results, speak clearly with as little background sound as possible. '
+      + 'Music, TV, other voices or unclear speech may make the cloned voice sound less like '
+      + 'the original speaker. These conditions, as well as very short translations, may '
+      + 'also produce strange or unintelligible sounds.',
+  );
+  assert.equal(visibleVoiceCloningGuidance({ ...cloneState, voiceMode: 'female' }), '');
+  assert.equal(visibleVoiceCloningGuidance({ ...cloneState, ttsEnabled: false }), '');
+  assert.equal(visibleVoiceCloningGuidance({ ...cloneState, voiceModeAvailable: false }), '');
 });

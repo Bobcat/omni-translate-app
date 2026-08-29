@@ -108,6 +108,15 @@ session. It is Female when Clone speaker was the session's first voice choice.
 Automatic, speculative, and manual TTS use this fallback while the reference is
 not ready. This avoids a silent period after Clone speaker is selected.
 
+Whenever Clone speaker is selected, the desktop also keeps this guidance visible:
+
+> For best results, speak clearly with as little background sound as possible. Music,
+> TV, other voices or unclear speech may make the cloned voice sound less like the
+> original speaker. These conditions, as well as very short translations, may also
+> produce strange or unintelligible sounds.
+
+A small muted warning icon marks this as guidance without presenting it as an error.
+
 Once the reference is ready, unused fallback preparations for that direction
 are discarded. Later synthesis uses the speaker voice. Audio already played or
 subscribed for playback keeps its original fallback voice, so replay remains
