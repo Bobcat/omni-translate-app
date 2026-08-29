@@ -282,3 +282,215 @@ cloning-preparation message while audio is active.
 Post-fix validation: 284 Python tests and 95 JavaScript tests pass, including
 the new rolling-reference, unsupported-language, mode-toggle, module-graph, and
 live-direction regression coverage. Syntax, compilation, and diff checks pass.
+
+## Re-review at `f4fe550`
+
+The PR grew after `dcc29b3`: `f4fe550` adds the Female / Male / Clone speaker
+selector, fallback synthesis while a lane prepares, the iOS playback transition,
+removal of the Translate and Speak controls, and the turn-boundary preview fix.
+Reviewed against `main` at `d06d084`, with extra attention to that commit.
+
+| Check | Result |
+| --- | --- |
+| `node --input-type=module --check < static/src/app.js` | pass |
+| `python -m py_compile app/main.py` | pass |
+| `python -m unittest discover -s tests` | 292 tests, pass |
+| `node --test tests/js/` | 106 tests, pass |
+| `git diff --check main...HEAD` | clean |
+
+**Merge-quality verdict: mergeable once finding 6 is settled.** Finding 6 is a
+latent turn wedge with a one-line fix; finding 7 is a gap in a regression guard.
+Findings 1 to 5 remain resolved — the reference-identity and module-graph fixes
+still hold under the new code.
+
+### 6. MEDIUM — Female or Male with an unmapped target language leaves the turn wedged
+
+**Where** — `app/runtime.py:766` (the language guard) and
+`app/voice/tts_delivery.py:352` into `app/voice/tts_delivery.py` `_play_part`.
+
+`ee50836` gave Clone speaker two guards: a dispatch-level language check that
+sends a structured `tts_status`, and a `try/except ValueError` in
+`_new_preparation`. The new Female / Male path added in `f4fe550` has only the
+second. The dispatch guard is still gated on
+`self.voice_mode == VOICE_MODE_SPEAKER_CLONE`, so for a product voice
+`_dispatch_speak_sequence` marks the part `speaking`, starts the task, and
+`_play_part` then returns because `_new_preparation` gave `None` — without ever
+settling the part.
+
+**Trigger** — voice mode Female or Male, VoxCPM backend, and a target language
+with no BCP47 tag; press Speak.
+
+**Observed**:
+
+```
+part.speech_state        : speaking
+turn.state               : open_speaking
+tts_status sent to client: []
+lane.tts_task            : None
+```
+
+The turn stays pinned in `OPEN_SPEAKING`, so `_source_event` drops all further
+ASR and the bubble shows Preparing until the user presses Stop. This is the same
+wedge class as finding 1 of the PR #21 review and finding 4 of PR #23.
+
+Currently unreachable through the UI: all 41 languages in
+`static/src/domain/languages.js` resolve to a tag. The speculative path is safe
+— `prepare_definitive_part` returns before decrementing, so the budget is
+preserved and the session does not end. Only the manual and automatic dispatch
+paths wedge.
+
+**Smallest safe correction** — settle the part in `_play_part` when
+`_new_preparation` returns `None`: reset `speaking` to `pending` and refresh the
+turn state. That closes the whole class rather than this one route. The
+narrower alternative is to drop the `VOICE_MODE_SPEAKER_CLONE` condition from
+the dispatch language guard so it covers every product voice mode.
+
+**Missing test** — a product voice with an unsupported target language must
+leave the bubble pending and the turn out of `OPEN_SPEAKING`.
+
+### 7. LOW — the module-graph guard covers only the desktop entry
+
+**Where** — `tests/js/desktop-module-graph.test.mjs:44`.
+
+The test added for finding 2 walks `static/desktop/index.html` only. The mobile
+graph rooted at `static/src/app.js` is unchecked, and it currently has a split:
+
+```
+static/src/settings/sheet.js -> ['', 'v=20260823-third-party-notices-1']
+     static/src/app.js                ?v=20260823-third-party-notices-1
+     static/src/session/lifecycle.js  ?(none)
+```
+
+That split predates this PR — verified against `main` — so it is not a defect
+introduced here. The gap matters because `f4fe550` adds new versioned imports to
+the mobile graph (`audio-playback.js` and `audio-session.js` at
+`v=20260829-ios-playback-1`), which is exactly where the guard is now absent.
+Those two are consistent today.
+
+**Smallest safe correction** — parameterize the existing test over both entry
+documents.
+
+### Verification of the earlier findings under the new code
+
+- **Finding 1** — the module-graph walk of the desktop entry now covers 52 files
+  and reports one URL per module, with no preload mismatch. Reference identity
+  still hashes only timestamps and text.
+- **Finding 2** — desktop graph clean; see finding 7 for the mobile gap.
+- **Findings 3 to 5** — the cloning language guard, the documented staleness
+  intent, and the mode-change drop all survive the refactor into
+  `voice_mode_changed`.
+
+### What holds up in the new work
+
+- **Fallback voice selection is correct.** Measured:
+
+  ```
+  session starts in speaker_clone -> fallback: female
+  Female -> Clone -> Male -> Clone  ->  female, female, male, male
+  ```
+
+  So Clone speaker uses the last explicit Female or Male choice, and defaults to
+  Female only when no such choice was made.
+- **Reaching readiness drops only unused fallbacks for that lane.**
+  `voice_cloning_reference_ready` skips other lanes, non-clone modes, and any
+  subscribed record, so active playback and completed replay audio are untouched.
+- **Stable voices do not smuggle in a last-speech reference.**
+  `product_stable_voice_settings` sets `reference_source` to `stable_generated`,
+  after which `_last_speech_reference_choice` returns `None`.
+- **The stable-sample dependency is not new.**
+  `VOXCPM2_DEFAULT_LANGUAGE_CONFIG` already used `reference_audio` with
+  `stable_generated`, and `stable_voice_wav_path` falls back to the curated
+  English sample.
+- **The turn-boundary fix is correctly scoped.**
+  `_accept_visible_previews_for_parts` writes lane scope only for the last part
+  when it is still open, so an older closed part can be finalized without
+  prefixing the current bubble, while the current open part still updates scope.
+- **The iOS resume path is well guarded.** `_iosCaptureResumeTask` prevents a
+  double open; `restoreMicrophoneCaptureAfterIosPlayback` re-checks app mode,
+  mic state and `audioQueue.hasAudio()` before opening and again after
+  `getUserMedia` resolves, including the session id, stopping the fresh capture
+  when the expectation no longer holds. A failure during resume settles
+  `micState` to `OFF` and clears capture muting.
+- **The delayed start is cancelled everywhere it must be** — `stop`, `clear`,
+  `playNext`, and `failPcmStream` all call `cancelPendingPlaybackStart`, and
+  `schedulePendingPcm` refuses to schedule while the timer is pending.
+- **Platform detection** matches iPhone/iPad/iPod by user agent plus the
+  `MacIntel` with `maxTouchPoints > 1` idiom for iPadOS desktop mode, which does
+  not match macOS Safari. Both the mobile and desktop queues apply the 90 ms
+  delay.
+
+### Unresolved risks
+
+- **iOS behaviour is untested on a device**, as the prompt states. The logic
+  reads correct, but the 90 ms constant, the audio-session type switch, and the
+  interaction with the browser's own routing can only be judged on hardware.
+- **`normalize_voice_mode` rejects Female and Male on a non-VoxCPM backend**
+  rather than falling back silently. That is consistent with the capability
+  gate, but it means a deployment that switches the backend mid-session gets an
+  `invalid_voice_mode` error instead of a degraded product voice.
+
+### Test gaps
+
+- No test covers a product voice with an unsupported target language
+  (finding 6).
+- No test walks the mobile module graph (finding 7).
+- No test exercises the iOS pause and resume race: playback starting while a
+  resume is awaiting `getUserMedia`.
+- No test covers the removed Translate and Speak controls, so nothing guards
+  against a reachable dead path.
+
+### Paths not exercised
+
+- Any real device: iOS audio routing, the desktop layout at narrow widths, zoom
+  and increased text size, and keyboard access to the voice selector.
+- Real VoxCPM synthesis with the stable Female and Male samples; the settings
+  mapping was read, not heard.
+- Real ASR-pool and TTS-pool interaction.
+
+### Resolution of findings 6 and 7
+
+Both were fixed in the working tree on top of `f4fe550` (not yet committed at the
+time of this check). Checks: 293 Python tests, 108 JavaScript tests, syntax,
+compilation, and `git diff --check` all pass.
+
+**Finding 6 — resolved with the broad correction.** `_play_part` now settles the
+part when `_new_preparation` returns `None`, rather than only guarding the one
+route that reached it. Re-running the reproduction:
+
+```
+voice_mode=female, language without a tag
+  part.speech_state : pending          (was speaking)
+  turn.state        : open_active_unspoken   (was open_speaking)
+  lane.tts_task     : None
+```
+
+The turn is no longer pinned, so ASR resumes. Because the fix sits at the shared
+exit rather than at the dispatch guard, it also covers any future
+`_new_preparation` rejection. A regression test asserts the pending state, the
+turn state, and the `tts_preparation_unavailable` turn update.
+
+One cosmetic residue, not worth changing: no `tts_status` accompanies the turn
+update, so a manual Speak on that path silently returns the bubble to speakable
+where the cloning path explains itself. The route is unreachable through the UI.
+
+**Finding 7 — resolved.** `desktop-module-graph.test.mjs` now runs over both the
+desktop and mobile entry documents. The pre-existing mobile split was cleared by
+dropping the stale query from `app.js`'s import of `settings/sheet.js`;
+`sheet.js` is unchanged since `main` and was last touched in `cf11238`, so
+dropping the cache-buster loses nothing, and the mobile entry URL was bumped
+alongside it. Both graphs verified independently:
+
+```
+desktop graph: 52 files -> one URL per module, no preload mismatch
+mobile  graph: 47 files -> one URL per module, no preload mismatch
+```
+
+**Also in this round, outside the findings.** A background-noise guidance note
+for Clone speaker was added to the desktop view and the design document, with
+its own test, and the desktop cache version moved from `-6` to `-7`. The mobile
+entry sits at `-4` on its own counter; the two pages have separate entries, so
+that difference is not a module-identity problem. Not reviewed in depth — it is
+copy and rendering, outside the reported findings.
+
+**Verdict: mergeable.** Findings 1 to 7 are resolved. The open items are the
+untested paths already listed above, chiefly iOS behaviour on a real device.
