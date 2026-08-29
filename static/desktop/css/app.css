@@ -478,6 +478,39 @@ body {
   flex: none;
 }
 
+.voice-languagebar.is-session-locked .language-trigger:disabled {
+  opacity: 1;
+}
+
+.voice-languagebar.is-session-locked .language-trigger-chevron {
+  display: none;
+}
+
+.voice-end-session-btn {
+  min-height: 38px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.voice-end-session-btn:hover {
+  background: var(--hover-bg);
+  color: var(--text-color);
+}
+
+.voice-end-session-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
 .voice-view,
 .text-view {
   width: 100%;

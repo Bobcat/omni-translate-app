@@ -30,8 +30,9 @@ export function createVoiceWorkflow() {
       </div>
       <div class="toolbar-actions">
         <span class="vad-badge" id="voiceVadBadge" hidden>Speech detected</span>
-        <button type="button" class="icon-square-btn" id="voiceEndSession" aria-label="End session" title="End session" hidden>
+        <button type="button" class="voice-end-session-btn" id="voiceEndSession" hidden>
           ${iconMarkup('x')}
+          <span>End session</span>
         </button>
       </div>
     </div>
@@ -88,6 +89,7 @@ export function createVoiceWorkflow() {
     </div>
   `;
 
+  const languageBar = container.querySelector('.voice-languagebar');
   const sourcePill = container.querySelector('#voiceSourceLanguage');
   const targetPill = container.querySelector('#voiceTargetLanguage');
   const swapBtn = container.querySelector('#voiceSwapLanguages');
@@ -175,8 +177,13 @@ export function createVoiceWorkflow() {
     // Language choice is a setup-time decision; during a live session the
     // controls label the pair but stay locked.
     const locked = state.live || state.starting;
+    languageBar.classList.toggle('is-session-locked', locked);
     sourcePill.disabled = locked;
     targetPill.disabled = locked;
+    for (const pill of [sourcePill, targetPill]) {
+      if (locked) pill.removeAttribute('aria-haspopup');
+      else pill.setAttribute('aria-haspopup', 'dialog');
+    }
     sourcePill.setAttribute('aria-label', `Source language: ${direction.sourceLanguage}`);
     targetPill.setAttribute('aria-label', `Target language: ${direction.targetLanguage}`);
     swapBtn.disabled = state.starting;
