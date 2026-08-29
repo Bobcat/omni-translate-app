@@ -277,6 +277,11 @@ class TtsDelivery:
                 reason=generation_reason,
             )
             if record is None:
+                part = self._current_part(turn_id, part_id)
+                if part is not None and part.speech_state == "speaking":
+                    part.speech_state = "pending"
+                    self.runtime._refresh_turn_state()
+                    await self.runtime._send_turn_update(reason="tts_preparation_unavailable")
                 return
             self._record_playback_path(record, "demand_miss")
             await self._prioritize_explicit(record)

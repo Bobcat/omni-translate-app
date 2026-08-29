@@ -4,10 +4,14 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
 const repoRoot = fileURLToPath(new URL('../../', import.meta.url));
-const desktopDocumentUrl = new URL('https://example.test/static/desktop/index.html');
+const staticRoot = `${repoRoot}static`;
+const entryDocuments = [
+  ['desktop', new URL('https://example.test/desktop/index.html')],
+  ['mobile', new URL('https://example.test/index.html')],
+];
 
 function readRepoUrl(url) {
-  return readFileSync(`${repoRoot}${url.pathname}`, 'utf8');
+  return readFileSync(`${staticRoot}${url.pathname}`, 'utf8');
 }
 
 function relativeImports(source) {
@@ -41,26 +45,28 @@ function collectModuleGraph(entryUrl) {
   return searchesByPath;
 }
 
-test('desktop module graph uses one URL per source module', () => {
-  const html = readRepoUrl(desktopDocumentUrl);
-  const entryMatch = html.match(/<script\s+type="module"\s+src="([^"]+)"/);
-  assert.ok(entryMatch, 'desktop module entry is present');
+for (const [variant, documentUrl] of entryDocuments) {
+  test(`${variant} module graph uses one URL per source module`, () => {
+    const html = readRepoUrl(documentUrl);
+    const entryMatch = html.match(/<script\s+type="module"\s+src="([^"]+)"/);
+    assert.ok(entryMatch, `${variant} module entry is present`);
 
-  const graph = collectModuleGraph(new URL(entryMatch[1], desktopDocumentUrl));
-  const duplicateUrls = [...graph]
-    .filter(([, searches]) => searches.size > 1)
-    .map(([pathname, searches]) => `${pathname}: ${[...searches].join(', ')}`);
-  assert.deepEqual(duplicateUrls, []);
+    const graph = collectModuleGraph(new URL(entryMatch[1], documentUrl));
+    const duplicateUrls = [...graph]
+      .filter(([, searches]) => searches.size > 1)
+      .map(([pathname, searches]) => `${pathname}: ${[...searches].join(', ')}`);
+    assert.deepEqual(duplicateUrls, []);
 
-  const preloadHrefs = [...html.matchAll(/<link\s+rel="modulepreload"\s+href="([^"]+)"/g)]
-    .map((match) => match[1]);
-  for (const href of preloadHrefs) {
-    const preloadUrl = new URL(href, desktopDocumentUrl);
-    const graphSearches = graph.get(preloadUrl.pathname);
-    if (!graphSearches) continue;
-    assert.ok(
-      graphSearches.has(preloadUrl.search),
-      `${preloadUrl.pathname} is preloaded with a different cache version`,
-    );
-  }
-});
+    const preloadHrefs = [...html.matchAll(/<link\s+rel="modulepreload"\s+href="([^"]+)"/g)]
+      .map((match) => match[1]);
+    for (const href of preloadHrefs) {
+      const preloadUrl = new URL(href, documentUrl);
+      const graphSearches = graph.get(preloadUrl.pathname);
+      if (!graphSearches) continue;
+      assert.ok(
+        graphSearches.has(preloadUrl.search),
+        `${preloadUrl.pathname} is preloaded with a different cache version`,
+      );
+    }
+  });
+}

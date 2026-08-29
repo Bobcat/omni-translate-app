@@ -16,6 +16,7 @@ from app.runtime import TurnPart
 from app.sessions import ConversationSession
 from app.sessions import SESSIONS
 from app.tts_bridge import tts_settings_snapshot
+from app.voice.mode import VOICE_MODE_MALE
 from app.voice.session_storage import SessionArtifactLimitExceeded
 
 
@@ -922,6 +923,30 @@ class TurnStateMachineTests(unittest.IsolatedAsyncioTestCase):
             any(
                 item["type"] == "turn_update"
                 and item["reason"] == "tts_replay_unavailable"
+                for item in websocket.sent
+            )
+        )
+
+    async def test_unavailable_product_voice_returns_the_bubble_to_pending(self) -> None:
+        tts = FastTTS()
+        runtime, websocket = self.make_runtime(tts)
+        runtime.tts_settings = tts_settings_snapshot(
+            {"enabled": True, "backend": "voxcpm2"}
+        )[0]
+        runtime.voice_mode = VOICE_MODE_MALE
+        runtime._current_lane().target_language = "Klingon"
+
+        await runtime._speak_now()
+        await runtime._current_lane().tts_task
+
+        self.assertEqual(tts.count, 0)
+        self.assertEqual(runtime.current_turn.parts[0].speech_state, "pending")
+        self.assertEqual(runtime.current_turn.state.value, "open_active_unspoken")
+        self.assertIsNone(runtime._current_lane().tts_task)
+        self.assertTrue(
+            any(
+                item["type"] == "turn_update"
+                and item["reason"] == "tts_preparation_unavailable"
                 for item in websocket.sent
             )
         )
