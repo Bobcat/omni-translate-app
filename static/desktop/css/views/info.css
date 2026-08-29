@@ -265,13 +265,33 @@
   margin-top: 7px;
 }
 
+.info-article-component-link {
+  color: #2f6f62;
+  font-weight: 600;
+  text-underline-offset: 3px;
+}
+
+.info-article-component-link:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 3px;
+}
+
+:root[data-theme='dark'] .info-article-component-link {
+  color: #7fc9b3;
+}
+
 .info-article-section .info-article-links {
   display: flex;
   flex-wrap: wrap;
+  align-items: baseline;
   gap: 8px 18px;
   margin-top: 14px;
   padding: 0;
   list-style: none;
+}
+
+.info-article-section .info-article-links > li {
+  margin-top: 0;
 }
 
 .info-article-links a {

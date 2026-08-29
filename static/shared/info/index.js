@@ -357,68 +357,242 @@ export const INFO_CATEGORIES = [
         title: 'About this notice',
         paragraphs: [
           'This notice covers software delivered to your browser and the main third-party components used on OmniScripta infrastructure. Server-side projects are included for transparency, even when their licences do not require a notice for hosted use.',
-          'A project listed here is not necessarily downloaded to your device. Exact versions and transitive dependencies can differ between services and deployment platforms. This notice was reviewed on 23 August 2026.',
+          'A project listed here is not necessarily downloaded to your device. Exact versions and transitive dependencies can differ between services and deployment platforms. This notice was reviewed on 29 August 2026.',
         ],
       },
       {
         title: 'Website and account access',
         bullets: [
-          'Supabase JavaScript client 2.x — MIT — supports optional sign-in and browser sessions. It is loaded from jsDelivr only when account access is configured.',
-          'Cormorant Garamond, Inter and Source Sans 3 — SIL Open Font License 1.1 — provide interface typography through Google Fonts.',
-          'Google Identity Services supports optional Google sign-in. It is a Google service, not an open-source component. Its role is also described under Privacy and file handling.',
-        ],
-        links: [
-          { label: 'Supabase JavaScript client — MIT licence', href: 'https://github.com/supabase/supabase-js/blob/master/LICENSE' },
-          { label: 'SIL Open Font License 1.1', href: 'https://openfontlicense.org/open-font-license-official-text/' },
+          {
+            label: 'Supabase JavaScript client 2.x',
+            href: 'https://github.com/supabase/supabase-js/blob/master/LICENSE',
+            description: 'MIT. Supports optional sign-in and browser sessions.',
+          },
+          {
+            label: 'jsDelivr',
+            href: 'https://www.jsdelivr.com/',
+            description: 'Delivers the Supabase client when account access is configured.',
+          },
+          {
+            label: 'Cormorant Garamond',
+            href: 'https://github.com/CatharsisFonts/Cormorant/blob/master/OFL.txt',
+            description: 'SIL Open Font License 1.1. Provides display typography.',
+          },
+          {
+            label: 'Inter',
+            href: 'https://github.com/rsms/inter/blob/master/LICENSE.txt',
+            description: 'SIL Open Font License 1.1. Provides interface typography.',
+          },
+          {
+            label: 'Source Sans 3',
+            href: 'https://github.com/adobe-fonts/source-sans/blob/release/LICENSE.md',
+            description: 'SIL Open Font License 1.1. Provides interface typography.',
+          },
+          {
+            label: 'Google Fonts',
+            href: 'https://fonts.google.com/',
+            description: 'Hosts and delivers the interface fonts. It is a Google service, not an open-source component.',
+          },
+          {
+            label: 'Google Identity Services',
+            href: 'https://developers.google.com/identity/gsi/web',
+            description: 'Supports optional Google sign-in. It is a Google service, not an open-source component.',
+          },
         ],
       },
       {
         title: 'Application and service foundations',
         bullets: [
-          'FastAPI and PyJWT — MIT.',
-          'Uvicorn, HTTPX, Protocol Buffers, websockets and pypdf — BSD licences.',
-          'gRPC — Apache License 2.0.',
-          'cryptography — Apache License 2.0 or BSD-3-Clause.',
-          'Pillow — HPND.',
-        ],
-        links: [
-          { label: 'FastAPI — MIT licence', href: 'https://github.com/fastapi/fastapi/blob/master/LICENSE' },
-          { label: 'gRPC — Apache License 2.0', href: 'https://github.com/grpc/grpc/blob/master/LICENSE' },
-          { label: 'HTTPX — BSD-3-Clause licence', href: 'https://github.com/encode/httpx/blob/master/LICENSE.md' },
+          {
+            label: 'FastAPI',
+            href: 'https://github.com/fastapi/fastapi/blob/master/LICENSE',
+            description: 'MIT. Provides the HTTP API framework.',
+          },
+          {
+            label: 'Pydantic',
+            href: 'https://github.com/pydantic/pydantic/blob/main/LICENSE',
+            description: 'MIT. Validates application and service data.',
+          },
+          {
+            label: 'PyJWT',
+            href: 'https://github.com/jpadilla/pyjwt/blob/master/LICENSE',
+            description: 'MIT. Validates signed account tokens.',
+          },
+          {
+            label: 'Uvicorn',
+            href: 'https://github.com/Kludex/uvicorn/blob/master/LICENSE.md',
+            description: 'BSD-3-Clause. Runs the Python web services.',
+          },
+          {
+            label: 'HTTPX',
+            href: 'https://github.com/encode/httpx/blob/master/LICENSE.md',
+            description: 'BSD-3-Clause. Provides HTTP clients for service communication.',
+          },
+          {
+            label: 'Protocol Buffers',
+            href: 'https://github.com/protocolbuffers/protobuf/blob/main/LICENSE',
+            description: 'BSD-3-Clause. Defines compact messages between services.',
+          },
+          {
+            label: 'websockets',
+            href: 'https://github.com/python-websockets/websockets/blob/main/LICENSE',
+            description: 'BSD-3-Clause. Supports live browser sessions.',
+          },
+          {
+            label: 'pypdf',
+            href: 'https://github.com/py-pdf/pypdf/blob/main/LICENSE',
+            description: 'BSD-3-Clause. Reads and prepares PDF documents.',
+          },
+          {
+            label: 'gRPC',
+            href: 'https://github.com/grpc/grpc/blob/master/LICENSE',
+            description: 'Apache License 2.0. Carries requests between pool services and the app.',
+          },
+          {
+            label: 'cryptography',
+            href: 'https://github.com/pyca/cryptography/blob/main/LICENSE',
+            description: 'Apache License 2.0 or BSD-3-Clause. Supports account-token verification.',
+          },
+          {
+            label: 'Pillow',
+            href: 'https://github.com/python-pillow/Pillow/blob/main/LICENSE',
+            description: 'HPND. Reads and validates uploaded images.',
+          },
         ],
       },
       {
         title: 'Translation and document processing',
         bullets: [
-          'PaddlePaddle, PaddleOCR and PaddleX — Apache License 2.0 — provide OCR and document-analysis components.',
-          'PyTorch — BSD-3-Clause; OpenCV — Apache License 2.0; LaMa — Apache License 2.0.',
-          'pikepdf 10.11.0 — MPL-2.0 — uses qpdf under Apache License 2.0 for PDF container and object handling.',
-          'pypdfium2 5.12.1 — Apache-2.0 or BSD-3-Clause — packages PDFium and its build-specific third-party licence bundle.',
-          'uharfbuzz 0.56.0 — Apache License 2.0 — packages HarfBuzz under its MIT-style licence for text shaping.',
-          'FontTools — MIT — reads, subsets and prepares fonts used in document output.',
-        ],
-        links: [
-          { label: 'PaddleX — Apache License 2.0', href: 'https://github.com/PaddlePaddle/PaddleX/blob/release/3.6/LICENSE' },
-          { label: 'pypdfium2 and PDFium licensing', href: 'https://pypdfium2.readthedocs.io/en/stable/readme.html#licensing' },
-          { label: 'qpdf — Apache License 2.0', href: 'https://qpdf.readthedocs.io/en/stable/license.html' },
-          { label: 'pikepdf wheel licence bundle', href: 'https://github.com/pikepdf/pikepdf/blob/v10.11.0/licenses-for-wheels.txt' },
+          {
+            label: 'PaddlePaddle',
+            href: 'https://github.com/PaddlePaddle/Paddle/blob/develop/LICENSE',
+            description: 'Apache License 2.0. Runs Paddle-based OCR and document models.',
+          },
+          {
+            label: 'PaddleOCR',
+            href: 'https://github.com/PaddlePaddle/PaddleOCR/blob/main/LICENSE',
+            description: 'Apache License 2.0. Recognizes text in images and scanned documents.',
+          },
+          {
+            label: 'PaddleX',
+            href: 'https://github.com/PaddlePaddle/PaddleX/blob/release/3.6/LICENSE',
+            description: 'Apache License 2.0. Provides document-layout analysis components.',
+          },
+          {
+            label: 'PyTorch',
+            href: 'https://github.com/pytorch/pytorch/blob/main/LICENSE',
+            description: 'BSD-3-Clause. Runs several image and speech models.',
+          },
+          {
+            label: 'OpenCV',
+            href: 'https://github.com/opencv/opencv/blob/4.x/LICENSE',
+            description: 'Apache License 2.0. Provides image-processing operations.',
+          },
+          {
+            label: 'LaMa',
+            href: 'https://github.com/advimman/lama/blob/main/LICENSE',
+            description: 'Apache License 2.0. Rebuilds selected image backgrounds after source text is removed.',
+          },
+          {
+            label: 'pikepdf 10.11.0',
+            href: 'https://github.com/pikepdf/pikepdf/blob/v10.11.0/LICENSE.txt',
+            description: 'MPL-2.0. Provides Python PDF container and object handling.',
+          },
+          {
+            label: 'qpdf',
+            href: 'https://qpdf.readthedocs.io/en/stable/license.html',
+            description: 'Apache License 2.0. Provides the PDF engine used by pikepdf.',
+          },
+          {
+            label: 'pypdfium2 5.12.1',
+            href: 'https://pypdfium2.readthedocs.io/en/stable/readme.html#licensing',
+            description: 'Apache-2.0 or BSD-3-Clause. Wraps PDFium and includes a build-specific licence bundle.',
+          },
+          {
+            label: 'PDFium',
+            href: 'https://pdfium.googlesource.com/pdfium/+/refs/heads/main/LICENSE',
+            description: 'BSD-3-Clause with bundled third-party notices. Renders PDF pages for pypdfium2.',
+          },
+          {
+            label: 'uharfbuzz 0.56.0',
+            href: 'https://github.com/harfbuzz/uharfbuzz/blob/main/LICENSE',
+            description: 'Apache License 2.0. Provides Python bindings for HarfBuzz.',
+          },
+          {
+            label: 'HarfBuzz',
+            href: 'https://github.com/harfbuzz/harfbuzz/blob/main/COPYING',
+            description: 'MIT-style licence. Shapes text for translated document output.',
+          },
+          {
+            label: 'FontTools',
+            href: 'https://github.com/fonttools/fonttools/blob/main/LICENSE',
+            description: 'MIT. Reads, subsets and prepares fonts used in document output.',
+          },
+          {
+            label: 'Pyphen',
+            href: 'https://github.com/Kozea/Pyphen/blob/main/LICENSE',
+            description: 'GPL-2.0-or-later, LGPL-2.1-or-later or MPL-1.1. Provides language-aware word breaks. Bundled dictionaries retain their own licence notices.',
+          },
         ],
       },
       {
         title: 'Speech and language models',
         bullets: [
-          'Whisper code and model weights — MIT; WhisperX — BSD-2-Clause — support speech recognition.',
-          'vLLM — Apache License 2.0 — serves language models used for translation.',
-          'The configured Gemma 4 translation model is published under Apache License 2.0.',
-          'Kokoro and VoxCPM2 — Apache License 2.0 — are available in the speech-generation stack.',
-        ],
-        links: [
-          { label: 'Whisper — MIT licence', href: 'https://github.com/openai/whisper/blob/main/LICENSE' },
-          { label: 'WhisperX — BSD-2-Clause licence', href: 'https://github.com/m-bain/whisperX/blob/main/LICENSE' },
-          { label: 'vLLM — Apache License 2.0', href: 'https://github.com/vllm-project/vllm/blob/main/LICENSE' },
-          { label: 'Configured Gemma 4 model card', href: 'https://huggingface.co/nvidia/Gemma-4-26B-A4B-NVFP4' },
-          { label: 'Kokoro model card', href: 'https://huggingface.co/hexgrad/Kokoro-82M' },
-          { label: 'VoxCPM2 model card', href: 'https://huggingface.co/openbmb/VoxCPM2' },
+          {
+            label: 'Whisper',
+            href: 'https://github.com/openai/whisper/blob/main/LICENSE',
+            description: 'MIT. Provides the speech-recognition model and code.',
+          },
+          {
+            label: 'WhisperX',
+            href: 'https://github.com/m-bain/whisperX/blob/main/LICENSE',
+            description: 'BSD-2-Clause. Adds the speech-recognition workflow used by ASR Pool.',
+          },
+          {
+            label: 'faster-whisper',
+            href: 'https://github.com/SYSTRAN/faster-whisper/blob/master/LICENSE',
+            description: 'MIT. Runs optimized Whisper inference.',
+          },
+          {
+            label: 'CTranslate2',
+            href: 'https://github.com/OpenNMT/CTranslate2/blob/master/LICENSE',
+            description: 'MIT. Provides the inference runtime used by faster-whisper.',
+          },
+          {
+            label: 'vLLM',
+            href: 'https://github.com/vllm-project/vllm/blob/main/LICENSE',
+            description: 'Apache License 2.0. Serves the language models used for translation.',
+          },
+          {
+            label: 'Gemma 4 E4B instruction model',
+            href: 'https://huggingface.co/unsloth/gemma-4-E4B-it-NVFP4',
+            description: 'Apache License 2.0. Handles fast text and live translation.',
+          },
+          {
+            label: 'Gemma 4 26B-A4B instruction model',
+            href: 'https://huggingface.co/nvidia/Gemma-4-26B-A4B-NVFP4',
+            description: 'Apache License 2.0. Handles document, image and best-quality translation.',
+          },
+          {
+            label: 'Kokoro',
+            href: 'https://huggingface.co/hexgrad/Kokoro-82M',
+            description: 'Apache License 2.0. Generates speech with preset voices.',
+          },
+          {
+            label: 'VoxCPM2',
+            href: 'https://huggingface.co/openbmb/VoxCPM2',
+            description: 'Apache License 2.0. Generates speech and supports voice cloning.',
+          },
+          {
+            label: 'Nano-vLLM-VoxCPM',
+            href: 'https://github.com/a710128/nanovllm-voxcpm/blob/main/LICENSE',
+            description: 'MIT. Provides the concurrent VoxCPM2 inference backend.',
+          },
+          {
+            label: 'Nano-vLLM core',
+            href: 'https://github.com/GeeeekExplorer/nano-vllm/blob/main/LICENSE',
+            description: 'MIT. Provides the inference core bundled with Nano-vLLM-VoxCPM.',
+          },
         ],
       },
       {
@@ -572,7 +746,17 @@ function appendSection(article, section) {
   if (section.bullets?.length) {
     const list = element('ul', '');
     for (const bullet of section.bullets) {
-      list.appendChild(element('li', '', bullet));
+      const listItem = element('li', '');
+      if (typeof bullet === 'string') {
+        listItem.textContent = bullet;
+      } else {
+        const link = element('a', 'info-article-component-link', bullet.label);
+        link.href = bullet.href;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        listItem.append(link, ` — ${bullet.description}`);
+      }
+      list.appendChild(listItem);
     }
     sectionNode.appendChild(list);
   }

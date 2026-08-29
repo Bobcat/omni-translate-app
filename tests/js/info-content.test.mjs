@@ -15,12 +15,24 @@ test('third-party software notice is available as an info category', () => {
   assert.ok(notice.sections.some((section) => section.title === 'Translation and document processing'));
 });
 
-test('third-party software notice links to full upstream licence sources', () => {
+test('third-party software notice lists each product as its own linked entry', () => {
   const notice = INFO_CATEGORIES.find((category) => category.id === 'third-party-software');
-  const links = notice.sections.flatMap((section) => section.links || []);
+  const entries = notice.sections.flatMap((section) => section.bullets || []);
+  const labels = entries.map((entry) => entry.label);
 
-  assert.ok(links.length >= 10);
-  assert.ok(links.every((link) => link.href.startsWith('https://')));
-  assert.ok(links.some((link) => link.href.includes('pypdfium2.readthedocs.io')));
-  assert.ok(links.some((link) => link.href.includes('openai/whisper')));
+  assert.ok(entries.length >= 40);
+  assert.ok(entries.every((entry) => typeof entry === 'object'));
+  assert.ok(entries.every((entry) => entry.href.startsWith('https://')));
+  assert.ok(entries.every((entry) => entry.description));
+  assert.equal(new Set(labels).size, labels.length);
+  assert.ok(labels.includes('LaMa'));
+  assert.ok(labels.includes('Pyphen'));
+  assert.ok(labels.includes('faster-whisper'));
+  assert.ok(labels.includes('CTranslate2'));
+  assert.ok(labels.includes('Nano-vLLM-VoxCPM'));
+  assert.ok(labels.includes('Gemma 4 E4B instruction model'));
+  assert.equal(
+    entries.find((entry) => entry.label === 'Nano-vLLM core').href,
+    'https://github.com/GeeeekExplorer/nano-vllm/blob/main/LICENSE',
+  );
 });
