@@ -1,5 +1,5 @@
 import { isEnabled, onAuthChange, signOut } from '../../auth.js';
-import { getMe } from '../../shared/api.js';
+import { getMe } from '../../shared/api.js?v=20260829-voice-modes-10';
 import { createSignInCard } from '../../shared/signin-card.js';
 
 export function createAccountView() {

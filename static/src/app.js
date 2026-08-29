@@ -33,7 +33,7 @@ import {
   closeSettingsSheet,
   navigateSettingsPage,
   handleSettingsBack,
-} from './settings/sheet.js?v=20260823-third-party-notices-1';
+} from './settings/sheet.js';
 import {
   renderAudioSettings,
   handlePreGainInput,

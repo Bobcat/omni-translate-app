@@ -67,6 +67,12 @@ class _TtsDelivery:
         self.cleared = True
 
 
+class _VoiceCloning:
+    @staticmethod
+    def status_payload(lane_id: str) -> dict:
+        return {"lane_id": lane_id, "state": "off", "reason": "disabled"}
+
+
 def _runtime(
     *,
     vad_error: Exception | None = None,
@@ -81,7 +87,7 @@ def _runtime(
         tts_task=None,
         pending_tts={},
     )
-    return SimpleNamespace(
+    runtime = SimpleNamespace(
         websocket=websocket,
         session_id="conv-lifecycle-test",
         sample_rate_hz=16000,
@@ -90,6 +96,8 @@ def _runtime(
         side_b_language="English",
         live_settings={"asr": {"backend": "test"}},
         tts_settings={"enabled": True, "auto_speak": False},
+        voice_mode="female",
+        voice_cloning=_VoiceCloning(),
         lanes={"a_to_b": lane},
         current_turn=object(),
         asr_bridge=asr_bridge,
@@ -100,6 +108,8 @@ def _runtime(
         _handle_audio=AsyncMock(),
         _handle_control=AsyncMock(return_value=True),
     )
+    runtime._voice_cloning_status_payload = runtime.voice_cloning.status_payload
+    return runtime
 
 
 class ConversationLifecycleTests(unittest.IsolatedAsyncioTestCase):

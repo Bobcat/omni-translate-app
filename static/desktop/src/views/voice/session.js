@@ -11,10 +11,14 @@
 // queue) survives view switches untouched; the view re-renders from
 // `state` on every `onChange`.
 
-import { SessionSocket } from '../../../../src/api-client.js';
+import { SessionSocket } from '../../../../src/api-client.js?v=20260829-voice-modes-10';
 import { AudioCapture } from '../../../../src/shared/audio-capture.js';
 import { playMicOffCue, playMicOnCue } from '../../../../src/shared/audio-cue.js';
-import { AudioQueue } from '../../../../src/shared/audio-playback.js';
+import { AudioQueue } from '../../../../src/shared/audio-playback.js?v=20260829-voice-modes-10';
+import {
+  setVoiceAudioSessionCaptureActive,
+  usesIosVoiceAudioPath,
+} from '../../../../src/shared/audio-session.js?v=20260829-voice-modes-10';
 import { shouldStopMicrophoneAfterPlayback } from '../../../../src/shared/voice-playback.js';
 import { voiceSessionEndMessage } from '../../../../src/shared/voice-session-end.js';
 import { createMicAutoOffController } from '../../../../src/shared/mic-auto-off-controller.js';
@@ -22,10 +26,12 @@ import { guessSetupLanguages, normalizeLanguageName } from '../../../../src/doma
 import {
   loadAutoSpeakPreference,
   loadSetupLanguages,
+  loadVoiceModePreference,
   persistAutoSpeakPreference,
   persistSetupLanguages,
-} from '../../../../src/domain/storage.js';
-import { getConfig, createVoiceSession as requestVoiceSession } from '../../shared/api.js';
+  persistVoiceModePreference,
+} from '../../../../src/domain/storage.js?v=20260829-voice-modes-10';
+import { getConfig, createVoiceSession as requestVoiceSession } from '../../shared/api.js?v=20260829-voice-modes-10';
 import {
   getDesktopMicrophoneState,
   setDesktopMicrophoneRuntime,
@@ -35,6 +41,8 @@ import {
 import { publishViewBusy } from '../../shared/view-activity.js';
 
 const LANE_IDS = ['a_to_b', 'b_to_a'];
+const STABLE_VOICE_MODES = ['female', 'male'];
+const VOICE_MODES = [...STABLE_VOICE_MODES, 'speaker_clone'];
 
 const MIC_STATES = { LISTENING: 'listening', OFF: 'off' };
 const TURN_STATES = {
@@ -61,9 +69,7 @@ function createLocalTurn(laneId, lanes) {
     targetLanguage: lane.targetLanguage,
     sourceText: '',
     targetText: '',
-    speakableTargetText: '',
     canTranslateNow: false,
-    canSpeakNow: false,
     parts: [],
   };
 }
@@ -94,14 +100,6 @@ function joinPartText(parts, role) {
     .join('\n\n');
 }
 
-function joinSpeakableTargetText(parts) {
-  return (parts || [])
-    .filter((part) => part.speechState !== 'spoken')
-    .map((part) => part.targetText)
-    .filter(Boolean)
-    .join('\n\n');
-}
-
 function joinTranslatableSourcePreviewText(parts) {
   return (parts || [])
     .filter((part) => part.speechState !== 'spoken')
@@ -122,6 +120,8 @@ export function visibleText(committed, preview) {
 // autoplay is blocked so the user can start playback manually.
 export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
   const initialLanguages = loadSetupLanguages() || guessSetupLanguages();
+  const storedVoiceMode = loadVoiceModePreference();
+  const initialVoiceMode = VOICE_MODES.includes(storedVoiceMode) ? storedVoiceMode : 'female';
 
   const state = {
     socket: null,
@@ -138,10 +138,15 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
     audioInputSampleRate: 16000,
     ttsEnabled: true,
     ttsAutoSpeak: loadAutoSpeakPreference() ?? true,
+    voiceModeAvailable: false,
+    voiceMode: initialVoiceMode,
+    voiceCloneFallbackMode: STABLE_VOICE_MODES.includes(initialVoiceMode)
+      ? initialVoiceMode
+      : 'female',
+    voiceCloningStatus: {},
     audioPlayback: null,
     captureMutedForPlayback: false,
-    speakNowPending: false,
-    speakInflightFilter: null,
+    capturePausedForPlayback: false,
     vadVisible: false,
     status: 'idle',
     statusMessage: '',
@@ -150,8 +155,10 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
   state.lanes = buildLanes(state.sideALanguage, state.sideBLanguage);
   state.currentTurn = createLocalTurn('a_to_b', state.lanes);
 
-  let speakNowPendingTimer = null;
   let vadHintTimer = null;
+  let configLoadPromise = null;
+  let iosCaptureResumeTask = null;
+  let iosAutoOffWasArmed = false;
   // The AudioQueue constructor fires onStatus synchronously, before the
   // view's `const session = createVoiceSession(...)` binding exists — a
   // render then would hit the TDZ. The view renders itself right after
@@ -212,9 +219,13 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
   const audioQueue = new AudioQueue({
     audio: new Audio(),
     resumeButton,
+    playbackStartDelayMs: usesIosVoiceAudioPath() ? 90 : 0,
     onStatus: (text) => {
       state.audioStatus = text;
       emit();
+    },
+    onPlaybackWillStart: () => {
+      pauseCaptureForIosPlayback();
     },
     onPlaybackStart: (item) => {
       state.captureMutedForPlayback = true;
@@ -222,8 +233,10 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
       emit();
     },
     onPlaybackIdle: () => {
-      state.captureMutedForPlayback = false;
       state.audioPlayback = null;
+      if (!resumeCaptureAfterIosPlayback()) {
+        state.captureMutedForPlayback = false;
+      }
       emit();
     },
     onPlaybackComplete: (item) => {
@@ -257,6 +270,7 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
   // --- session lifecycle -------------------------------------------------
 
   async function start() {
+    setVoiceAudioSessionCaptureActive(true);
     if (state.ttsAutoSpeak) audioQueue.preparePcmPlayback();
     resetTranscript();
     state.starting = true;
@@ -268,6 +282,7 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
     let capture = null;
     let trackedCapture = Promise.resolve();
     try {
+      await loadConfig();
       const capturePromise = createStartedCapture({ targetSampleRate: state.audioInputSampleRate });
       // Hand the started capture over as soon as it resolves — not only on the
       // happy path — so the catch below can stop it when the session request or
@@ -280,6 +295,7 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
         sideA: state.sideALanguage,
         sideB: state.sideBLanguage,
         autoSpeak: state.ttsAutoSpeak,
+        voiceMode: state.voiceModeAvailable ? state.voiceMode : null,
       });
       const sessionId = String(session.session?.session_id || session.session_id || '').trim();
       if (!sessionId) throw new Error('Missing session id');
@@ -341,6 +357,9 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
     state.sessionId = null;
     state.capture?.stop();
     state.capture = null;
+    setVoiceAudioSessionCaptureActive(false);
+    state.capturePausedForPlayback = false;
+    iosAutoOffWasArmed = false;
     state.micState = MIC_STATES.OFF;
     micAutoOff.clear();
     reportMicrophoneLevel(0, false);
@@ -352,11 +371,13 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
     micAutoOff.clear();
     state.capture?.stop();
     state.capture = null;
+    setVoiceAudioSessionCaptureActive(false);
+    state.capturePausedForPlayback = false;
+    iosAutoOffWasArmed = false;
     state.micState = MIC_STATES.OFF;
     reportMicrophoneLevel(0, false);
     setDesktopMicrophoneRuntime({ captureBusy: false });
     state.captureMutedForPlayback = false;
-    state.speakInflightFilter = null;
     hideVadHint();
     if (!keepSocket) {
       state.socket?.close();
@@ -402,6 +423,8 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
     if (!state.live || state.micState !== MIC_STATES.OFF) return;
     if (!state.socket?.isOpen()) return;
     state.starting = true;
+    setVoiceAudioSessionCaptureActive(true);
+    state.capturePausedForPlayback = false;
     setDesktopMicrophoneRuntime({ captureBusy: true });
     emit();
     try {
@@ -418,6 +441,7 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
     } catch (error) {
       state.capture?.stop();
       state.capture = null;
+      setVoiceAudioSessionCaptureActive(false);
       state.micState = MIC_STATES.OFF;
       micAutoOff.clear();
       reportMicrophoneLevel(0, false);
@@ -436,6 +460,9 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
     micAutoOff.clear();
     state.capture?.stop();
     state.capture = null;
+    setVoiceAudioSessionCaptureActive(false);
+    state.capturePausedForPlayback = false;
+    iosAutoOffWasArmed = false;
     state.micState = MIC_STATES.OFF;
     reportMicrophoneLevel(0, false);
     if (getDesktopMicrophoneState().autoOffCueEnabled) safePlayMicOffCue();
@@ -554,7 +581,71 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
   function captureStillExpected(sessionId) {
     return state.live
       && state.sessionId === sessionId
-      && state.micState === MIC_STATES.LISTENING;
+      && state.micState === MIC_STATES.LISTENING
+      && !state.capturePausedForPlayback
+      && !audioQueue.hasAudio();
+  }
+
+  function pauseCaptureForIosPlayback() {
+    if (!usesIosVoiceAudioPath()) return false;
+    if (!state.live || state.micState !== MIC_STATES.LISTENING) return false;
+    state.captureMutedForPlayback = true;
+    state.capturePausedForPlayback = true;
+    iosAutoOffWasArmed = iosAutoOffWasArmed || micAutoOff.isArmed();
+    micAutoOff.clear();
+    state.capture?.stop();
+    state.capture = null;
+    setVoiceAudioSessionCaptureActive(false);
+    reportMicrophoneLevel(0, true);
+    return true;
+  }
+
+  function resumeCaptureAfterIosPlayback() {
+    if (!usesIosVoiceAudioPath() || !state.capturePausedForPlayback) return false;
+    if (!iosCaptureResumeTask) {
+      iosCaptureResumeTask = restoreCaptureAfterIosPlayback().finally(() => {
+        iosCaptureResumeTask = null;
+      });
+    }
+    return true;
+  }
+
+  async function restoreCaptureAfterIosPlayback() {
+    await Promise.resolve();
+    if (!state.live || state.micState !== MIC_STATES.LISTENING || audioQueue.hasAudio()) return;
+    const sessionId = state.sessionId;
+    state.capturePausedForPlayback = false;
+    state.starting = true;
+    setDesktopMicrophoneRuntime({ captureBusy: true, inputLevel: 0 });
+    setVoiceAudioSessionCaptureActive(true);
+    emit();
+    try {
+      const capture = await createStartedCapture({ targetSampleRate: state.audioInputSampleRate });
+      if (!captureStillExpected(sessionId)) {
+        capture.stop();
+        if (state.live && state.micState === MIC_STATES.LISTENING && audioQueue.hasAudio()) {
+          state.capturePausedForPlayback = true;
+          setVoiceAudioSessionCaptureActive(false);
+        }
+        return;
+      }
+      state.capture = capture;
+      syncCaptureSettings(capture);
+      state.captureMutedForPlayback = false;
+      if (iosAutoOffWasArmed) micAutoOff.arm();
+      iosAutoOffWasArmed = false;
+    } catch {
+      if (!state.live || state.micState !== MIC_STATES.LISTENING) return;
+      state.captureMutedForPlayback = false;
+      state.micState = MIC_STATES.OFF;
+      reportMicrophoneLevel(0, false);
+      state.status = 'error';
+      state.statusMessage = 'Microphone unavailable.';
+    } finally {
+      state.starting = false;
+      setDesktopMicrophoneRuntime({ captureBusy: false });
+      emit();
+    }
   }
 
   function shouldSendMicrophoneAudio() {
@@ -564,55 +655,7 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
       && state.currentTurn.state !== TURN_STATES.OPEN_SPEAKING;
   }
 
-  // --- turn actions --------------------------------------------------------
-
-  function translateNow() {
-    if (!state.live) return;
-    if (!state.currentTurn.canTranslateNow) return;
-    state.socket?.translateNow();
-  }
-
-  function speakNow() {
-    if (!state.live) return;
-    if (audioQueue.hasNonReplayAudio()) {
-      audioQueue.playOrResume();
-      return;
-    }
-    const canSpeak = state.currentTurn.speakableTargetText
-      && state.currentTurn.state !== TURN_STATES.OPEN_SPEAKING
-      && state.socket?.speakNow();
-    if (!canSpeak) return;
-    audioQueue.preparePcmPlayback();
-    state.speakNowPending = true;
-    state.speakInflightFilter = {
-      turnId: String(state.currentTurn.turnId || ''),
-      knownPartIds: new Set(
-        (state.currentTurn.parts || [])
-          .map((part) => String(part.partId || ''))
-          .filter(Boolean),
-      ),
-    };
-    if (speakNowPendingTimer) clearTimeout(speakNowPendingTimer);
-    speakNowPendingTimer = setTimeout(() => {
-      state.speakNowPending = false;
-      speakNowPendingTimer = null;
-      state.speakInflightFilter = null;
-      emit();
-    }, 1500);
-    if (state.micState === MIC_STATES.LISTENING) {
-      stopMic();
-    }
-    emit();
-  }
-
-  function clearSpeakNowPending() {
-    if (!state.speakNowPending && !speakNowPendingTimer) return;
-    state.speakNowPending = false;
-    if (speakNowPendingTimer) {
-      clearTimeout(speakNowPendingTimer);
-      speakNowPendingTimer = null;
-    }
-  }
+  // --- bubble audio actions ------------------------------------------------
 
   function speakPart(partId) {
     if (!state.live || !state.ttsEnabled) return;
@@ -647,6 +690,27 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
     if (state.ttsAutoSpeak) audioQueue.preparePcmPlayback();
     persistAutoSpeakPreference(state.ttsAutoSpeak);
     state.socket?.updateTtsSettings({ auto_speak: state.ttsAutoSpeak });
+    emit();
+  }
+
+  function setVoiceMode(mode) {
+    if (!state.ttsEnabled || !state.voiceModeAvailable) return;
+    const normalized = VOICE_MODES.includes(mode) ? mode : 'female';
+    if (STABLE_VOICE_MODES.includes(normalized)) {
+      state.voiceCloneFallbackMode = normalized;
+    } else if (STABLE_VOICE_MODES.includes(state.voiceMode)) {
+      state.voiceCloneFallbackMode = state.voiceMode;
+    }
+    state.voiceMode = normalized;
+    persistVoiceModePreference(normalized);
+    for (const laneId of LANE_IDS) {
+      state.voiceCloningStatus[laneId] = {
+        state: normalized === 'speaker_clone' ? 'preparing' : 'off',
+        reason: normalized === 'speaker_clone' ? 'insufficient_clear_speech' : 'disabled',
+        fallbackVoiceMode: state.voiceCloneFallbackMode,
+      };
+    }
+    state.socket?.updateVoiceMode(normalized);
     emit();
   }
 
@@ -758,8 +822,25 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
       emit();
       return;
     }
+    if (msg.type === 'voice_cloning_status') {
+      const laneId = String(msg.lane_id || '');
+      if (LANE_IDS.includes(laneId)) {
+        state.voiceCloningStatus[laneId] = {
+          state: String(msg.state || 'off'),
+          reason: String(msg.reason || ''),
+          fallbackVoiceMode: String(msg.fallback_voice_mode || state.voiceCloneFallbackMode),
+        };
+      }
+      emit();
+      return;
+    }
     if (msg.type === 'tts_settings') {
       state.ttsAutoSpeak = Boolean(msg.tts_settings?.auto_speak);
+      emit();
+      return;
+    }
+    if (msg.type === 'voice_mode_settings') {
+      state.voiceMode = String(msg.mode || state.voiceMode);
       emit();
       return;
     }
@@ -798,6 +879,18 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
     }
     state.currentTurn = normalizeTurnPayload(msg.current_turn || createLocalTurn('a_to_b', state.lanes));
     state.ttsAutoSpeak = Boolean(msg.tts_settings?.auto_speak ?? state.ttsAutoSpeak);
+    state.voiceMode = String(msg.voice_mode || state.voiceMode);
+    state.voiceCloningStatus = Object.fromEntries(
+      Object.entries(msg.voice_cloning_status || {})
+        .filter(([laneId]) => LANE_IDS.includes(laneId))
+        .map(([laneId, status]) => [laneId, {
+          state: String(status?.state || 'off'),
+          reason: String(status?.reason || ''),
+          fallbackVoiceMode: String(
+            status?.fallback_voice_mode || state.voiceCloneFallbackMode,
+          ),
+        }]),
+    );
     hideVadHint();
     emit();
   }
@@ -808,8 +901,7 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
     for (const laneId of Object.keys(msg.lanes || {})) {
       mergeLanePayload(laneId, msg.lanes[laneId]);
     }
-    state.currentTurn = normalizeTurnPayload(applySpeakInflightFilter(msg));
-    clearSpeakNowPending();
+    state.currentTurn = normalizeTurnPayload(msg.current_turn);
     const laneChanged = previousLaneId !== currentLaneId();
     if (laneChanged || msg.reason === 'next_turn') {
       audioQueue.clear();
@@ -830,7 +922,6 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
     const parts = Array.isArray(payload?.parts) ? payload.parts.map(normalizeTurnPart) : [];
     const sourceText = String(payload?.source_text || joinPartText(parts, 'source') || '');
     const targetText = String(payload?.target_text || joinPartText(parts, 'target') || '');
-    const speakableTargetText = String(payload?.speakable_target_text || joinSpeakableTargetText(parts) || '');
     return {
       turnId: String(payload?.turn_id || fallback.turnId),
       laneId,
@@ -840,29 +931,9 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
       targetLanguage: normalizeLanguageName(payload?.target_language || lane.targetLanguage),
       sourceText,
       targetText,
-      speakableTargetText,
       canTranslateNow: Boolean(payload?.can_translate_now ?? joinTranslatableSourcePreviewText(parts)),
-      canSpeakNow: Boolean(payload?.can_speak_now ?? speakableTargetText),
       parts,
     };
-  }
-
-  function applySpeakInflightFilter(msg) {
-    // Drop parts created by in-flight ASR commits that landed between the
-    // user's Speak click and speak_now's own turn_update — they would
-    // otherwise flash into the transcript right before TTS starts.
-    const filter = state.speakInflightFilter;
-    const turn = msg.current_turn;
-    if (!filter || !turn) return turn || state.currentTurn;
-    if (String(turn.turn_id || '') !== filter.turnId) return turn;
-    if (msg.reason === 'speak_now') {
-      state.speakInflightFilter = null;
-      return turn;
-    }
-    const parts = Array.isArray(turn.parts) ? turn.parts : [];
-    const filteredParts = parts.filter((p) => filter.knownPartIds.has(String(p?.part_id || '')));
-    if (filteredParts.length === parts.length) return turn;
-    return { ...turn, parts: filteredParts };
   }
 
   function mergeLanePayload(laneId, payload) {
@@ -913,13 +984,20 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
 
   // One-shot fetch for TTS availability and the capture sample rate; the
   // defaults stand when the config cannot be loaded.
-  async function loadConfig() {
+  function loadConfig() {
+    if (!configLoadPromise) configLoadPromise = loadConfigOnce();
+    return configLoadPromise;
+  }
+
+  async function loadConfigOnce() {
     try {
       const config = await getConfig();
       state.audioInputSampleRate = config.audio_input?.sample_rate_hz || 16000;
       state.ttsEnabled = config.tts?.enabled !== false;
       state.ttsAutoSpeak = loadAutoSpeakPreference()
         ?? Boolean(config.tts?.auto_speak);
+      state.voiceModeAvailable = Boolean(config.tts?.capabilities?.voice_selection);
+      state.voiceMode = initialVoiceMode;
       emit();
     } catch {
       // Defaults stand.
@@ -936,12 +1014,11 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
     loadConfig,
     toggleMic,
     endSession,
-    translateNow,
-    speakNow,
     speakPart,
     replayPart,
     stopAudio,
     setAutoSpeak,
+    setVoiceMode,
     swap,
     setLanguage,
   };

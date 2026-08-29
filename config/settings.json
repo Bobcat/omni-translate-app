@@ -209,6 +209,12 @@
     "enabled": false,
     "auto_speak": true,
     "backend": "kokoro",
+    "voice_cloning": {
+      "recent_speech_window": {
+        "min_duration_s": 3,
+        "max_duration_s": 10
+      }
+    },
     "voxcpm2": {
       "ultimate_cloning": {
         "stable_generated": {

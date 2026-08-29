@@ -18,9 +18,15 @@ from app.live_metrics import log_event as _metric
 from app.protocol import event
 from app.tts_bridge import TtsReferenceUnavailableError
 from app.tts_bridge import get_tts_bridge
+from app.tts_bridge import product_stable_voice_settings
+from app.tts_bridge import product_voice_cloning_settings
 from app.tts_bridge import tts_settings_enabled
+from app.tts_bridge import tts_supports_product_voice_modes
 from app.tts_bridge import tts_uses_asr_reference_wav
 from app.upstreams.tts_pool.client import TtsSynthesisCancellation
+from app.voice.mode import VOICE_MODE_FEMALE
+from app.voice.mode import VOICE_MODE_MALE
+from app.voice.mode import VOICE_MODE_SPEAKER_CLONE
 from app.voice.session_storage import SessionArtifactLimitExceeded
 from app.voice.tasks import cancel_task
 
@@ -48,11 +54,14 @@ class _Preparation:
     target_language: str
     settings: dict[str, Any]
     settings_key: str
+    voice_mode: str
+    synthesis_voice_mode: str
     reason: str
     reference_wav_path: str | None
     reference_prompt_text: str | None
     source_audio_duration_ms: int | None
     low_quality_reference: bool
+    reference_id: str | None = None
     state: str = "queued"
     subscribed: bool = False
     used: bool = False
@@ -268,6 +277,11 @@ class TtsDelivery:
                 reason=generation_reason,
             )
             if record is None:
+                part = self._current_part(turn_id, part_id)
+                if part is not None and part.speech_state == "speaking":
+                    part.speech_state = "pending"
+                    self.runtime._refresh_turn_state()
+                    await self.runtime._send_turn_update(reason="tts_preparation_unavailable")
                 return
             self._record_playback_path(record, "demand_miss")
             await self._prioritize_explicit(record)
@@ -310,12 +324,75 @@ class TtsDelivery:
         if not text:
             return None
         settings = deepcopy(runtime.tts_settings)
-        reference_wav_path, low_quality = _last_speech_reference_choice(lane, settings)
-        if reference_wav_path is not None or tts_uses_asr_reference_wav(
-            lane.target_language,
-            settings=settings,
-        ):
-            self._set_part_reference_quality([part_id], low_quality=low_quality)
+        voice_mode = str(runtime.voice_mode or VOICE_MODE_FEMALE)
+        synthesis_voice_mode = voice_mode
+        reference_id = None
+        reference = (
+            runtime.voice_cloning.reference(lane_id)
+            if voice_mode == VOICE_MODE_SPEAKER_CLONE
+            else None
+        )
+        if voice_mode == VOICE_MODE_SPEAKER_CLONE and reference is not None:
+            try:
+                settings = product_voice_cloning_settings(
+                    settings,
+                    language=lane.target_language,
+                    max_duration_s=runtime.voice_cloning.max_duration_ms / 1000.0,
+                )
+            except ValueError:
+                _metric(
+                    "voice_cloning_tts_skip",
+                    sess=runtime.session_id,
+                    lane=lane_id,
+                    trigger=reason,
+                    cause="unsupported_target_language",
+                )
+                return None
+            reference_id = reference.reference_id
+            reference_wav_path = reference.wav_path
+            reference_prompt_text = reference.prompt_text
+            source_audio_duration_ms = reference.duration_ms
+            low_quality = False
+        else:
+            if voice_mode == VOICE_MODE_SPEAKER_CLONE:
+                synthesis_voice_mode = str(
+                    getattr(runtime, "voice_clone_fallback_mode", VOICE_MODE_FEMALE)
+                )
+                _metric(
+                    "voice_cloning_tts_fallback",
+                    sess=runtime.session_id,
+                    lane=lane_id,
+                    trigger=reason,
+                    mode=synthesis_voice_mode,
+                )
+            if (
+                synthesis_voice_mode in {VOICE_MODE_FEMALE, VOICE_MODE_MALE}
+                and tts_supports_product_voice_modes(settings)
+            ):
+                try:
+                    settings = product_stable_voice_settings(
+                        settings,
+                        language=lane.target_language,
+                        gender=synthesis_voice_mode,
+                    )
+                except ValueError:
+                    _metric(
+                        "product_voice_tts_skip",
+                        sess=runtime.session_id,
+                        lane=lane_id,
+                        trigger=reason,
+                        mode=synthesis_voice_mode,
+                        cause="unsupported_target_language",
+                    )
+                    return None
+            reference_wav_path, low_quality = _last_speech_reference_choice(lane, settings)
+            reference_prompt_text = _last_speech_prompt_text(lane, reference_wav_path)
+            source_audio_duration_ms = _source_bubble_duration_ms(lane)
+            if reference_wav_path is not None or tts_uses_asr_reference_wav(
+                lane.target_language,
+                settings=settings,
+            ):
+                self._set_part_reference_quality([part_id], low_quality=low_quality)
         return _Preparation(
             lane_id=lane_id,
             turn_id=turn_id,
@@ -323,12 +400,20 @@ class TtsDelivery:
             text=text,
             target_language=lane.target_language,
             settings=settings,
-            settings_key=_synthesis_settings_key(settings),
+            settings_key=_synthesis_settings_key(
+                runtime.tts_settings,
+                voice_mode=voice_mode,
+                synthesis_voice_mode=synthesis_voice_mode,
+                reference_id=reference_id,
+            ),
+            voice_mode=voice_mode,
+            synthesis_voice_mode=synthesis_voice_mode,
             reason=str(reason or "demand"),
             reference_wav_path=reference_wav_path,
-            reference_prompt_text=_last_speech_prompt_text(lane, reference_wav_path),
-            source_audio_duration_ms=_source_bubble_duration_ms(lane),
+            reference_prompt_text=reference_prompt_text,
+            source_audio_duration_ms=source_audio_duration_ms,
             low_quality_reference=low_quality,
+            reference_id=reference_id,
             done=asyncio.get_running_loop().create_future(),
         )
 
@@ -728,6 +813,25 @@ class TtsDelivery:
             self.runtime._refresh_turn_state()
             await self.runtime._send_turn_update(reason="tts_settings_changed")
 
+    def voice_mode_changed(self, *, mode: str) -> None:
+        """Drop unused preparations made under a different product voice mode."""
+        for record in list(self.preparations.values()):
+            if record.subscribed or record.voice_mode == mode:
+                continue
+            self._drop_record(record)
+
+    def voice_cloning_reference_ready(self, *, lane_id: str) -> None:
+        """Drop unused product-voice fallbacks once the speaker voice is ready."""
+        for record in list(self.preparations.values()):
+            if (
+                record.lane_id != lane_id
+                or record.voice_mode != VOICE_MODE_SPEAKER_CLONE
+                or record.synthesis_voice_mode not in {VOICE_MODE_FEMALE, VOICE_MODE_MALE}
+                or record.subscribed
+            ):
+                continue
+            self._drop_record(record)
+
     async def stop(self, payload: dict[str, Any]) -> None:
         runtime = self.runtime
         turn = runtime.current_turn
@@ -919,7 +1023,14 @@ class TtsDelivery:
             or self.runtime.lifecycle.closed
             or self.preparations.get(record.key) is not record
             or not tts_settings_enabled(self.runtime.tts_settings)
-            or record.settings_key != _synthesis_settings_key(self.runtime.tts_settings)
+            or record.settings_key != _synthesis_settings_key(
+                self.runtime.tts_settings,
+                # A subscribed preparation keeps the voice mode and immutable
+                # reference it started with. New choices apply to later work.
+                voice_mode=record.voice_mode,
+                synthesis_voice_mode=record.synthesis_voice_mode,
+                reference_id=record.reference_id,
+            )
         ):
             return False
         part = self._current_part(record.turn_id, record.part_id)
@@ -987,9 +1098,21 @@ class TtsDelivery:
                 part.speech_state = replacement
 
 
-def _synthesis_settings_key(settings: dict[str, Any] | None) -> str:
+def _synthesis_settings_key(
+    settings: dict[str, Any] | None,
+    *,
+    voice_mode: str | None = None,
+    synthesis_voice_mode: str | None = None,
+    reference_id: str | None = None,
+) -> str:
     payload = deepcopy(settings or {})
     payload.pop("auto_speak", None)
+    if voice_mode:
+        payload["product_voice_mode"] = voice_mode
+    if synthesis_voice_mode:
+        payload["product_synthesis_voice_mode"] = synthesis_voice_mode
+    if reference_id:
+        payload["voice_cloning_reference_id"] = reference_id
     return json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
 
 

@@ -3,7 +3,7 @@
 import {
   getDesktopAppearance,
   setDesktopAppearance,
-} from '../../shared/appearance.js';
+} from '../../shared/appearance.js?v=20260829-voice-modes-10';
 import {
   getDesktopMicrophoneState,
   resetDesktopMicrophoneSettings,

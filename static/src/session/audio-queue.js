@@ -3,21 +3,30 @@
 // settings/voice-library.js still uses the old setter pattern and is
 // wired from app.js — out of scope to change in this refactor.
 
-import { AudioQueue } from '../shared/audio-playback.js';
+import { AudioQueue } from '../shared/audio-playback.js?v=20260829-ios-playback-1';
+import { usesIosVoiceAudioPath } from '../shared/audio-session.js?v=20260829-ios-playback-1';
 import { shouldStopMicrophoneAfterPlayback } from '../shared/voice-playback.js';
 import { state } from '../state.js';
 import { els } from '../els.js';
 import { APP_MODES, MIC_STATES } from '../shared/constants.js';
 import { updateActionButtons } from '../ui/action-buttons.js';
 import { renderTranscript } from '../ui/render-turn.js';
-import { stopMicrophoneCapture } from './lifecycle.js';
+import {
+  pauseMicrophoneCaptureForIosPlayback,
+  resumeMicrophoneCaptureAfterIosPlayback,
+  stopMicrophoneCapture,
+} from './lifecycle.js';
 
 export const audioQueue = new AudioQueue({
   audio: els.ttsAudio,
   resumeButton: els.audioResumeButton,
+  playbackStartDelayMs: usesIosVoiceAudioPath() ? 90 : 0,
   onStatus: (text) => {
     state.audioStatus = text;
     updateActionButtons();
+  },
+  onPlaybackWillStart: () => {
+    pauseMicrophoneCaptureForIosPlayback();
   },
   onPlaybackStart: (item) => {
     state.captureMutedForPlayback = true;
@@ -25,8 +34,10 @@ export const audioQueue = new AudioQueue({
     renderTranscript();
   },
   onPlaybackIdle: () => {
-    state.captureMutedForPlayback = false;
     state.audioPlayback = null;
+    if (!resumeMicrophoneCaptureAfterIosPlayback()) {
+      state.captureMutedForPlayback = false;
+    }
     renderTranscript();
   },
   onPlaybackComplete: (item) => {

@@ -361,9 +361,18 @@ def get_tts_bridge() -> TTSBridge:
 
 def tts_settings_payload() -> dict[str, Any]:
     payload = _base_tts_settings()
+    configured_backend = payload["backend"]
     backend_options = _loaded_tts_backend_options()
     if backend_options and payload["backend"] not in {option[0] for option in backend_options}:
         payload["backend"] = backend_options[0][0]
+    loaded_backends = {option[0] for option in backend_options}
+    payload["capabilities"] = {
+        "voice_selection": (
+            tts_settings_enabled(payload)
+            and configured_backend in loaded_backends
+            and _is_voxcpm_family_backend(configured_backend)
+        ),
+    }
     payload["options"] = {
         "backends": _options_payload(backend_options),
         "kokoro_voices": {
@@ -395,6 +404,76 @@ def tts_uses_asr_reference_wav(language: str, *, settings: dict[str, Any] | None
 
 def tts_settings_enabled(settings: dict[str, Any] | None = None) -> bool:
     return bool((settings or _base_tts_settings()).get("enabled"))
+
+
+def tts_supports_product_voice_modes(settings: dict[str, Any] | None = None) -> bool:
+    resolved = settings or _base_tts_settings()
+    return tts_settings_enabled(resolved) and _is_voxcpm_family_backend(resolved.get("backend"))
+
+
+def tts_supports_voice_cloning_language(language: str) -> bool:
+    return _bcp47_tag_for_language_name(language) is not None
+
+
+def product_voice_cloning_settings(
+    settings: dict[str, Any],
+    *,
+    language: str,
+    max_duration_s: float,
+) -> dict[str, Any]:
+    """Map the product setting to VoxCPM Prompt + reference controls."""
+    if not tts_supports_product_voice_modes(settings):
+        raise ValueError("speaker voice cloning requires an enabled VoxCPM backend")
+    tag = _bcp47_tag_for_language_name(language)
+    if not tag:
+        raise ValueError(f"speaker voice cloning does not support language={language!r}")
+    resolved = copy.deepcopy(settings)
+    resolved.setdefault("voxcpm2", {}).setdefault("languages", {})[tag] = {
+        "mode": "reference_audio",
+        "reference_source": "last_speech",
+        "trim_seconds": float(max_duration_s),
+        "trim_to_source": False,
+        "texture": "",
+        "preset": "",
+    }
+    resolved["voxcpm2"].setdefault("ultimate_cloning", {})["last_speech"] = {
+        "enabled": True,
+        "also_use_as_reference": True,
+    }
+    return resolved
+
+
+def product_stable_voice_settings(
+    settings: dict[str, Any],
+    *,
+    language: str,
+    gender: str,
+) -> dict[str, Any]:
+    """Map the product Female/Male choice to a stable per-language voice."""
+    if not tts_supports_product_voice_modes(settings):
+        raise ValueError("stable product voices require an enabled VoxCPM backend")
+    gender_key = str(gender or "").strip().lower()
+    if gender_key not in _VOXCPM2_GENDER_VALUES:
+        raise ValueError(f"unsupported stable voice gender={gender!r}")
+    tag = _bcp47_tag_for_language_name(language)
+    if not tag:
+        raise ValueError(f"stable product voices do not support language={language!r}")
+    resolved = copy.deepcopy(settings)
+    current = _voxcpm2_language_config(resolved["voxcpm2"]["languages"], language)
+    resolved["voxcpm2"]["languages"][tag] = {
+        "mode": "reference_audio",
+        "reference_source": "stable_generated",
+        "stable_gender": gender_key,
+        "trim_seconds": float(current.get("trim_seconds", VOXCPM2_DEFAULT_TRIM_SECONDS)),
+        "trim_to_source": False,
+        "texture": "",
+        "preset": "",
+    }
+    resolved["voxcpm2"].setdefault("ultimate_cloning", {})["stable_generated"] = {
+        "enabled": True,
+        "also_use_as_reference": True,
+    }
+    return resolved
 
 
 def artifact_path(session_id: str, artifact_id: str) -> Path:

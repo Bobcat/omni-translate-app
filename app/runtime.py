@@ -35,6 +35,14 @@ from app.sessions import SESSIONS
 from app.translation_bridge import TranslationBridge
 from app.tts_bridge import tts_settings_enabled
 from app.tts_bridge import tts_settings_snapshot
+from app.tts_bridge import tts_supports_product_voice_modes
+from app.tts_bridge import tts_supports_voice_cloning_language
+from app.voice.cloning import VoiceCloningWindow
+from app.voice.mode import DEFAULT_VOICE_MODE
+from app.voice.mode import normalize_voice_mode
+from app.voice.mode import VOICE_MODE_FEMALE
+from app.voice.mode import VOICE_MODE_MALE
+from app.voice.mode import VOICE_MODE_SPEAKER_CLONE
 from app.voice.session_lifecycle import ConversationLifecycle
 from app.voice.session_storage import SessionArtifactLimitExceeded
 from app.voice.tasks import cancel_task
@@ -198,6 +206,17 @@ class ConversationRuntime:
                 target_language=self.side_a_language,
             ),
         }
+        self.voice_mode = str(session.voice_mode or DEFAULT_VOICE_MODE)
+        self.voice_clone_fallback_mode = (
+            self.voice_mode
+            if self.voice_mode in {VOICE_MODE_FEMALE, VOICE_MODE_MALE}
+            else VOICE_MODE_FEMALE
+        )
+        self.voice_cloning = VoiceCloningWindow(
+            session_id=self.session_id,
+            lane_ids=tuple(self.lanes),
+        )
+        self.voice_cloning.set_enabled(self.voice_mode == VOICE_MODE_SPEAKER_CLONE)
         self.turn_counter = 1
         self.current_turn = self._new_turn(lane_id="a_to_b")
         self.closed_turns: list[ConversationTurn] = []
@@ -251,6 +270,9 @@ class ConversationRuntime:
         if msg_type == "update_tts_settings":
             await self._update_tts_settings(payload)
             return True
+        if msg_type == "update_voice_mode":
+            await self._update_voice_mode(payload)
+            return True
         if msg_type == "tts_playback_complete":
             await self.tts_delivery.playback_complete(payload)
             return True
@@ -289,6 +311,19 @@ class ConversationRuntime:
                 )
             )
             return
+        if (
+            self.voice_mode == VOICE_MODE_SPEAKER_CLONE
+            and not tts_supports_product_voice_modes(settings)
+        ):
+            await self.lifecycle.send(
+                event(
+                    "error",
+                    self.session_id,
+                    code="invalid_tts_settings",
+                    message="Active speaker voice cloning requires the VoxCPM TTS backend",
+                )
+            )
+            return
         previous = self.tts_settings
         self.tts_settings = settings
         await self.tts_delivery.settings_changed(previous, settings)
@@ -300,6 +335,43 @@ class ConversationRuntime:
                 tts_settings=deepcopy(settings),
             )
         )
+
+    async def _update_voice_mode(self, payload: dict[str, Any]) -> None:
+        mode, errors = normalize_voice_mode(
+            payload.get("mode"),
+            supported=tts_supports_product_voice_modes(self.tts_settings),
+        )
+        if errors:
+            await self.lifecycle.send(
+                event(
+                    "error",
+                    self.session_id,
+                    code="invalid_voice_mode",
+                    message="; ".join(errors.values()),
+                )
+            )
+            return
+        previous_mode = self.voice_mode
+        self.voice_mode = mode
+        if mode in {VOICE_MODE_FEMALE, VOICE_MODE_MALE}:
+            self.voice_clone_fallback_mode = mode
+        self.voice_cloning.set_enabled(mode == VOICE_MODE_SPEAKER_CLONE)
+        if previous_mode != mode:
+            self.tts_delivery.voice_mode_changed(mode=mode)
+            _metric(
+                "voice_mode_setting",
+                sess=self.session_id,
+                mode=mode,
+            )
+        SESSIONS.update(self.session_id, voice_mode=mode)
+        await self.lifecycle.send(
+            event(
+                "voice_mode_settings",
+                self.session_id,
+                mode=mode,
+            )
+        )
+        await self._send_voice_cloning_status()
 
     async def _handle_audio(self, raw_bytes: bytes) -> None:
         if not self.lifecycle.listening:
@@ -357,6 +429,44 @@ class ConversationRuntime:
             lane.last_asr_backend = result_backend
             lane.last_asr_wav_path = str(job.wav_path)
             self.tts_delivery.record_asr_reference(lane)
+            previous_reference = self.voice_cloning.reference(lane.lane_id)
+            try:
+                reference_changed = await asyncio.to_thread(
+                    self.voice_cloning.record_asr_result,
+                    lane_id=lane.lane_id,
+                    request_id=str(result.request_id or job.request_id),
+                    wav_path=str(job.wav_path),
+                    wav_t0_ms=job.t0_ms,
+                    wav_t1_ms=job.t1_ms,
+                    segments=result_segments,
+                )
+            except SessionArtifactLimitExceeded as exc:
+                lane.asr_inflight = None
+                await self.lifecycle.end_for_storage_limit(limit_bytes=exc.limit_bytes)
+                return
+            except (OSError, ValueError):
+                reference_changed = False
+                _metric(
+                    "voice_cloning_reference",
+                    sess=self.session_id,
+                    lane=lane.lane_id,
+                    state="rejected",
+                    reason="materialization_failed",
+                )
+            if reference_changed:
+                reference = self.voice_cloning.reference(lane.lane_id)
+                if reference is not None:
+                    self.tts_delivery.voice_cloning_reference_ready(lane_id=lane.lane_id)
+                await self._send_voice_cloning_status(lane_id=lane.lane_id)
+                _metric(
+                    "voice_cloning_reference",
+                    sess=self.session_id,
+                    lane=lane.lane_id,
+                    state="ready",
+                    first=previous_reference is None,
+                    duration_ms=int(reference.duration_ms if reference else 0),
+                    segments=int(reference.segment_count if reference else 0),
+                )
             apply = lane.asr_runner.apply_result(
                 ASRResult(
                     sequence_id=self._sequence_from_request(job.request_id),
@@ -590,6 +700,7 @@ class ConversationRuntime:
         self.current_turn = self._new_turn(lane_id=next_lane_id)
         self._reset_lane_text_scope(self._current_lane())
         await self._send_turn_update(reason="next_turn", previous_turn=previous_turn)
+        await self._send_voice_cloning_status(lane_id=next_lane_id)
 
     async def _speak_now(self) -> None:
         turn = self.current_turn
@@ -651,6 +762,30 @@ class ConversationRuntime:
                     message="Audio output is off",
                 )
             )
+            return
+        if (
+            self.voice_mode == VOICE_MODE_SPEAKER_CLONE
+            and not tts_supports_voice_cloning_language(lane.target_language)
+        ):
+            _metric(
+                "voice_cloning_tts_skip",
+                sess=self.session_id,
+                lane=lane.lane_id,
+                trigger=reason,
+                cause="unsupported_target_language",
+            )
+            if reason in {"speak_now", "speak_part"}:
+                await self.lifecycle.send(
+                    event(
+                        "tts_status",
+                        self.session_id,
+                        state="skipped",
+                        reason="voice_clone_unsupported_language",
+                        lane_id=lane.lane_id,
+                        turn_id=turn.turn_id,
+                        message="Voice cloning is unavailable for this target language",
+                    )
+                )
             return
         if reason in {"speak_now", "speak_part"}:
             self.tts_delivery.reset_speculation_budget(reason=reason)
@@ -1060,6 +1195,23 @@ class ConversationRuntime:
             payload["translation"] = translation
         await self.lifecycle.send(payload)
 
+    async def _send_voice_cloning_status(self, *, lane_id: str | None = None) -> None:
+        lane_ids = [lane_id] if lane_id in self.lanes else list(self.lanes)
+        for current_lane_id in lane_ids:
+            await self.lifecycle.send(
+                event(
+                    "voice_cloning_status",
+                    self.session_id,
+                    **self._voice_cloning_status_payload(current_lane_id),
+                )
+            )
+
+    def _voice_cloning_status_payload(self, lane_id: str) -> dict[str, Any]:
+        payload = self.voice_cloning.status_payload(lane_id)
+        if payload["state"] == "preparing":
+            payload["fallback_voice_mode"] = self.voice_clone_fallback_mode
+        return payload
+
     def _discard_inflight(self) -> None:
         # Frontend sends this when the user stops the mic so the server
         # drops any audio/ASR work already in flight; without it the ASR
@@ -1084,26 +1236,30 @@ class ConversationRuntime:
         )
 
     def _accept_visible_previews_for_parts(self, lane: ConversationLane, *, part_ids: set[str]) -> None:
+        current_part = self.current_turn.parts[-1] if self.current_turn.parts else None
         for part in self.current_turn.parts:
             if part.part_id not in part_ids:
                 continue
+            updates_current_scope = part is current_part and not part.is_closed
             if part.source_preview_text:
                 part.source_committed_text = _accepted_preview_text(
                     part.source_committed_text,
                     part.source_preview_text,
                 )
                 part.source_preview_text = ""
-                lane.source_state.source_committed_text = part.source_committed_text
-                lane.source_state.source_preview_text = ""
+                if updates_current_scope:
+                    lane.source_state.source_committed_text = part.source_committed_text
+                    lane.source_state.source_preview_text = ""
             if part.target_preview_text:
                 part.target_committed_text = _accepted_preview_text(
                     part.target_committed_text,
                     part.target_preview_text,
                 )
                 part.target_preview_text = ""
-                lane.translation_runner.target_state.target_committed_text = part.target_committed_text
-                lane.translation_runner.target_state.target_preview_text = ""
-                lane.last_target_committed = part.target_committed_text
+                if updates_current_scope:
+                    lane.translation_runner.target_state.target_committed_text = part.target_committed_text
+                    lane.translation_runner.target_state.target_preview_text = ""
+                    lane.last_target_committed = part.target_committed_text
 
     def _current_lane(self) -> ConversationLane:
         return self.lanes[self.current_turn.lane_id]

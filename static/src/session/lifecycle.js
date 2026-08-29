@@ -7,6 +7,10 @@
 
 import { api, SessionSocket } from '../api-client.js';
 import { AudioCapture } from '../shared/audio-capture.js';
+import {
+  setVoiceAudioSessionCaptureActive,
+  usesIosVoiceAudioPath,
+} from '../shared/audio-session.js?v=20260829-ios-playback-1';
 import { state } from '../state.js';
 import { els } from '../els.js';
 import {
@@ -49,8 +53,11 @@ import { audioQueue } from './audio-queue.js';
 import { handleMessage } from './messages.js';
 
 let _iosMicOffCueTimer = null;
+let _iosCaptureResumeTask = null;
 
 export async function startListening({ withMic = true } = {}) {
+  setVoiceAudioSessionCaptureActive(withMic);
+  state.capturePausedForPlayback = false;
   if (state.ttsSettings.auto_speak) audioQueue.preparePcmPlayback();
   state.sessionEndMessage = '';
   clearPendingIosMicOffCue();
@@ -173,6 +180,8 @@ export function finishSession() {
   state.pcExportBusy = false;
   state.capture?.stop();
   state.capture = null;
+  setVoiceAudioSessionCaptureActive(false);
+  state.capturePausedForPlayback = false;
   state.micState = MIC_STATES.OFF;
   hideVadHint();
   renderMicLevel(0);
@@ -184,6 +193,8 @@ export async function startMicrophoneCapture() {
   if (state.appMode !== APP_MODES.LIVE_RECORDING || state.micState !== MIC_STATES.OFF) return;
   if (!state.socket?.isOpen()) return;
   clearPendingIosMicOffCue();
+  setVoiceAudioSessionCaptureActive(true);
+  state.capturePausedForPlayback = false;
   setListenBusy(true);
   const useIosMicOnCue = state.audioSettings.autoOffCueEnabled && usesIosMicCuePath();
   try {
@@ -207,6 +218,8 @@ export async function startMicrophoneCapture() {
   } catch (error) {
     state.capture?.stop();
     state.capture = null;
+    setVoiceAudioSessionCaptureActive(false);
+    state.capturePausedForPlayback = false;
     state.micState = MIC_STATES.OFF;
     renderMicLevel(0);
     renderAudioSettings();
@@ -224,6 +237,8 @@ export function stopMicrophoneCapture() {
   clearAutoOffSilenceTimer();
   state.capture?.stop();
   state.capture = null;
+  setVoiceAudioSessionCaptureActive(false);
+  state.capturePausedForPlayback = false;
   state.micState = MIC_STATES.OFF;
   if (state.currentTurn.canTranslateNow) {
     state.socket?.translateNow();
@@ -242,6 +257,7 @@ export function stopMicrophoneCapture() {
 }
 
 export async function restartMicrophoneCapture() {
+  if (state.capturePausedForPlayback) return;
   const previousCapture = state.capture;
   const targetSampleRate = previousCapture?.targetSampleRate || 16000;
   const previousSettings = {
@@ -339,9 +355,86 @@ function shouldSendMicrophoneAudio() {
     && state.currentTurn.state !== TURN_STATES.OPEN_SPEAKING;
 }
 
+export function pauseMicrophoneCaptureForIosPlayback() {
+  if (!usesIosVoiceAudioPath()) return false;
+  if (state.appMode !== APP_MODES.LIVE_RECORDING || state.micState !== MIC_STATES.LISTENING) {
+    return false;
+  }
+  state.captureMutedForPlayback = true;
+  state.capturePausedForPlayback = true;
+  clearAutoOffSilenceTimer();
+  state.capture?.stop();
+  state.capture = null;
+  setVoiceAudioSessionCaptureActive(false);
+  renderMicLevel(0);
+  return true;
+}
+
+export function resumeMicrophoneCaptureAfterIosPlayback() {
+  if (!usesIosVoiceAudioPath() || !state.capturePausedForPlayback) return false;
+  if (!_iosCaptureResumeTask) {
+    _iosCaptureResumeTask = restoreMicrophoneCaptureAfterIosPlayback().finally(() => {
+      _iosCaptureResumeTask = null;
+    });
+  }
+  return true;
+}
+
+async function restoreMicrophoneCaptureAfterIosPlayback() {
+  await Promise.resolve();
+  if (
+    state.appMode !== APP_MODES.LIVE_RECORDING
+    || state.micState !== MIC_STATES.LISTENING
+    || audioQueue.hasAudio()
+  ) return;
+  const sessionId = state.sessionId;
+  state.capturePausedForPlayback = false;
+  setVoiceAudioSessionCaptureActive(true);
+  try {
+    const capture = await createStartedAudioCapture({
+      targetSampleRate: state.audioInputSampleRate,
+    });
+    const stillExpected = state.appMode === APP_MODES.LIVE_RECORDING
+      && state.sessionId === sessionId
+      && state.micState === MIC_STATES.LISTENING
+      && !state.capturePausedForPlayback
+      && !audioQueue.hasAudio();
+    if (!stillExpected) {
+      capture.stop();
+      if (
+        state.appMode === APP_MODES.LIVE_RECORDING
+        && state.micState === MIC_STATES.LISTENING
+        && audioQueue.hasAudio()
+      ) {
+        state.capturePausedForPlayback = true;
+        setVoiceAudioSessionCaptureActive(false);
+      }
+      return;
+    }
+    state.capture = capture;
+    state.captureMutedForPlayback = false;
+    state.audioSettings.autoGainControl = capture.autoGainControl;
+    armAutoOffSilenceTimer();
+    renderAudioSettings();
+    renderTranscript();
+  } catch {
+    if (state.appMode !== APP_MODES.LIVE_RECORDING || state.micState !== MIC_STATES.LISTENING) {
+      return;
+    }
+    state.captureMutedForPlayback = false;
+    state.micState = MIC_STATES.OFF;
+    renderMicLevel(0);
+    renderAudioSettings();
+    setStatus('error');
+    renderLifecycle();
+  }
+}
+
 export function cleanupClientSession({ keepSocket = false } = {}) {
   state.capture?.stop();
   state.capture = null;
+  setVoiceAudioSessionCaptureActive(false);
+  state.capturePausedForPlayback = false;
   state.micState = MIC_STATES.OFF;
   state.pcExportBusy = false;
   state.captureMutedForPlayback = false;
