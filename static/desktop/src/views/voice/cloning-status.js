@@ -3,10 +3,10 @@ export function visibleVoiceCloningStatus(state, laneId) {
   const status = state.voiceCloningStatus?.[laneId];
   const cloningState = status?.state;
   if (cloningState === 'preparing') {
-    const fallbackVoice = status?.fallbackVoiceMode === 'male' ? 'Male' : 'Female';
+    const fallbackVoice = status?.fallbackVoiceMode === 'male' ? 'male' : 'female';
     return {
       state: 'preparing',
-      text: `Learning speaker voice — using ${fallbackVoice} until enough speech is collected.`,
+      text: `Learning speaker voice — using the ${fallbackVoice} voice setting until enough speech is collected.`,
     };
   }
   if (cloningState === 'ready') {

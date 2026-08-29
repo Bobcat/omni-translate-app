@@ -18,7 +18,7 @@ import { accountInitials } from '../shared/account-display.js';
 import { cancelImage, getConfig, getImageRequest } from './src/shared/api.js?v=20260829-voice-modes-11';
 import { initAuth, onAuthChange, onBeforeSignOut } from './src/auth.js';
 import { registerImageSignOutCancellation } from '../shared/image-operation-recovery.js';
-import { createVoiceWorkflow } from './src/views/voice/index.js?v=20260829-voice-modes-11';
+import { createVoiceWorkflow } from './src/views/voice/index.js?v=20260829-voice-modes-12';
 import { createTextView } from './src/views/text/index.js?v=20260829-voice-modes-11';
 import { createImageView } from './src/views/image/index.js?v=20260829-voice-modes-11';
 import { createPdfView } from './src/views/pdf/index.js?v=20260829-voice-modes-11';

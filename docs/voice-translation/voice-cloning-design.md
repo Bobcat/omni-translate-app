@@ -101,10 +101,11 @@ existing ASR lifecycle.
 The active conversation direction is in **Preparing** state. The desktop shows
 this below the voice selector:
 
-> Learning speaker voice — using Male until enough speech is collected.
+> Learning speaker voice — using the male voice setting until enough speech is collected.
 
-The displayed voice name follows the last Female or Male choice in the current
-session. It is Female when Clone speaker was the session's first voice choice.
+The displayed voice setting follows the last Female or Male choice in the
+current session. It uses the female setting when Clone speaker was the session's
+first voice choice.
 Automatic, speculative, and manual TTS use this fallback while the reference is
 not ready. This avoids a silent period after Clone speaker is selected.
 

@@ -29,7 +29,7 @@ test('voice cloning status explains collection for the active lane', () => {
     },
   }, 'b_to_a'), {
     state: 'preparing',
-    text: 'Learning speaker voice — using Female until enough speech is collected.',
+    text: 'Learning speaker voice — using the female voice setting until enough speech is collected.',
   });
 });
 
@@ -42,7 +42,7 @@ test('voice cloning status names the previous Male fallback', () => {
     },
   }, 'a_to_b'), {
     state: 'preparing',
-    text: 'Learning speaker voice — using Male until enough speech is collected.',
+    text: 'Learning speaker voice — using the male voice setting until enough speech is collected.',
   });
 });
 

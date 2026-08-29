@@ -6,7 +6,7 @@ import { visibleVoiceDirection } from './direction.js?v=20260829-voice-modes-11'
 import {
   visibleVoiceCloningGuidance,
   visibleVoiceCloningStatus,
-} from './cloning-status.js?v=20260829-voice-modes-11';
+} from './cloning-status.js?v=20260829-voice-modes-12';
 
 // Voice translation view, wired to the same backend session flow as the
 // mobile app (see ./session.js for the protocol state machine). Layout:
