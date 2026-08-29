@@ -146,23 +146,6 @@ class VoiceCloningWindow:
         return current is None or current.reference_id != reference.reference_id
 
 
-def normalize_voice_cloning_settings(
-    settings: Any,
-    *,
-    supported: bool,
-) -> tuple[dict[str, bool], dict[str, str]]:
-    resolved = {"enabled": False}
-    if settings is None:
-        return resolved, {}
-    if not isinstance(settings, dict):
-        return resolved, {"settings": "must be an object"}
-    if "enabled" in settings:
-        resolved["enabled"] = bool(settings.get("enabled"))
-    if resolved["enabled"] and not supported:
-        return resolved, {"enabled": "requires the active VoxCPM TTS backend"}
-    return resolved, {}
-
-
 def _duration_bounds_ms() -> tuple[int, int]:
     min_s = get_float(
         "tts.voice_cloning.recent_speech_window.min_duration_s",

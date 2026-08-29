@@ -115,11 +115,12 @@ function pcmBase64(samples) {
 }
 
 
-function makeQueue({ context = new FakeAudioContext() } = {}) {
+function makeQueue({ context = new FakeAudioContext(), playbackStartDelayMs = 0 } = {}) {
   const ended = [];
   const failed = [];
   const started = [];
   const completed = [];
+  const willStart = [];
   const statuses = [];
   const resumeButton = new FakeEventTarget();
   resumeButton.hidden = true;
@@ -128,6 +129,8 @@ function makeQueue({ context = new FakeAudioContext() } = {}) {
     audio,
     resumeButton,
     audioContextFactory: () => context,
+    playbackStartDelayMs,
+    onPlaybackWillStart: (item) => willStart.push(item.artifactId),
     onStatus: (status) => statuses.push(status),
     onPlaybackStart: (item) => started.push(item.artifactId),
     onPlaybackIdle: () => {},
@@ -135,7 +138,18 @@ function makeQueue({ context = new FakeAudioContext() } = {}) {
     onItemEnded: (item) => ended.push(item.artifactId),
     onItemFailed: (item, reason) => failed.push([item.artifactId, reason]),
   });
-  return { queue, audio, context, ended, failed, started, completed, statuses, resumeButton };
+  return {
+    queue,
+    audio,
+    context,
+    ended,
+    failed,
+    willStart,
+    started,
+    completed,
+    statuses,
+    resumeButton,
+  };
 }
 
 
@@ -154,6 +168,7 @@ test('PCM chunks start playing before the stream completes', () => {
   });
 
   assert.deepEqual(harness.started, ['tts_1']);
+  assert.deepEqual(harness.willStart, ['tts_1']);
   assert.equal(harness.context.sources.length, 1);
   assert.equal(harness.ended.length, 0);
   assert.ok(harness.statuses.includes('Playing audio'));
@@ -164,6 +179,47 @@ test('PCM chunks start playing before the stream completes', () => {
   harness.context.sources[0].finish();
   assert.deepEqual(harness.ended, ['tts_1']);
   assert.deepEqual(harness.completed, ['tts_1']);
+});
+
+
+test('a playback-start delay leaves PCM pending until the audio route can settle', async () => {
+  const harness = makeQueue({ playbackStartDelayMs: 5 });
+  harness.queue.startPcmStream({
+    artifactId: 'tts_1',
+    sampleRateHz: 16_000,
+    channelCount: 1,
+  });
+  harness.queue.appendPcmChunk({
+    artifactId: 'tts_1',
+    sequenceNumber: 0,
+    pcmBase64: pcmBase64([1, 2]),
+  });
+
+  assert.deepEqual(harness.willStart, ['tts_1']);
+  assert.equal(harness.context.sources.length, 0);
+  await new Promise((resolve) => setTimeout(resolve, 15));
+  assert.equal(harness.context.sources.length, 1);
+});
+
+
+test('stopping during the playback-start delay prevents late PCM playback', async () => {
+  const harness = makeQueue({ playbackStartDelayMs: 5 });
+  harness.queue.startPcmStream({
+    artifactId: 'tts_1',
+    sampleRateHz: 16_000,
+    channelCount: 1,
+  });
+  harness.queue.appendPcmChunk({
+    artifactId: 'tts_1',
+    sequenceNumber: 0,
+    pcmBase64: pcmBase64([1, 2]),
+  });
+
+  harness.queue.stop();
+  await new Promise((resolve) => setTimeout(resolve, 15));
+
+  assert.equal(harness.context.sources.length, 0);
+  assert.equal(harness.queue.current, null);
 });
 
 

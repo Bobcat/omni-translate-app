@@ -3,16 +3,19 @@ export class AudioQueue {
     audio,
     resumeButton,
     onStatus,
+    onPlaybackWillStart,
     onPlaybackStart,
     onPlaybackIdle,
     onPlaybackComplete,
     onItemEnded,
     onItemFailed,
     audioContextFactory = defaultAudioContextFactory,
+    playbackStartDelayMs = 0,
   }) {
     this.audio = audio;
     this.resumeButton = resumeButton;
     this.onStatus = onStatus;
+    this.onPlaybackWillStart = onPlaybackWillStart;
     this.onPlaybackStart = onPlaybackStart;
     this.onPlaybackIdle = onPlaybackIdle;
     this.onPlaybackComplete = onPlaybackComplete;
@@ -22,6 +25,8 @@ export class AudioQueue {
     this.current = null;
     this.blocked = false;
     this.audioContextFactory = audioContextFactory;
+    this.playbackStartDelayMs = Math.max(0, Number(playbackStartDelayMs) || 0);
+    this.playbackStartTimer = null;
     this.pcmContext = null;
     this.pcmStreams = new Map();
     this.audio.addEventListener('ended', () => {
@@ -197,6 +202,7 @@ export class AudioQueue {
     this.queue = this.queue.filter((queued) => queued !== item);
     if (notifyServer) this.onItemFailed?.(item, String(reason || 'pcm_stream_failed'));
     if (this.current === item) {
+      this.cancelPendingPlaybackStart();
       this.current = null;
       this.playNext();
     }
@@ -205,6 +211,7 @@ export class AudioQueue {
   }
 
   clear() {
+    this.cancelPendingPlaybackStart();
     this.clearPcmStreams();
     this.queue = [];
     this.current = null;
@@ -216,6 +223,7 @@ export class AudioQueue {
   }
 
   stop() {
+    this.cancelPendingPlaybackStart();
     const stopped = [this.current, ...this.queue].filter(Boolean);
     for (const item of stopped) {
       if (item.kind === 'pcm') {
@@ -269,6 +277,7 @@ export class AudioQueue {
   }
 
   playNext() {
+    this.cancelPendingPlaybackStart();
     const next = this.queue.shift();
     if (!next) {
       this.current = null;
@@ -279,6 +288,20 @@ export class AudioQueue {
       return;
     }
     this.current = next;
+    this.onPlaybackWillStart?.(next);
+    if (this.playbackStartDelayMs > 0) {
+      this.playbackStartTimer = setTimeout(() => {
+        this.playbackStartTimer = null;
+        this.startCurrent(next);
+      }, this.playbackStartDelayMs);
+      this.render();
+      return;
+    }
+    this.startCurrent(next);
+  }
+
+  startCurrent(next) {
+    if (this.current !== next) return;
     if (next.kind === 'pcm') {
       this.schedulePendingPcm(next);
       this.finishPcmIfReady(next);
@@ -327,7 +350,7 @@ export class AudioQueue {
   }
 
   schedulePendingPcm(item) {
-    if (this.current !== item || item.stream.playbackStopped) return;
+    if (this.current !== item || item.stream.playbackStopped || this.playbackStartTimer) return;
     const context = this.ensurePcmContext();
     if (!context) {
       this.abortPcmStream(item.artifactId, 'audio_context_unavailable');
@@ -408,6 +431,12 @@ export class AudioQueue {
       this.stopPcmSources(item);
     }
     this.pcmStreams.clear();
+  }
+
+  cancelPendingPlaybackStart() {
+    if (this.playbackStartTimer === null) return;
+    clearTimeout(this.playbackStartTimer);
+    this.playbackStartTimer = null;
   }
 }
 

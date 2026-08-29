@@ -9,7 +9,7 @@ import {
   getConfig,
   getEntitlements,
   getUsage,
-} from '../../shared/api.js?v=20260828-voice-cloning-2';
+} from '../../shared/api.js?v=20260829-voice-modes-6';
 import { publishViewBusy } from '../../shared/view-activity.js';
 import { onAuthChange, whenAuthReady } from '../../auth.js';
 import { createAccountChangeGuard } from '../../shared/account-state.js';

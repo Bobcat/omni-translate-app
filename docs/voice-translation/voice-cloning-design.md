@@ -5,35 +5,37 @@ Phase 4 remains follow-up work after testing with real conversations.
 
 ## Decision summary
 
-Desktop voice translation gets one user-facing option:
+Desktop voice translation gets one user-facing voice choice:
 
-> **Clone speaker voice**
+> **Female** | **Male** | **Clone speaker**
 
-The product UI does not expose Prompt-only, Prompt + reference, stable-sample
-selection, reference duration, or transcript alignment. Those controls remain
-available for experiments in the current mobile TTS settings. They can move
-behind **Dev tools** when the desktop UX is migrated to mobile.
+Female and Male use the corresponding stable generated sample for each target
+language. The UI does not use the word "stable"; that is an implementation
+detail. The product UI also does not expose Prompt-only, Prompt + reference,
+reference duration, or transcript alignment. Those controls remain available
+for experiments in the current mobile TTS settings. They can move behind **Dev
+tools** when the desktop UX is migrated to mobile.
 
-When speaker cloning is enabled, the backend builds a recent-speech reference
+When Clone speaker is selected, the backend builds a recent-speech reference
 for each conversation direction. It selects complete ASR segments and produces
 the audio clip and transcript from the same selection. Product cloning uses
 VoxCPM2's combined Prompt + reference mode.
 
 The backend reports cloning as **Preparing** until it has a valid reference.
-The desktop shows a clear status instead of silently using a stable generated
-voice. Stable generated voices are an explicit voice source, not a fallback
-for speaker cloning.
+During that short period, TTS uses the most recently selected Female or Male
+voice from the current session. It uses Female when the session has no earlier
+normal voice choice. This keeps automatic speaking available from the first
+bubble. The desktop states the active fallback next to the voice selector.
 
 ## Goals
 
-- Offer speaker cloning through one understandable desktop option.
+- Offer Female, Male, and Clone speaker as one understandable voice choice.
 - Preserve the speaker's identity without exposing model-specific controls.
 - Keep prompt audio and prompt text aligned exactly.
 - Build a useful reference from recent speech across bubble boundaries.
 - Make the first acceptable reference duration configurable for experiments.
 - Keep reference state bounded and session-local.
-- Preserve the existing responsive TTS streaming and replay behavior once a
-  cloning reference is ready.
+- Preserve responsive TTS streaming and replay behavior from the first bubble.
 - Define a product UX that can later replace the normal mobile TTS form.
 
 ## Non-goals
@@ -88,35 +90,35 @@ code edit.
 
 ## User experience
 
-### Option off
+### Female or Male selected
 
-Voice translation uses the deployment's normal configured TTS voice. No recent
-speaker audio is retained for cloning policy beyond the existing ASR lifecycle.
+Voice translation uses the matching stable generated sample for the target
+language. No recent speaker audio is retained for cloning policy beyond the
+existing ASR lifecycle.
 
-### Option on, reference not ready
+### Clone speaker selected, reference not ready
 
-The active conversation direction is in **Preparing** state. The desktop shows:
+The active conversation direction is in **Preparing** state. The desktop shows
+this below the voice selector:
 
-> **Preparing voice cloning**
->
-> Speak naturally for a few more seconds. Cloning starts once enough clear
-> speech has been captured.
+> Learning speaker voice — using Male until enough speech is collected.
 
-The product client does not request cloned TTS while the active direction is
-preparing. Automatic speaking and speculative generation skip those bubbles.
-A manual Speak action receives a non-error `voice_clone_preparing` result and
-keeps the same status visible. The app does not substitute a stable generated
-voice.
+The displayed voice name follows the last Female or Male choice in the current
+session. It is Female when Clone speaker was the session's first voice choice.
+Automatic, speculative, and manual TTS use this fallback while the reference is
+not ready. This avoids a silent period after Clone speaker is selected.
 
-Bubbles skipped while preparing are not played automatically later. Once the
-reference is ready, a manual Speak action may generate speech for an earlier
-bubble with the current valid reference.
+Once the reference is ready, unused fallback preparations for that direction
+are discarded. Later synthesis uses the speaker voice. Audio already played or
+subscribed for playback keeps its original fallback voice, so replay remains
+consistent.
 
-### Option on, reference ready
+### Clone speaker selected, reference ready
 
-The backend reports **Ready**. The desktop may show a short confirmation:
+The backend reports **Ready**. The desktop keeps a short confirmation below the
+voice selector:
 
-> **Voice cloning ready**
+> Speaker voice ready
 
 New definitive bubbles use combined Prompt + reference cloning. Existing
 automatic, speculative, streaming, and replay rules still apply. Replaying a
@@ -150,7 +152,7 @@ off -> preparing -> ready
 
 | State | Meaning |
 |---|---|
-| `off` | Speaker cloning is disabled for the session. |
+| `off` | Clone speaker is not selected for the session. |
 | `preparing` | No valid recent-speech reference meets the configured policy. |
 | `ready` | A bounded audio and transcript pair is available for this lane. |
 
@@ -251,10 +253,14 @@ with. A reference update does not rewrite or invalidate a completed WAV. A
 queued preparation that has not started may use the new reference only if its
 preparation key is replaced before generation.
 
-Changing the cloning option discards unused speculative preparations created
-for the previous voice mode. Preparations already subscribed for playback and
-completed replay audio keep their original voice. Disabling cloning also clears
-the recent-speech window, so re-enabling returns each lane to **Preparing** until
+The first valid reference discards unused product-voice fallback preparations
+for its lane. Preparations already subscribed for playback keep their original
+voice. New work uses the ready cloning reference.
+
+Changing the voice choice discards unused speculative preparations created for
+the previous mode. Preparations already subscribed for playback and completed
+replay audio keep their original voice. Leaving Clone speaker also clears the
+recent-speech window. Selecting it again returns each lane to **Preparing** until
 enough new speech has been captured.
 
 The reference deque and materialized clips are deleted through the existing
@@ -294,18 +300,16 @@ The user-facing session setting is semantic:
 
 ```json
 {
-  "voice_cloning": {
-    "enabled": true
-  }
+  "voice_mode": "speaker_clone"
 }
 ```
 
-It does not expose VoxCPM2's Prompt or reference fields. The backend maps the
-setting to the supported TTS model and validates that speaker cloning is
-available. The config endpoint should report that capability so the desktop can
-hide or disable the option when the loaded backend cannot support it.
+The other values are `female` and `male`. The setting does not expose VoxCPM2's
+Prompt, reference-source, or stable-sample fields. The backend maps each product
+choice to the supported TTS model. The config endpoint reports whether this
+voice selector is available so the desktop can hide it for another backend.
 
-Changing the option affects future TTS preparation. It does not regenerate or
+Changing the voice choice affects future TTS preparation. It does not regenerate or
 replace stored audio for existing bubbles.
 
 ## Backend ownership
@@ -324,37 +328,37 @@ manage desktop state, or implement product fallback policy.
 ## Browser protocol
 
 The backend sends the current lane state after session readiness, direction
-changes, cloning-setting changes, and reference-state changes:
+changes, voice-mode changes, and reference-state changes:
 
 ```json
 {
   "type": "voice_cloning_status",
   "lane_id": "a_to_b",
   "state": "preparing",
-  "reason": "insufficient_clear_speech"
+  "reason": "insufficient_clear_speech",
+  "fallback_voice_mode": "male"
 }
 ```
 
 Normal product copy is selected in the browser from the state and reason. The
 protocol does not send transcript text or reference audio.
 
-A manual Speak request made while preparing receives a structured skipped
-result rather than a generic TTS failure. The browser keeps the bubble pending
-and leaves the cloning status visible.
+The cloning status tells the browser which normal voice is the temporary
+synthesis voice. TTS requests do not need a separate preparing protocol path.
 
 ## Interaction with automatic and speculative TTS
 
-Cloning readiness is an admission condition when speaker cloning is enabled:
+Cloning readiness selects the synthesis voice while Clone speaker is selected:
 
-- automatic generation starts only for bubbles finalized while the lane is
-  ready;
-- speculative generation starts only while the lane is ready;
-- manual demand while preparing is skipped with a structured reason;
-- reaching ready does not enqueue the existing bubble backlog;
-- disabling cloning makes future bubbles use the normal configured voice.
+- automatic, speculative, and manual generation use the most recent Female or
+  Male choice while preparing, or Female when there is no earlier choice;
+- the first ready reference discards unused fallback preparations for that lane;
+- subscribed and completed fallback audio keeps its original voice for playback
+  and replay;
+- reaching ready does not replay or enqueue the existing bubble backlog;
+- choosing Female or Male makes future bubbles use that selected voice.
 
-The speculation budget does not decrement for a bubble skipped because cloning
-is preparing. There was no TTS preparation.
+Speculative fallback generation uses the normal speculation budget.
 
 ## Storage and limits
 
@@ -371,12 +375,12 @@ Record metrics without transcript text or audio contents:
 
 | Metric | Purpose |
 |---|---|
-| cloning enabled or disabled | Measures use of the product option. |
+| selected voice mode | Measures use of Female, Male, and Clone speaker. |
 | time and bubbles until lane ready | Shows first-use delay. |
 | selected duration and segment count | Compares the experimental window settings. |
 | reference replacement count | Shows how often the active voice basis changes. |
 | selection rejection reason | Separates too-short, too-long, invalid-timestamp, overlap, and low-quality cases. |
-| automatic/speculative/manual request skipped while preparing | Measures the UX impact of strict readiness. |
+| Product-voice fallback synthesis while preparing | Measures how much work happens before cloning is ready. |
 | Prompt + reference synthesis outcome | Compares cloning reliability with normal TTS. |
 | final bubble to first PCM | Detects cloning-related latency regressions. |
 
@@ -397,20 +401,20 @@ metrics. They must not include transcript text.
 
 ### Phase 2: cloning session state
 
-- [x] Add validated semantic `voice_cloning.enabled` session state.
+- [x] Add validated semantic `voice_mode` session state.
 - [x] Report `off`, `preparing`, and `ready` per lane.
 - [x] Key TTS preparations by immutable reference identity.
 - [x] Use Prompt + reference for product cloning.
-- [x] Skip automatic, speculative, and manual generation while preparing.
-- [x] Prohibit stable-sample fallback from cloning mode.
+- [x] Use the previous normal voice, or Female by default, while preparing.
+- [x] Replace unused fallback preparations when a lane first becomes ready.
 - [x] Test direction changes, option changes, stale references, and replay.
 
 ### Phase 3: desktop UX
 
-- [x] Add **Clone speaker voice** to the desktop voice surface.
+- [x] Add **Female**, **Male**, and **Clone speaker** to the desktop voice surface.
 - [x] Show Preparing and Ready status from backend events.
-- [x] Explain a manual Speak skip without treating it as an error.
-- [x] Keep automatic speaking independent from the cloning option.
+- [x] Explain the temporary fallback voice while cloning is preparing.
+- [x] Keep automatic speaking independent from the voice choice.
 - [x] Test the first bubbles, direction switching, reload, and session restart.
 
 ### Phase 4: tune and migrate
@@ -425,14 +429,15 @@ metrics. They must not include transcript text.
 
 The first product implementation is complete when:
 
-- enabling cloning never produces a stable generated voice unless that source
-  was explicitly selected outside cloning mode;
+- Clone speaker uses the previous normal voice while its reference is not ready,
+  or Female when the session has no previous normal voice choice;
 - the desktop clearly shows when the active lane is collecting speech;
 - a short bubble can be combined with earlier segments from the same lane;
 - every Prompt transcript contains only text belonging to the supplied audio;
 - no audio is cut inside an ASR segment;
 - cloning becomes ready at the configured minimum, not a hard-coded duration;
-- automatic and speculative TTS do not generate cloning audio while preparing;
+- automatic and speculative TTS remain available while preparing;
+- unused fallback preparations are discarded when cloning becomes ready;
 - reaching ready affects future bubbles without automatically reading the
   backlog;
 - each lane maintains independent readiness and reference identity;
@@ -441,12 +446,21 @@ The first product implementation is complete when:
 
 ## Resolved product decisions
 
-- **Clone speaker voice** is off by default.
-- The browser remembers the option in `localStorage`.
-- The option is available only when TTS is enabled and the active loaded backend
-  is VoxCPM-family. It does not switch backends automatically.
-- The Ready confirmation remains visible while the session is idle. Playback
-  status takes priority while audio is active.
+- **Female** is the default voice choice.
+- The browser remembers Female, Male, or Clone speaker in `localStorage`.
+- The selector is available only when TTS is enabled and the active loaded
+  backend is VoxCPM-family. It does not switch backends automatically.
+- The voice selector sits directly below the target pane, level with the round
+  microphone button. It aligns with the pane's right edge. **Automatically speak
+  translations** appears below it, with its switch aligned to the pane's right
+  edge.
+- The desktop has no separate Translate now or Speak now buttons. Stopping the
+  microphone finalizes pending speech. Each translated bubble owns its replay or
+  manual speak action.
+- The voice selector has no visible field label. Its selected option uses a
+  filled state.
+- Cloning state appears below **Automatically speak translations**. The separate
+  runtime status line reports playback, connection, and errors.
 
 ## Open decisions
 

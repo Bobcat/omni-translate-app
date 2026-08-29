@@ -10,7 +10,7 @@ export const APP_STORAGE_KEYS = Object.freeze({
   VOXCPM2_VOICE_CONFIG: 'voxcpm2_voice_config',
   IMAGE_RENDER_SETTINGS: 'image_render_settings',
   APPEARANCE_SETTINGS: 'appearance_settings',
-  VOICE_CLONING: 'voice_cloning',
+  VOICE_MODE: 'voice_mode',
 });
 export const TTS_GLOBAL_STORAGE_KEY = APP_STORAGE_KEYS.TTS_GLOBAL;
 export const RECENT_LANGUAGES_KEY = APP_STORAGE_KEYS.RECENT_LANGUAGES;
@@ -19,7 +19,7 @@ export const SETUP_LANGUAGES_KEY = APP_STORAGE_KEYS.SETUP_LANGUAGES;
 export const VOXCPM2_VOICE_CONFIG_STORAGE_KEY = APP_STORAGE_KEYS.VOXCPM2_VOICE_CONFIG;
 export const IMAGE_RENDER_SETTINGS_KEY = APP_STORAGE_KEYS.IMAGE_RENDER_SETTINGS;
 export const APPEARANCE_SETTINGS_KEY = APP_STORAGE_KEYS.APPEARANCE_SETTINGS;
-export const VOICE_CLONING_STORAGE_KEY = APP_STORAGE_KEYS.VOICE_CLONING;
+export const VOICE_MODE_STORAGE_KEY = APP_STORAGE_KEYS.VOICE_MODE;
 export const RECENT_MAX = 4;
 
 // Appearance settings (settings-sheet Appearance page): two independent axes —
@@ -161,19 +161,20 @@ export function persistAutoSpeakPreference(enabled) {
   }
 }
 
-export function loadVoiceCloningPreference() {
+export function loadVoiceModePreference() {
   try {
-    const saved = JSON.parse(localStorage.getItem(VOICE_CLONING_STORAGE_KEY) || '{}');
-    return typeof saved.enabled === 'boolean' ? saved.enabled : null;
+    const saved = JSON.parse(localStorage.getItem(VOICE_MODE_STORAGE_KEY) || '{}');
+    return ['female', 'male', 'speaker_clone'].includes(saved.mode) ? saved.mode : null;
   } catch (_) {
     return null;
   }
 }
 
-export function persistVoiceCloningPreference(enabled) {
+export function persistVoiceModePreference(mode) {
+  const normalized = ['female', 'male', 'speaker_clone'].includes(mode) ? mode : 'female';
   try {
-    localStorage.setItem(VOICE_CLONING_STORAGE_KEY, JSON.stringify({
-      enabled: Boolean(enabled),
+    localStorage.setItem(VOICE_MODE_STORAGE_KEY, JSON.stringify({
+      mode: normalized,
     }));
   } catch (_) {
     // ignore quota / disabled storage

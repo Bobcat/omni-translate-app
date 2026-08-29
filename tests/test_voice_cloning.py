@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import shutil
 import tempfile
 import time
@@ -10,6 +11,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 from app.tts_bridge import _tts_pool_request_payload
+from app.tts_bridge import product_stable_voice_settings
 from app.tts_bridge import product_voice_cloning_settings
 from app.tts_bridge import tts_settings_payload
 from app.tts_bridge import tts_settings_snapshot
@@ -17,9 +19,12 @@ from app.runtime import ConversationRuntime
 from app.runtime import TurnPart
 from app.sessions import ConversationSession
 from app.voice import cloning
-from app.voice.cloning import normalize_voice_cloning_settings
 from app.voice.cloning import VoiceCloningReference
 from app.voice.cloning import VoiceCloningWindow
+from app.voice.mode import normalize_voice_mode
+from app.voice.mode import VOICE_MODE_FEMALE
+from app.voice.mode import VOICE_MODE_MALE
+from app.voice.mode import VOICE_MODE_SPEAKER_CLONE
 from app.voice.session_storage import release_session_artifact_tracking
 from app.voice.session_storage import SessionArtifactLimitExceeded
 from app.voice.tts_delivery import TtsDelivery
@@ -214,13 +219,34 @@ class VoiceCloningWindowTests(unittest.TestCase):
 
 
 class VoiceCloningSettingsTests(unittest.TestCase):
+    def test_semantic_voice_modes_are_accepted_for_voxcpm(self) -> None:
+        for expected in (VOICE_MODE_FEMALE, VOICE_MODE_MALE, VOICE_MODE_SPEAKER_CLONE):
+            mode, errors = normalize_voice_mode(expected, supported=True)
+            self.assertEqual(mode, expected)
+            self.assertEqual(errors, {})
+
     def test_semantic_setting_rejects_an_incompatible_backend(self) -> None:
-        settings, errors = normalize_voice_cloning_settings(
-            {"enabled": True},
+        mode, errors = normalize_voice_mode(
+            VOICE_MODE_SPEAKER_CLONE,
             supported=False,
         )
-        self.assertTrue(settings["enabled"])
-        self.assertIn("enabled", errors)
+        self.assertEqual(mode, VOICE_MODE_SPEAKER_CLONE)
+        self.assertIn("voice_mode", errors)
+
+    def test_product_stable_voice_mapping_uses_the_selected_gender(self) -> None:
+        base, errors = tts_settings_snapshot({"enabled": True, "backend": "voxcpm2"})
+        self.assertEqual(errors, {})
+
+        settings = product_stable_voice_settings(
+            base,
+            language="Dutch",
+            gender=VOICE_MODE_MALE,
+        )
+
+        language_settings = settings["voxcpm2"]["languages"]["nl"]
+        self.assertEqual(language_settings["reference_source"], "stable_generated")
+        self.assertEqual(language_settings["stable_gender"], "male")
+        self.assertTrue(settings["voxcpm2"]["ultimate_cloning"]["stable_generated"]["enabled"])
 
     def test_product_mapping_sends_combined_prompt_and_reference(self) -> None:
         base, errors = tts_settings_snapshot({"enabled": True, "backend": "voxcpm2"})
@@ -261,10 +287,40 @@ class VoiceCloningSettingsTests(unittest.TestCase):
             payload = tts_settings_payload()
 
         self.assertEqual(payload["backend"], "voxcpm2")
-        self.assertFalse(payload["capabilities"]["voice_cloning"])
+        self.assertFalse(payload["capabilities"]["voice_selection"])
 
 
 class VoiceCloningDeliveryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_stable_product_mode_uses_the_selected_gender(self) -> None:
+        settings, errors = tts_settings_snapshot({"enabled": True, "backend": "voxcpm2"})
+        self.assertEqual(errors, {})
+        part = SimpleNamespace(part_id="part_1", target="Translated words")
+        lane = SimpleNamespace(
+            target_language="English",
+            last_asr_wav_path="",
+        )
+        runtime = SimpleNamespace(
+            session_id="conv_delivery_stable_voice_test",
+            tts_settings=settings,
+            voice_mode=VOICE_MODE_MALE,
+            voice_cloning=SimpleNamespace(reference=lambda _lane_id: None),
+            lanes={"a_to_b": lane},
+            current_turn=SimpleNamespace(turn_id="turn_1", parts=[part]),
+        )
+        delivery = TtsDelivery(runtime, part_target_text=lambda item: item.target)
+
+        preparation = delivery._new_preparation(
+            lane_id="a_to_b",
+            turn_id="turn_1",
+            part_id="part_1",
+            reason="speculative",
+        )
+
+        self.assertEqual(preparation.voice_mode, VOICE_MODE_MALE)
+        language_settings = preparation.settings["voxcpm2"]["languages"]["en"]
+        self.assertEqual(language_settings["reference_source"], "stable_generated")
+        self.assertEqual(language_settings["stable_gender"], "male")
+
     async def test_preparation_is_keyed_to_and_uses_the_selected_reference(self) -> None:
         settings, errors = tts_settings_snapshot({"enabled": True, "backend": "voxcpm2"})
         self.assertEqual(errors, {})
@@ -287,6 +343,7 @@ class VoiceCloningDeliveryTests(unittest.IsolatedAsyncioTestCase):
         runtime = SimpleNamespace(
             session_id="conv_delivery_test",
             tts_settings=settings,
+            voice_mode=VOICE_MODE_SPEAKER_CLONE,
             voice_cloning=voice_cloning,
             lanes={"a_to_b": lane},
             current_turn=SimpleNamespace(turn_id="turn_1", parts=[part]),
@@ -310,18 +367,24 @@ class VoiceCloningDeliveryTests(unittest.IsolatedAsyncioTestCase):
             preparation.settings["voxcpm2"]["ultimate_cloning"]["last_speech"]["enabled"]
         )
 
-    async def test_preparation_is_skipped_without_a_ready_reference(self) -> None:
+    async def test_preparation_uses_female_until_a_cloning_reference_is_ready(self) -> None:
         settings, _ = tts_settings_snapshot({"enabled": True, "backend": "voxcpm2"})
         part = SimpleNamespace(part_id="part_1", target="Translated words")
         runtime = SimpleNamespace(
             session_id="conv_delivery_preparing_test",
             tts_settings=settings,
+            voice_mode=VOICE_MODE_SPEAKER_CLONE,
             voice_cloning=SimpleNamespace(
                 enabled=True,
                 max_duration_ms=10_000,
                 reference=lambda _lane_id: None,
             ),
-            lanes={"a_to_b": SimpleNamespace(target_language="English")},
+            lanes={
+                "a_to_b": SimpleNamespace(
+                    target_language="English",
+                    last_asr_wav_path="",
+                )
+            },
             current_turn=SimpleNamespace(turn_id="turn_1", parts=[part]),
         )
         delivery = TtsDelivery(runtime, part_target_text=lambda item: item.target)
@@ -333,7 +396,50 @@ class VoiceCloningDeliveryTests(unittest.IsolatedAsyncioTestCase):
             reason="speculative",
         )
 
-        self.assertIsNone(preparation)
+        self.assertIsNotNone(preparation)
+        self.assertEqual(preparation.voice_mode, VOICE_MODE_SPEAKER_CLONE)
+        self.assertEqual(preparation.synthesis_voice_mode, VOICE_MODE_FEMALE)
+        self.assertIsNone(preparation.reference_id)
+        language_settings = preparation.settings["voxcpm2"]["languages"]["en"]
+        self.assertEqual(language_settings["reference_source"], "stable_generated")
+        self.assertEqual(language_settings["stable_gender"], "female")
+
+    async def test_preparation_uses_the_previous_male_voice_while_cloning_prepares(self) -> None:
+        settings, _ = tts_settings_snapshot({"enabled": True, "backend": "voxcpm2"})
+        part = SimpleNamespace(part_id="part_1", target="Translated words")
+        runtime = SimpleNamespace(
+            session_id="conv_delivery_preparing_male_test",
+            tts_settings=settings,
+            voice_mode=VOICE_MODE_SPEAKER_CLONE,
+            voice_clone_fallback_mode=VOICE_MODE_MALE,
+            voice_cloning=SimpleNamespace(
+                enabled=True,
+                max_duration_ms=10_000,
+                reference=lambda _lane_id: None,
+            ),
+            lanes={
+                "a_to_b": SimpleNamespace(
+                    target_language="English",
+                    last_asr_wav_path="",
+                )
+            },
+            current_turn=SimpleNamespace(turn_id="turn_1", parts=[part]),
+        )
+        delivery = TtsDelivery(runtime, part_target_text=lambda item: item.target)
+
+        preparation = delivery._new_preparation(
+            lane_id="a_to_b",
+            turn_id="turn_1",
+            part_id="part_1",
+            reason="speculative",
+        )
+
+        self.assertIsNotNone(preparation)
+        self.assertEqual(preparation.voice_mode, VOICE_MODE_SPEAKER_CLONE)
+        self.assertEqual(preparation.synthesis_voice_mode, VOICE_MODE_MALE)
+        language_settings = preparation.settings["voxcpm2"]["languages"]["en"]
+        self.assertEqual(language_settings["reference_source"], "stable_generated")
+        self.assertEqual(language_settings["stable_gender"], "male")
 
     async def test_unsupported_target_language_fails_closed(self) -> None:
         settings, _ = tts_settings_snapshot({"enabled": True, "backend": "voxcpm2"})
@@ -350,6 +456,7 @@ class VoiceCloningDeliveryTests(unittest.IsolatedAsyncioTestCase):
         runtime = SimpleNamespace(
             session_id="conv_delivery_unsupported_language",
             tts_settings=settings,
+            voice_mode=VOICE_MODE_SPEAKER_CLONE,
             voice_cloning=SimpleNamespace(
                 enabled=True,
                 max_duration_ms=10_000,
@@ -384,6 +491,8 @@ class VoiceCloningDeliveryTests(unittest.IsolatedAsyncioTestCase):
         runtime = SimpleNamespace(
             session_id="conv_delivery_toggle_test",
             tts_settings=settings,
+            voice_mode=VOICE_MODE_SPEAKER_CLONE,
+            lifecycle=SimpleNamespace(closed=False),
             voice_cloning=SimpleNamespace(
                 enabled=True,
                 max_duration_ms=10_000,
@@ -401,11 +510,13 @@ class VoiceCloningDeliveryTests(unittest.IsolatedAsyncioTestCase):
         )
         delivery.preparations[unused.key] = unused
 
-        delivery.voice_cloning_mode_changed(enabled=False)
+        runtime.voice_mode = VOICE_MODE_FEMALE
+        delivery.voice_mode_changed(mode=VOICE_MODE_FEMALE)
 
         self.assertNotIn(unused.key, delivery.preparations)
         self.assertTrue(unused.cancelled)
 
+        runtime.voice_mode = VOICE_MODE_SPEAKER_CLONE
         subscribed = delivery._new_preparation(
             lane_id="a_to_b",
             turn_id="turn_1",
@@ -415,13 +526,155 @@ class VoiceCloningDeliveryTests(unittest.IsolatedAsyncioTestCase):
         subscribed.subscribed = True
         delivery.preparations[subscribed.key] = subscribed
 
-        delivery.voice_cloning_mode_changed(enabled=False)
+        runtime.voice_mode = VOICE_MODE_FEMALE
+        delivery.voice_mode_changed(mode=VOICE_MODE_FEMALE)
 
         self.assertIs(delivery.preparations[subscribed.key], subscribed)
+        self.assertTrue(delivery._record_is_current(subscribed))
+
+    async def test_stable_gender_change_drops_an_unused_preparation(self) -> None:
+        settings, _ = tts_settings_snapshot({"enabled": True, "backend": "voxcpm2"})
+        part = SimpleNamespace(part_id="part_1", target="Translated words")
+        runtime = SimpleNamespace(
+            session_id="conv_delivery_gender_toggle_test",
+            tts_settings=settings,
+            voice_mode=VOICE_MODE_MALE,
+            voice_cloning=SimpleNamespace(reference=lambda _lane_id: None),
+            lanes={
+                "a_to_b": SimpleNamespace(
+                    target_language="English",
+                    last_asr_wav_path="",
+                )
+            },
+            current_turn=SimpleNamespace(turn_id="turn_1", parts=[part]),
+        )
+        delivery = TtsDelivery(runtime, part_target_text=lambda item: item.target)
+        preparation = delivery._new_preparation(
+            lane_id="a_to_b",
+            turn_id="turn_1",
+            part_id="part_1",
+            reason="speculative",
+        )
+        delivery.preparations[preparation.key] = preparation
+
+        delivery.voice_mode_changed(mode=VOICE_MODE_FEMALE)
+
+        self.assertNotIn(preparation.key, delivery.preparations)
+        self.assertTrue(preparation.cancelled)
+
+    async def test_ready_reference_drops_only_unused_product_voice_fallbacks(self) -> None:
+        settings, _ = tts_settings_snapshot({"enabled": True, "backend": "voxcpm2"})
+        parts = [
+            SimpleNamespace(part_id="part_1", target="First translation"),
+            SimpleNamespace(part_id="part_2", target="Second translation"),
+        ]
+        runtime = SimpleNamespace(
+            session_id="conv_delivery_clone_fallback_test",
+            tts_settings=settings,
+            voice_mode=VOICE_MODE_SPEAKER_CLONE,
+            voice_clone_fallback_mode=VOICE_MODE_MALE,
+            lifecycle=SimpleNamespace(closed=False),
+            voice_cloning=SimpleNamespace(
+                max_duration_ms=10_000,
+                reference=lambda _lane_id: None,
+            ),
+            lanes={
+                "a_to_b": SimpleNamespace(
+                    target_language="English",
+                    last_asr_wav_path="",
+                )
+            },
+            current_turn=SimpleNamespace(turn_id="turn_1", parts=parts),
+        )
+        delivery = TtsDelivery(runtime, part_target_text=lambda item: item.target)
+        unused = delivery._new_preparation(
+            lane_id="a_to_b",
+            turn_id="turn_1",
+            part_id="part_1",
+            reason="speculative",
+        )
+        subscribed = delivery._new_preparation(
+            lane_id="a_to_b",
+            turn_id="turn_1",
+            part_id="part_2",
+            reason="automatic",
+        )
+        subscribed.subscribed = True
+        self.assertEqual(unused.synthesis_voice_mode, VOICE_MODE_MALE)
+        self.assertEqual(subscribed.synthesis_voice_mode, VOICE_MODE_MALE)
+        delivery.preparations[unused.key] = unused
+        delivery.preparations[subscribed.key] = subscribed
+
+        delivery.voice_cloning_reference_ready(lane_id="a_to_b")
+
+        self.assertNotIn(unused.key, delivery.preparations)
+        self.assertTrue(unused.cancelled)
+        self.assertIs(delivery.preparations[subscribed.key], subscribed)
+        self.assertTrue(delivery._record_is_current(subscribed))
 
 
 class VoiceCloningRuntimeTests(unittest.IsolatedAsyncioTestCase):
-    async def test_manual_speak_while_preparing_returns_a_non_error_status(self) -> None:
+    async def test_voice_mode_update_controls_cloning_collection(self) -> None:
+        class WebSocket:
+            def __init__(self) -> None:
+                self.sent = []
+
+            async def send_json(self, payload) -> None:
+                self.sent.append(payload)
+
+            async def close(self, *, code: int, reason: str = "") -> None:
+                return None
+
+        settings, _ = tts_settings_snapshot({"enabled": True, "backend": "voxcpm2"})
+        session = ConversationSession(
+            session_id=f"conv_voice_mode_runtime_{time.time_ns()}",
+            created_unix=time.time(),
+            expires_unix=time.time() + 60,
+            side_a_language="Dutch",
+            side_b_language="English",
+            tts_fairness_key="principal_test",
+            tts_settings=settings,
+            voice_mode=VOICE_MODE_FEMALE,
+        )
+        websocket = WebSocket()
+        runtime = ConversationRuntime(websocket=websocket, session=session)
+        self.addAsyncCleanup(runtime.lifecycle.close)
+
+        with mock.patch("app.runtime.SESSIONS.update"):
+            await runtime._update_voice_mode({"mode": VOICE_MODE_SPEAKER_CLONE})
+            self.assertEqual(runtime.voice_mode, VOICE_MODE_SPEAKER_CLONE)
+            self.assertEqual(runtime.voice_clone_fallback_mode, VOICE_MODE_FEMALE)
+            self.assertTrue(runtime.voice_cloning.enabled)
+
+            await runtime._update_voice_mode({"mode": VOICE_MODE_MALE})
+            await runtime._update_voice_mode({"mode": VOICE_MODE_SPEAKER_CLONE})
+
+        self.assertEqual(runtime.voice_mode, VOICE_MODE_SPEAKER_CLONE)
+        self.assertEqual(runtime.voice_clone_fallback_mode, VOICE_MODE_MALE)
+        self.assertTrue(runtime.voice_cloning.enabled)
+        part = runtime._current_writable_part()
+        part.target_committed_text = "Translated words"
+        preparation = runtime.tts_delivery._new_preparation(
+            lane_id="a_to_b",
+            turn_id=runtime.current_turn.turn_id,
+            part_id=part.part_id,
+            reason="automatic",
+        )
+        self.assertIsNotNone(preparation)
+        self.assertEqual(preparation.synthesis_voice_mode, VOICE_MODE_MALE)
+        mode_events = [item for item in websocket.sent if item["type"] == "voice_mode_settings"]
+        self.assertEqual(
+            [item["mode"] for item in mode_events],
+            [VOICE_MODE_SPEAKER_CLONE, VOICE_MODE_MALE, VOICE_MODE_SPEAKER_CLONE],
+        )
+        preparing_events = [
+            item
+            for item in websocket.sent
+            if item["type"] == "voice_cloning_status" and item["state"] == "preparing"
+        ]
+        self.assertEqual(preparing_events[-1]["fallback_voice_mode"], VOICE_MODE_MALE)
+
+    async def test_manual_speak_while_preparing_starts_female_fallback(self) -> None:
         class WebSocket:
             def __init__(self) -> None:
                 self.sent = []
@@ -441,7 +694,7 @@ class VoiceCloningRuntimeTests(unittest.IsolatedAsyncioTestCase):
             side_b_language="English",
             tts_fairness_key="principal_test",
             tts_settings=settings,
-            voice_cloning={"enabled": True},
+            voice_mode=VOICE_MODE_SPEAKER_CLONE,
         )
         websocket = WebSocket()
         runtime = ConversationRuntime(websocket=websocket, session=session)
@@ -456,13 +709,28 @@ class VoiceCloningRuntimeTests(unittest.IsolatedAsyncioTestCase):
         runtime._refresh_turn_state()
         self.addAsyncCleanup(runtime.lifecycle.close)
 
-        await runtime._dispatch_speak_sequence(["part_1"], reason="speak_part")
+        with mock.patch.object(
+            runtime.tts_delivery,
+            "run_speak_sequence",
+            new_callable=mock.AsyncMock,
+        ) as run_speak_sequence:
+            await runtime._dispatch_speak_sequence(["part_1"], reason="speak_part")
+            await asyncio.sleep(0)
 
-        status = websocket.sent[-1]
-        self.assertEqual(status["type"], "tts_status")
-        self.assertEqual(status["state"], "skipped")
-        self.assertEqual(status["reason"], "voice_clone_preparing")
-        self.assertEqual(runtime.current_turn.parts[0].speech_state, "pending")
+        run_speak_sequence.assert_awaited_once_with(
+            "a_to_b",
+            runtime.current_turn.turn_id,
+            ["part_1"],
+            generation_reason="demand",
+        )
+        self.assertEqual(runtime.current_turn.parts[0].speech_state, "speaking")
+        self.assertFalse(
+            any(
+                payload.get("type") == "tts_status"
+                and payload.get("reason") == "voice_clone_preparing"
+                for payload in websocket.sent
+            )
+        )
 
 
 if __name__ == "__main__":

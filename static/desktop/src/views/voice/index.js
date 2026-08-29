@@ -1,8 +1,9 @@
 import { iconMarkup } from '../../shared/icons.js';
 import { populateLanguageSelect, recordLanguageMru } from '../../shared/languages.js';
 import { micHaloVisual } from '../../../../src/shared/mic-level-visual.js';
-import { createVoiceSession, visibleText } from './session.js?v=20260828-voice-cloning-2';
-import { visibleVoiceDirection } from './direction.js?v=20260828-voice-cloning-2';
+import { createVoiceSession, visibleText } from './session.js?v=20260829-voice-modes-6';
+import { visibleVoiceDirection } from './direction.js?v=20260829-voice-modes-6';
+import { visibleVoiceCloningStatus } from './cloning-status.js?v=20260829-voice-modes-6';
 
 // Voice translation view, wired to the same backend session flow as the
 // mobile app (see ./session.js for the protocol state machine). Layout:
@@ -39,35 +40,44 @@ export function createVoiceWorkflow() {
         <div class="text-stream" id="voiceTargetText" data-empty="No translation yet"></div>
       </article>
     </div>
-    <div class="voice-actionbar">
-      <button type="button" class="action-round" id="voiceTranslateNow" aria-label="Translate now" title="Translate now" disabled>
-        ${iconMarkup('languages')}
-      </button>
-      <button type="button" class="action-round primary voice-mic-toggle" id="voiceMicToggle" aria-label="Start recording" title="Start recording">
-        ${iconMarkup('mic', 'voice-mic-icon voice-mic-start-icon')}
-        ${iconMarkup('stop-square', 'voice-mic-icon voice-mic-stop-icon')}
-      </button>
-      <button type="button" class="action-round" id="voiceSpeakNow" aria-label="Speak now" title="Speak now" disabled>
-        ${iconMarkup('volume-2')}
-      </button>
-    </div>
-    <div class="voice-statusrow">
-      <p class="status-line" id="voiceStatus" role="status"></p>
-      <label class="field switch-field voice-auto-speak" for="voiceAutoSpeak">
-        <span>Automatically speak translations</span>
-        <span class="switch">
-          <input id="voiceAutoSpeak" type="checkbox" role="switch">
-          <span class="switch-slider" aria-hidden="true"></span>
-        </span>
-      </label>
-      <label class="field switch-field voice-cloning" for="voiceCloning">
-        <span>Clone speaker voice</span>
-        <span class="switch">
-          <input id="voiceCloning" type="checkbox" role="switch">
-          <span class="switch-slider" aria-hidden="true"></span>
-        </span>
-      </label>
-      <button type="button" class="resume-audio-btn" id="voiceResumeAudio" hidden>Resume audio</button>
+    <div class="voice-controls">
+      <div class="voice-actionbar">
+        <button type="button" class="action-round primary voice-mic-toggle" id="voiceMicToggle" aria-label="Start recording" title="Start recording">
+          ${iconMarkup('mic', 'voice-mic-icon voice-mic-start-icon')}
+          ${iconMarkup('stop-square', 'voice-mic-icon voice-mic-stop-icon')}
+        </button>
+      </div>
+      <div class="voice-preferences">
+        <fieldset class="voice-mode-field" id="voiceModeField">
+          <legend class="visually-hidden">Translation voice</legend>
+          <div class="voice-mode-options">
+            <label class="voice-mode-option">
+              <input type="radio" name="voiceMode" value="female">
+              <span>Female</span>
+            </label>
+            <label class="voice-mode-option">
+              <input type="radio" name="voiceMode" value="male">
+              <span>Male</span>
+            </label>
+            <label class="voice-mode-option">
+              <input type="radio" name="voiceMode" value="speaker_clone">
+              <span>Clone speaker</span>
+            </label>
+          </div>
+        </fieldset>
+        <label class="field switch-field voice-auto-speak" for="voiceAutoSpeak">
+          <span>Automatically speak translations</span>
+          <span class="switch">
+            <input id="voiceAutoSpeak" type="checkbox" role="switch">
+            <span class="switch-slider" aria-hidden="true"></span>
+          </span>
+        </label>
+        <p class="voice-cloning-status" id="voiceCloningStatus" role="status" hidden></p>
+      </div>
+      <div class="voice-runtime-status">
+        <p class="status-line" id="voiceStatus" role="status"></p>
+        <button type="button" class="resume-audio-btn" id="voiceResumeAudio" hidden>Resume audio</button>
+      </div>
     </div>
   `;
 
@@ -78,12 +88,12 @@ export function createVoiceWorkflow() {
   const endSessionBtn = container.querySelector('#voiceEndSession');
   const sourceText = container.querySelector('#voiceSourceText');
   const targetText = container.querySelector('#voiceTargetText');
-  const translateNowBtn = container.querySelector('#voiceTranslateNow');
   const micToggleBtn = container.querySelector('#voiceMicToggle');
-  const speakNowBtn = container.querySelector('#voiceSpeakNow');
   const statusEl = container.querySelector('#voiceStatus');
   const autoSpeakInput = container.querySelector('#voiceAutoSpeak');
-  const voiceCloningInput = container.querySelector('#voiceCloning');
+  const voiceModeField = container.querySelector('#voiceModeField');
+  const voiceModeInputs = [...container.querySelectorAll('input[name="voiceMode"]')];
+  const voiceCloningStatus = container.querySelector('#voiceCloningStatus');
   const resumeBtn = container.querySelector('#voiceResumeAudio');
 
   const session = createVoiceSession({
@@ -109,10 +119,12 @@ export function createVoiceWorkflow() {
   swapBtn.addEventListener('click', () => session.swap());
   endSessionBtn.addEventListener('click', () => session.endSession());
   micToggleBtn.addEventListener('click', () => session.toggleMic());
-  translateNowBtn.addEventListener('click', () => session.translateNow());
-  speakNowBtn.addEventListener('click', () => session.speakNow());
   autoSpeakInput.addEventListener('change', () => session.setAutoSpeak(autoSpeakInput.checked));
-  voiceCloningInput.addEventListener('change', () => session.setVoiceCloning(voiceCloningInput.checked));
+  for (const input of voiceModeInputs) {
+    input.addEventListener('change', () => {
+      if (input.checked) session.setVoiceMode(input.value);
+    });
+  }
 
   // Bubble actions (replay / speak / stop) on the target lane, one
   // delegated listener — same affordances as the mobile transcript.
@@ -142,7 +154,7 @@ export function createVoiceWorkflow() {
     renderPanes();
     renderButtons();
     renderAutoSpeak();
-    renderVoiceCloning();
+    renderVoiceMode();
     renderStatus();
   }
 
@@ -271,9 +283,6 @@ export function createVoiceWorkflow() {
 
   function renderButtons() {
     const { state } = session;
-    const live = state.live && Boolean(state.socket?.isOpen());
-    const turnIsSpeaking = state.currentTurn.state === 'open_speaking';
-
     micToggleBtn.disabled = state.starting || (state.live && !state.socket?.isOpen());
     micToggleBtn.classList.toggle('is-listening', state.micState === 'listening');
     let micLabel = 'Start recording';
@@ -281,20 +290,6 @@ export function createVoiceWorkflow() {
     else if (state.live) micLabel = state.micState === 'listening' ? 'Stop recording' : 'Start recording';
     micToggleBtn.setAttribute('aria-label', micLabel);
     micToggleBtn.title = micLabel;
-
-    translateNowBtn.disabled = !(live && state.currentTurn.canTranslateNow && !turnIsSpeaking);
-
-    const canPlayAudio = Boolean(live && session.audioQueue.hasNonReplayAudio());
-    const canSpeakTarget = Boolean(
-      live && state.ttsEnabled && state.currentTurn.speakableTargetText && !turnIsSpeaking,
-    );
-    speakNowBtn.disabled = state.speakNowPending || !(canSpeakTarget || canPlayAudio);
-    speakNowBtn.classList.toggle('is-busy', turnIsSpeaking);
-    let speakLabel = 'Speak now';
-    if (canPlayAudio && state.audioStatus.startsWith('Playing')) speakLabel = 'Playing';
-    else if (canPlayAudio) speakLabel = 'Play audio';
-    speakNowBtn.setAttribute('aria-label', speakLabel);
-    speakNowBtn.title = speakLabel;
   }
 
   function renderAutoSpeak() {
@@ -302,15 +297,18 @@ export function createVoiceWorkflow() {
     autoSpeakInput.disabled = !session.state.ttsEnabled;
   }
 
-  function renderVoiceCloning() {
+  function renderVoiceMode() {
     const { state } = session;
-    voiceCloningInput.checked = Boolean(state.voiceCloningEnabled);
-    voiceCloningInput.disabled = state.starting || !state.ttsEnabled || !state.voiceCloningAvailable;
-    const label = state.voiceCloningAvailable
-      ? 'Clone speaker voice'
-      : 'Voice cloning requires the active VoxCPM backend';
-    voiceCloningInput.setAttribute('aria-label', label);
-    voiceCloningInput.title = label;
+    voiceModeField.hidden = !state.voiceModeAvailable;
+    for (const input of voiceModeInputs) {
+      input.checked = input.value === state.voiceMode;
+      input.disabled = state.starting || !state.ttsEnabled || !state.voiceModeAvailable;
+    }
+    const visibleStatus = visibleVoiceCloningStatus(state, session.currentLaneId());
+    voiceCloningStatus.classList.toggle('is-preparing', visibleStatus?.state === 'preparing');
+    voiceCloningStatus.classList.toggle('is-ready', visibleStatus?.state === 'ready');
+    voiceCloningStatus.textContent = visibleStatus?.text || '';
+    voiceCloningStatus.hidden = !visibleStatus;
   }
 
   function renderMicLevel(value, listening) {
@@ -330,15 +328,8 @@ export function createVoiceWorkflow() {
       text = state.statusMessage;
     } else if (state.status === 'connecting') {
       text = 'Connecting…';
-    } else {
-      const cloningState = state.voiceCloningStatus[session.currentLaneId()]?.state;
-      if (state.audioStatus) {
-        text = state.audioStatus;
-      } else if (state.live && state.voiceCloningEnabled && cloningState === 'preparing') {
-        text = 'Preparing voice cloning · Speak naturally for a few more seconds.';
-      } else if (state.live && state.voiceCloningEnabled && cloningState === 'ready') {
-        text = 'Voice cloning ready';
-      }
+    } else if (state.audioStatus) {
+      text = state.audioStatus;
     }
     statusEl.textContent = text;
     statusEl.classList.toggle('is-error', isError);

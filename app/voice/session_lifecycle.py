@@ -76,9 +76,9 @@ class ConversationLifecycle:
                     side_b_language=runtime.side_b_language,
                     live_settings=deepcopy(runtime.live_settings),
                     tts_settings=deepcopy(runtime.tts_settings),
-                    voice_cloning=deepcopy(runtime.voice_cloning_settings),
+                    voice_mode=runtime.voice_mode,
                     voice_cloning_status={
-                        lane_id: runtime.voice_cloning.status_payload(lane_id)
+                        lane_id: runtime._voice_cloning_status_payload(lane_id)
                         for lane_id in runtime.lanes
                     },
                     lanes={

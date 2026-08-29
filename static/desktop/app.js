@@ -12,17 +12,17 @@ import {
 import { iconMarkup } from './src/shared/icons.js';
 import { VIEW_BUSY_EVENT } from './src/shared/view-activity.js';
 import { accountInitials } from '../shared/account-display.js';
-import { cancelImage, getConfig, getImageRequest } from './src/shared/api.js?v=20260828-voice-cloning-2';
+import { cancelImage, getConfig, getImageRequest } from './src/shared/api.js?v=20260829-voice-modes-6';
 import { initAuth, onAuthChange, onBeforeSignOut } from './src/auth.js';
 import { registerImageSignOutCancellation } from '../shared/image-operation-recovery.js';
-import { createVoiceWorkflow } from './src/views/voice/index.js?v=20260828-voice-cloning-2';
-import { createTextView } from './src/views/text/index.js?v=20260828-voice-cloning-2';
-import { createImageView } from './src/views/image/index.js?v=20260828-voice-cloning-2';
-import { createPdfView } from './src/views/pdf/index.js?v=20260828-voice-cloning-2';
+import { createVoiceWorkflow } from './src/views/voice/index.js?v=20260829-voice-modes-6';
+import { createTextView } from './src/views/text/index.js?v=20260829-voice-modes-6';
+import { createImageView } from './src/views/image/index.js?v=20260829-voice-modes-6';
+import { createPdfView } from './src/views/pdf/index.js?v=20260829-voice-modes-6';
 import { createInfoView } from './src/views/info/index.js?v=20260823-third-party-notices-1';
-import { createSettingsView } from './src/views/settings/index.js?v=20260828-voice-cloning-2';
-import { createAccountView } from './src/views/account/index.js?v=20260828-voice-cloning-2';
-import { initDesktopAppearance } from './src/shared/appearance.js?v=20260828-voice-cloning-2';
+import { createSettingsView } from './src/views/settings/index.js?v=20260829-voice-modes-6';
+import { createAccountView } from './src/views/account/index.js?v=20260829-voice-modes-6';
+import { initDesktopAppearance } from './src/shared/appearance.js?v=20260829-voice-modes-6';
 import { getInfoCategory } from '../shared/info/index.js?v=20260823-third-party-notices-1';
 
 const STORAGE_KEY = 'omni-translate.desktop.shell';

@@ -92,7 +92,7 @@ export const api = {
     return imageTranslationPayload(response);
   },
 
-  createSession({ sideALanguage, sideBLanguage, liveSettings, ttsSettings, voiceCloning }) {
+  createSession({ sideALanguage, sideBLanguage, liveSettings, ttsSettings, voiceMode }) {
     return fetchJson('/api/sessions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -101,7 +101,7 @@ export const api = {
         side_b_language: sideBLanguage,
         live_settings: liveSettings || undefined,
         tts_settings: ttsSettings || undefined,
-        voice_cloning: voiceCloning || undefined,
+        voice_mode: voiceMode || undefined,
       }),
     });
   },
@@ -329,9 +329,9 @@ export class SessionSocket {
     return true;
   }
 
-  updateVoiceCloning(settings) {
+  updateVoiceMode(mode) {
     if (!this.isOpen()) return false;
-    this.ws.send(JSON.stringify({ type: 'update_voice_cloning', settings: settings || {} }));
+    this.ws.send(JSON.stringify({ type: 'update_voice_mode', mode: String(mode || '') }));
     return true;
   }
 

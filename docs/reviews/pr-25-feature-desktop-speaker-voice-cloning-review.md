@@ -1,8 +1,12 @@
-# Review prompt: desktop speaker voice cloning
+# Review prompt: desktop voice selection and speaker cloning
 
-Review PR #25, `feature/desktop-speaker-voice-cloning` against `main`. Review
-only; do not modify the implementation. Record the result in
-`docs/reviews/pr-25-feature-desktop-speaker-voice-cloning-findings.md`.
+Review PR #25, `feature/desktop-speaker-voice-cloning`, against `main`. Review
+only; do not modify the implementation. Update
+[`pr-25-feature-desktop-speaker-voice-cloning-findings.md`](pr-25-feature-desktop-speaker-voice-cloning-findings.md)
+with a new re-review section. Preserve the earlier findings and their resolution.
+
+Review the complete PR. The previous review covered the implementation through
+`dcc29b3`. Give extra attention to the changes after that commit.
 
 ## Required context
 
@@ -12,130 +16,117 @@ Read these documents before reviewing the code:
 - [`docs/voice-translation/tts-delivery-design.md`](../voice-translation/tts-delivery-design.md)
 - [`docs/voice-translation/session-guardrails-design.md`](../voice-translation/session-guardrails-design.md)
 
-The voice-cloning design is authoritative for product behavior. Phases 1–3 are
-implemented in this PR. Phase 4 remains later tuning and mobile migration.
+The voice-cloning design is authoritative for product behavior. The mobile TTS
+experiment controls and changes to TTS-pool remain out of scope.
 
-## Change under review
+## Product behavior
 
-Desktop voice translation has one new option: **Clone speaker voice**. It is off
-by default and remembered in `localStorage`.
+Desktop voice translation now offers **Female**, **Male**, and **Clone speaker**.
+Female and Male select the matching generated voice for the target language.
+The browser remembers the choice. **Automatically speak translations** remains
+an independent setting.
 
-When enabled, the backend keeps independent recent-speech state for each
-conversation direction. It selects complete, non-overlapping ASR segments from
-terminal results. One materializer clips the matching source WAV intervals and
-joins only the selected transcript text. The default accepted duration is 3–10
-seconds.
+When Clone speaker has insufficient reference speech, synthesis continues with
+the most recently selected Female or Male voice from the current session. It
+uses Female when Clone speaker was the first session choice. The UI names that
+temporary voice. Once the lane has a valid reference, new synthesis uses Prompt
++ reference cloning.
 
-The resulting pair is sent to a VoxCPM-family backend as Prompt + reference.
-While a lane has no valid pair, its state is **Preparing**. Automatic,
-speculative, and manual cloned TTS are skipped. The app never substitutes a
-stable generated voice. A manual Speak action gets a non-error
-`voice_clone_preparing` result.
+The product UI has only the microphone control and per-bubble speaker actions.
+The separate Translate and Speak controls were removed. The voice selector sits
+below the target pane, followed by automatic speaking and the cloning status.
 
-Each materialized reference has an immutable identity. New preparations use the
-current identity. Existing completed WAVs remain replayable after the reference
-window changes.
+On iOS and iPadOS, the app stops physical microphone capture before playback,
+switches the browser audio session to playback, and waits briefly before the
+first audio chunk. It reopens capture after the queue becomes idle only when
+the logical microphone state still requires recording. Other platforms retain
+the existing playback path without the delay.
+
+The patch also fixes a turn-boundary bug. Accepting a preview from an older
+closed part must not copy that text into the current lane scope. Without this
+guard, the first translated bubble after restarting the microphone could be
+prefixed with the previous bubble.
 
 ## Review priorities
 
 Report correctness, lifecycle, concurrency, protocol, and regression risks.
 Prefer a concrete triggering sequence over style comments.
 
-### Segment provenance and exact pairing
+### Voice selection and fallback
 
-- Trace ASR job `t0_ms`/`t1_ms`, absolute segment timestamps, and source WAV
-  offsets through selection and clipping.
-- Confirm every prompt word comes only from a segment included in the output
-  WAV. Audio and transcript must fail together.
-- Check invalid, empty, reversed, out-of-WAV, duplicated, and partially
-  overlapping intervals.
-- Confirm the newest overlapping ASR result wins without duplicating spoken
-  audio from an older rolling result.
-- Verify selection may cross ASR jobs and bubbles but never cuts inside one ASR
-  segment.
-- Check exact minimum and maximum durations, a segment larger than the maximum,
-  frame rounding, differing WAV formats, stereo input, and truncated WAVs.
-- Confirm `min_duration_s` is the actual readiness threshold. No hidden
-  three-second condition should remain when the setting changes.
+- Trace the voice mode from `localStorage`, session creation, live updates, and
+  backend session state into the exact VoxCPM request settings.
+- Verify Female and Male always select their matching generated voice.
+- Verify Clone speaker uses the last explicit Female or Male choice in the
+  current session while preparing. It must default to Female only when no such
+  choice exists.
+- Check repeated transitions such as Female → Clone → Male → Clone, including
+  changes while automatic, speculative, queued, streaming, and replay audio
+  exists.
+- Confirm reaching cloning readiness drops only unused fallback preparations
+  for that lane. Active playback and completed replay audio must remain stable.
+- Check both conversation directions, direction swaps, session restart, reload,
+  malformed stored values, and an unavailable product-voice capability.
+- Confirm unsupported target languages fail closed without consuming the
+  speculative budget or ending the session.
 
-### Reference lifecycle and bounds
+### Reference pairing and lifecycle
 
-- Confirm the two lanes have independent deques, state, and reference identity.
-- Trace disabled → preparing → ready, direction changes, disable/re-enable, and
-  session restart.
-- Check whether terminal ASR results can race with TTS preparation or session
-  shutdown while materialization runs in a worker thread.
-- Verify source metadata is bounded and materialized WAVs count toward the
-  existing combined ASR/TTS session cap.
-- Check cleanup and retention through normal completion, disconnect, duration
-  limit, storage limit, and expired-session cleanup.
-- Assess how often replacement references are written during a 15-minute
-  session. Report a concrete storage risk if the hard cap can be reached much
-  earlier than expected.
-- Confirm metrics contain no transcript or audio content.
+- Recheck that each prompt transcript exactly matches its materialized audio.
+- Confirm rolling ASR results do not create duplicate reference files for an
+  unchanged timestamp-and-text selection.
+- Check reference replacement, storage accounting, cleanup, and the independent
+  per-lane windows against the documented 3–10 second policy.
+- Confirm mode changes clear obsolete cloning state without invalidating audio
+  already in use.
 
-### Session setting and capability
+### Turn and bubble boundaries
 
-- Confirm `voice_cloning.enabled` is a separate semantic session setting, not a
-  browser-controlled VoxCPM recipe.
-- Verify create and live-update validation reject enabled cloning unless TTS is
-  enabled and the active backend is VoxCPM-family.
-- Confirm changing TTS settings cannot silently move an enabled cloning session
-  to Kokoro or another incompatible backend.
-- Check `/api/config` capability reporting when the configured backend is
-  loaded, missing, or replaced in the displayed TTS options by another loaded
-  backend.
-- Confirm enabling cloning never automatically switches the backend.
+- Trace stopping and restarting the microphone with a terminal ASR result,
+  accepted previews, translation still in flight, and automatic speaking on.
+- Verify an older part can be finalized without becoming the current part's
+  committed source or target prefix.
+- Check that valid preview acceptance for the current open part still updates
+  the lane scope.
+- Recheck `<->` direction changes while a session is live. The language bar,
+  active lane, target bubbles, voice status, and synthesis voice must agree.
 
-### TTS admission, staleness, and replay
+### iOS playback transition
 
-- Confirm product cloning always maps to `last_speech`, Prompt enabled, and
-  `also_use_as_reference=true` with the same materialized WAV.
-- Check automatic and manual paths in `ConversationRuntime` and the speculative
-  path in `TtsDelivery`. No path may synthesize while the lane is preparing.
-- Confirm a skipped speculative bubble does not consume the eight-bubble budget.
-- Confirm reaching Ready does not enqueue or automatically play skipped bubbles.
-- Trace a reference replacement while preparations are queued, generating,
-  streaming, ready, or replaying.
-- Verify the reference identity participates in preparation staleness without
-  invalidating an already completed WAV.
-- Confirm disabling cloning affects future preparation but preserves valid
-  replay of existing audio.
-- Check storage-limit and source-WAV failures before and during synthesis. The
-  bubble and generation worker must settle without a generic fallback voice.
+- Trace PCM streaming, completed-WAV replay, autoplay rejection, queue advance,
+  stop, skip, and session end through the delayed playback start.
+- Check the race where recording is stopped, restarted, or the session ends
+  while playback is waiting for its delay or while `getUserMedia` is reopening.
+- Verify capture is never opened twice and never resumes while more audio is
+  queued or playing.
+- Confirm automatic speaking can resume recording after playback, while an
+  explicit user stop remains stopped.
+- Check microphone failure during resume. The UI and shared microphone state
+  must settle without sending stale audio.
+- Verify non-iOS browsers do not stop capture or receive the iOS delay.
+- Assess whether the audio-session feature detection covers current iPhone,
+  iPad, and iPadOS desktop-mode user agents without affecting macOS Safari.
 
-### Browser state and UX
+### Desktop UI and cache graph
 
-- Confirm the option is disabled when capability is false and remains
-  independent from **Automatically speak translations**.
-- Trace first load, slow or failed config fetch, clicking Record before config
-  resolves, stored true/false, malformed storage, reset, and reload.
-- Check toggling before a session, during a live session, and while TTS is
-  preparing or playing.
-- Verify Ready and Preparing follow the active lane after direction changes.
-- Confirm a manual Speak skip leaves the bubble pending and shows Preparing as
-  normal status, not an error.
-- Check that audio playback status temporarily takes priority over Ready and
-  that an actual error still takes priority over both.
-- Verify the desktop modulepreload URLs and import query strings identify one
-  consistent version of every changed module. The feature must not combine old
-  and new voice-session JavaScript.
-- Check the two switches and status copy at narrow desktop widths and increased
-  text size.
+- Check the selected voice is visually distinct and keyboard accessible.
+- Check the control order, right alignment, narrow desktop widths, zoom, and
+  increased text size.
+- Confirm the removed Translate and Speak controls left no reachable dead path
+  or required action inaccessible; per-bubble replay must still work.
+- Verify every changed desktop module resolves under one query-string version.
+  Modulepreload URLs must match the actual entry and import URLs.
 
 ## Intentional exclusions
 
 Do not report these as missing scope unless this PR makes them unsafe:
 
-- changing ASR-pool, translation-services, or TTS-pool;
-- migrating the product option to mobile;
-- hiding the current mobile experiment controls behind Dev tools;
-- speaker recognition or diarization;
-- persistent voices across sessions;
-- word-level clipping inside a long ASR segment;
-- choosing the final three- versus five-second product default;
-- proactively deleting old reference WAVs during an active session. The
-  existing session storage cap remains authoritative.
+- changes to ASR-pool, translation-services, or TTS-pool;
+- migration of the product voice selector to mobile;
+- removal of the current mobile experiment settings;
+- speaker recognition, diarization, or persistent voices across sessions;
+- word-level clipping inside one ASR segment;
+- broad desktop layout restructuring.
 
 ## Verification
 
@@ -149,9 +140,11 @@ node --test tests/js/
 git diff --check main...HEAD
 ```
 
-The author run passed 281 Python tests and 92 JavaScript tests. A manual smoke
-test produced recognizable cross-language cloning, but did not exhaustively
-cover voices, languages, background audio, or the three-second quality limit.
+The author run passed 292 Python tests and 106 JavaScript tests. Python and
+JavaScript syntax checks, the desktop module-graph check, and `git diff --check`
+also passed. Manual desktop testing covered voice selection, cloning, fallback,
+automatic speaking, replay, and stopping and restarting the microphone. The iOS
+volume behavior needs independent device verification.
 
 ## Review response
 
@@ -163,6 +156,6 @@ List findings first, ordered by severity. For each finding include:
 - smallest safe correction;
 - missing regression test, when applicable.
 
-After the findings, list unresolved risks and test gaps. Give an explicit
-merge-quality verdict. If there are no findings, state that directly and name
-the paths that were not exercised.
+Then list unresolved risks and untested paths. Give an explicit merge-quality
+verdict. If there are no findings, state that directly and name the paths that
+were not exercised.

@@ -770,6 +770,37 @@ class TurnStateMachineTests(unittest.IsolatedAsyncioTestCase):
         ]
         self.assertEqual(started, ["artifact_1", "artifact_2"])
 
+    async def test_auto_speak_closed_preview_does_not_prefix_the_next_translation(self) -> None:
+        runtime, _websocket = self.make_runtime(FastTTS(), auto_speak=True)
+        lane = runtime._current_lane()
+        first = runtime.current_turn.parts[0]
+        first.source_committed_text = "hallo hallo"
+        first.target_committed_text = ""
+        first.target_preview_text = "hello hello"
+        first.is_closed = True
+        runtime._reset_lane_text_scope(lane)
+
+        await runtime._dispatch_speak_sequence([first.part_id], reason="auto_speak")
+        await lane.tts_task
+        preparation = runtime.tts_delivery.preparations[(runtime.current_turn.turn_id, first.part_id)]
+        await runtime.tts_delivery.playback_complete(
+            {
+                "lane_id": lane.lane_id,
+                "turn_id": runtime.current_turn.turn_id,
+                "artifact_id": preparation.artifact_id,
+            }
+        )
+
+        self.assertEqual(lane.translation_runner.target_state.target_committed_text, "")
+        bridge = RecordingTranslationBridge(text="This is nice work.")
+        lane.translation_bridge = bridge
+        await runtime._source_event(lane, kind="c", text="Leuk werk is dit.")
+
+        second = runtime.current_turn.parts[-1]
+        self.assertEqual(bridge.calls, ["Leuk werk is dit."])
+        self.assertEqual(second.source_committed_text, "Leuk werk is dit.")
+        self.assertEqual(second.target_committed_text, "This is nice work.")
+
     async def test_disabling_auto_speak_keeps_new_bubbles_silent(self) -> None:
         tts = FastTTS()
         runtime, websocket = self.make_runtime(tts, auto_speak=True)

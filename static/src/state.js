@@ -55,6 +55,7 @@ export const state = {
   audioInputSampleRate: 16000,
   viewMode: 'turn',
   captureMutedForPlayback: false,
+  capturePausedForPlayback: false,
   settingsPage: 'home',
   settingsRootPage: 'home',
   vadHintTimer: null,
