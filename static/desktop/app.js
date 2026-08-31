@@ -21,12 +21,12 @@ import { registerImageSignOutCancellation } from '../shared/image-operation-reco
 import { createVoiceWorkflow } from './src/views/voice/index.js?v=20260829-voice-toolbar-1';
 import { createTextView } from './src/views/text/index.js?v=20260829-voice-modes-11';
 import { createImageView } from './src/views/image/index.js?v=20260829-voice-modes-11';
-import { createPdfView } from './src/views/pdf/index.js?v=20260829-voice-modes-11';
-import { createInfoView } from './src/views/info/index.js?v=20260823-third-party-notices-1';
+import { createPdfView } from './src/views/pdf/index.js?v=20260831-pdfjs-9';
+import { createInfoView } from './src/views/info/index.js?v=20260831-pdfjs-1';
 import { createSettingsView } from './src/views/settings/index.js?v=20260829-voice-modes-11';
 import { createAccountView } from './src/views/account/index.js?v=20260829-voice-modes-11';
 import { initDesktopAppearance } from './src/shared/appearance.js?v=20260829-voice-modes-11';
-import { getInfoCategory } from '../shared/info/index.js?v=20260823-third-party-notices-1';
+import { getInfoCategory } from '../shared/info/index.js?v=20260831-pdfjs-1';
 
 const STORAGE_KEY = 'omni-translate.desktop.shell';
 

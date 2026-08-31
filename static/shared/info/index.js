@@ -357,7 +357,7 @@ export const INFO_CATEGORIES = [
         title: 'About this notice',
         paragraphs: [
           'This notice covers software delivered to your browser and the main third-party components used on OmniScripta infrastructure. Server-side projects are included for transparency, even when their licences do not require a notice for hosted use.',
-          'A project listed here is not necessarily downloaded to your device. Exact versions and transitive dependencies can differ between services and deployment platforms. This notice was reviewed on 29 August 2026.',
+          'A project listed here is not necessarily downloaded to your device. Exact versions and transitive dependencies can differ between services and deployment platforms. This notice was reviewed on 31 August 2026.',
         ],
       },
       {
@@ -397,6 +397,11 @@ export const INFO_CATEGORIES = [
             label: 'Google Identity Services',
             href: 'https://developers.google.com/identity/gsi/web',
             description: 'Supports optional Google sign-in. It is a Google service, not an open-source component.',
+          },
+          {
+            label: 'PDF.js 6.3.289',
+            href: 'https://github.com/mozilla/pdf.js/blob/v6.3.289/LICENSE',
+            description: 'Apache License 2.0. Renders PDF previews in the browser. Bundled fonts and image decoders retain their included licence notices.',
           },
         ],
       },

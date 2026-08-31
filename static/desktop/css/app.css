@@ -1110,15 +1110,6 @@ body {
   background: var(--surface);
 }
 
-.result-frame iframe {
-  flex: 1;
-  min-height: 0;
-  width: 100%;
-  border: none;
-  border-radius: 8px;
-  background: var(--surface);
-}
-
 /* "Show original" off: only the translated frame, full width. */
 .result-grid.is-single {
   grid-template-columns: minmax(0, 1fr);

@@ -28,6 +28,7 @@ import {
 } from './quota-cta.js';
 import { pdfPendingText } from './progress.js';
 import { createPdfRenderControls } from './render-options.js';
+import { createPdfViewer } from './viewer/index.js?v=20260831-pdfjs-9';
 
 // PDF translation view, same stage model as the Workbench: an empty state
 // (dropzone) swaps for a loaded state (original frame + translated frame) once
@@ -94,7 +95,7 @@ export function createPdfView() {
       </div>
       <div class="result-grid" id="pdfStage" hidden>
         <figure class="result-frame result-frame-original">
-          <iframe id="pdfOriginal" title="Original PDF"></iframe>
+          <div id="pdfOriginalMount"></div>
         </figure>
         <figure class="result-frame">
           <div class="stage-pending" id="pdfPending">
@@ -102,7 +103,7 @@ export function createPdfView() {
             <div class="stage-pending-text" id="pdfPendingText">Translating…</div>
             <button type="button" class="link-btn" id="pdfCancelBtn">Cancel</button>
           </div>
-          <iframe id="pdfTranslated" title="Translated PDF" hidden></iframe>
+          <div id="pdfTranslatedMount"></div>
         </figure>
       </div>
       <div id="pdfRenderMount"></div>
@@ -125,8 +126,8 @@ export function createPdfView() {
   const browseBtn = container.querySelector('#pdfBrowseBtn');
   const fileInput = container.querySelector('#pdfFileInput');
   const stage = container.querySelector('#pdfStage');
-  const originalFrame = container.querySelector('#pdfOriginal');
-  const translatedFrame = container.querySelector('#pdfTranslated');
+  const originalMount = container.querySelector('#pdfOriginalMount');
+  const translatedMount = container.querySelector('#pdfTranslatedMount');
   const pending = container.querySelector('#pdfPending');
   const pendingText = container.querySelector('#pdfPendingText');
   const cancelBtn = container.querySelector('#pdfCancelBtn');
@@ -138,6 +139,11 @@ export function createPdfView() {
   const renderMount = container.querySelector('#pdfRenderMount');
   const quotaCta = createPdfQuotaCta();
   admissionLoadingEl.after(quotaCta.element);
+  const originalViewer = createPdfViewer({ label: 'Original PDF' });
+  const translatedViewer = createPdfViewer({ label: 'Translated PDF' });
+  originalMount.replaceWith(originalViewer.element);
+  translatedMount.replaceWith(translatedViewer.element);
+  translatedViewer.element.hidden = true;
   const renderControls = createPdfRenderControls({
     trigger: renderToggle,
     onChange: handleRenderOptionsChange,
@@ -149,7 +155,6 @@ export function createPdfView() {
   let pendingOperationId = '';
   let requestId = '';
   let requestState = '';
-  let originalUrl = '';
   let translatedUrl = '';
   let runToken = 0;
   let pollTimer = 0;
@@ -304,7 +309,7 @@ export function createPdfView() {
 
   function setPending(message) {
     pending.hidden = false;
-    translatedFrame.hidden = true;
+    translatedViewer.element.hidden = true;
     pendingText.textContent = message || 'Translating…';
   }
 
@@ -361,8 +366,8 @@ export function createPdfView() {
     if (translatedUrl) URL.revokeObjectURL(translatedUrl);
     translatedUrl = URL.createObjectURL(blob);
     clearPending();
-    translatedFrame.src = translatedUrl;
-    translatedFrame.hidden = false;
+    translatedViewer.element.hidden = false;
+    translatedViewer.load(blob);
     renderAdmissionState();
     downloadLink.href = translatedUrl;
     downloadLink.download = translatedPdfFilename(
@@ -539,12 +544,10 @@ export function createPdfView() {
       URL.revokeObjectURL(translatedUrl);
       translatedUrl = '';
     }
-    if (originalUrl) URL.revokeObjectURL(originalUrl);
-    originalUrl = URL.createObjectURL(file);
-    originalFrame.src = originalUrl;
-    translatedFrame.removeAttribute('src');
+    translatedViewer.clear();
     setOriginalAvailable(true);
     setStageLoaded(true);
+    originalViewer.load(file);
     setPending('Uploading…');
     setStatus('');
     setBusy(true);
@@ -621,7 +624,7 @@ export function createPdfView() {
       if (!requestId) {
         forgetPendingOperation(operationId);
         clearPending();
-        translatedFrame.hidden = !translatedUrl;
+        translatedViewer.element.hidden = !translatedUrl;
         setStatus('The service did not return a request id.', true);
         setBusy(false);
         return;
@@ -636,7 +639,7 @@ export function createPdfView() {
       requestId = sourceRequestId;
       requestState = 'completed';
       clearPending();
-      translatedFrame.hidden = !translatedUrl;
+      translatedViewer.element.hidden = !translatedUrl;
       downloadLink.hidden = !translatedUrl;
       setStatus(err.message || 'Could not render the PDF.', true);
       setBusy(false);
@@ -695,11 +698,9 @@ export function createPdfView() {
     downloadLink.hidden = true;
     downloadLink.removeAttribute('href');
     downloadLink.removeAttribute('download');
-    originalFrame.removeAttribute('src');
-    translatedFrame.removeAttribute('src');
-    if (originalUrl) URL.revokeObjectURL(originalUrl);
+    originalViewer.clear();
+    translatedViewer.clear();
     if (translatedUrl) URL.revokeObjectURL(translatedUrl);
-    originalUrl = '';
     translatedUrl = '';
     setOriginalAvailable(false);
     clearPending();

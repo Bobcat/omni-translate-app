@@ -15,7 +15,7 @@ import {
   getInfoCategory,
   renderInfoArticle,
   renderInfoOverview,
-} from '../../shared/info/index.js?v=20260823-third-party-notices-1';
+} from '../../shared/info/index.js?v=20260831-pdfjs-1';
 
 const PAGES = ['account', 'appearance', 'microphone', 'audio', 'history', 'dev-tools', 'tuning', 'voice-library', 'image-render'];
 

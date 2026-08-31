@@ -27,6 +27,7 @@ test('third-party software notice lists each product as its own linked entry', (
   assert.equal(new Set(labels).size, labels.length);
   assert.ok(labels.includes('LaMa'));
   assert.ok(labels.includes('Pyphen'));
+  assert.ok(labels.includes('PDF.js 6.3.289'));
   assert.ok(labels.includes('faster-whisper'));
   assert.ok(labels.includes('CTranslate2'));
   assert.ok(labels.includes('Nano-vLLM-VoxCPM'));
