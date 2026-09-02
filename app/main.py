@@ -5,10 +5,11 @@ import contextlib
 import re
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import urlencode
 
 from fastapi import FastAPI, Request, WebSocket
 from fastapi.staticfiles import StaticFiles
-from starlette.responses import FileResponse, HTMLResponse, Response
+from starlette.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 
 from app.config import get_str
 from app.image_quota import run_image_quota_reconciliation_loop
@@ -17,6 +18,7 @@ from app.router import api_router
 from app.routes import websocket_endpoint
 from app.runtime import warm_asr_vad
 from app.saas_setup import build_saas_router
+from app.saas_setup import stage_fresh_anonymous_identity
 from app.sessions import run_voice_session_cleanup_loop
 from app.upstreams.http import close_upstream_http_client
 from app.upstreams.http import open_upstream_http_client
@@ -129,6 +131,17 @@ def landing(request: Request) -> Response:
     at /desktop/ — the address bar stays on `/`.
     """
     query = request.query_params
+    if "resetguestcredits" in query:
+        remaining_query = [
+            (key, value)
+            for key, value in query.multi_items()
+            if key != "resetguestcredits"
+        ]
+        location = request.url.path
+        if remaining_query:
+            location = f"{location}?{urlencode(remaining_query)}"
+        stage_fresh_anonymous_identity(request)
+        return RedirectResponse(location, status_code=303)
     if "mobile" in query:
         want_desktop = False
     elif "desktop" in query:

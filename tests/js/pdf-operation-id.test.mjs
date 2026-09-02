@@ -2,13 +2,12 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
-  rerenderPdf,
+  preparePdf,
   setAuthTokenProvider,
-  submitPdf,
 } from '../../static/desktop/src/shared/api.js';
 
 
-test('an uncertain PDF submit is retried once with the same operation id', async () => {
+test('an uncertain PDF preparation is retried once with the same operation id', async () => {
   const originalFetch = globalThis.fetch;
   const operationId = '123e4567-e89b-42d3-a456-426614174000';
   const requests = [];
@@ -27,10 +26,7 @@ test('an uncertain PDF submit is retried once with the same operation id', async
   setAuthTokenProvider(() => token);
 
   try {
-    const envelope = await submitPdf(new Blob(['pdf']), {
-      target: 'English',
-      operationId,
-    });
+    const envelope = await preparePdf(new Blob(['pdf']), { operationId });
     assert.equal(envelope.request_id, operationId);
     assert.equal(requests.length, 2);
     assert.deepEqual(
@@ -45,39 +41,7 @@ test('an uncertain PDF submit is retried once with the same operation id', async
 });
 
 
-test('PDF submit sends the selected render options on every retry', async () => {
-  const originalFetch = globalThis.fetch;
-  const operationId = '123e4567-e89b-42d3-a456-426614174000';
-  const bodies = [];
-  globalThis.fetch = async (_url, options) => {
-    bodies.push(options.body);
-    if (bodies.length === 1) return new Response('timeout', { status: 502 });
-    return new Response(JSON.stringify({ request_id: operationId, state: 'queued' }), {
-      status: 200,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  };
-  setAuthTokenProvider(() => 'access-token');
-
-  try {
-    await submitPdf(new Blob(['pdf']), {
-      target: 'English',
-      operationId,
-      renderOptions: { page_layout_mode: 'typeset', page_scale: 0.9 },
-    });
-    assert.equal(bodies.length, 2);
-    assert.equal(bodies[0].get('page_layout_mode'), 'typeset');
-    assert.equal(bodies[0].get('page_scale'), '0.9');
-    assert.equal(bodies[1].get('page_layout_mode'), 'typeset');
-    assert.equal(bodies[1].get('page_scale'), '0.9');
-  } finally {
-    setAuthTokenProvider(() => '');
-    globalThis.fetch = originalFetch;
-  }
-});
-
-
-test('a certain PDF submit rejection is not retried', async () => {
+test('a certain PDF preparation rejection is not retried', async () => {
   const originalFetch = globalThis.fetch;
   let calls = 0;
   globalThis.fetch = async () => {
@@ -91,8 +55,7 @@ test('a certain PDF submit rejection is not retried', async () => {
 
   try {
     await assert.rejects(
-      submitPdf(new Blob(['pdf']), {
-        target: 'English',
+      preparePdf(new Blob(['pdf']), {
         operationId: '123e4567-e89b-42d3-a456-426614174000',
       }),
       (error) => error.status === 409 && /conflict/.test(error.message),
@@ -105,7 +68,7 @@ test('a certain PDF submit rejection is not retried', async () => {
 });
 
 
-test('an anonymous PDF submit establishes its principal before upload', async () => {
+test('an anonymous PDF preparation establishes its principal before upload', async () => {
   const originalFetch = globalThis.fetch;
   const operationId = '123e4567-e89b-42d3-a456-426614174000';
   const urls = [];
@@ -125,10 +88,7 @@ test('an anonymous PDF submit establishes its principal before upload', async ()
   setAuthTokenProvider(() => '');
 
   try {
-    const envelope = await submitPdf(new Blob(['pdf']), {
-      target: 'English',
-      operationId,
-    });
+    const envelope = await preparePdf(new Blob(['pdf']), { operationId });
     assert.equal(envelope.request_id, operationId);
     assert.deepEqual(urls, ['/api/me', '/api/pdf-translation/requests']);
   } finally {
@@ -137,7 +97,7 @@ test('an anonymous PDF submit establishes its principal before upload', async ()
 });
 
 
-test('two uncertain submits recover through status without a third upload', async () => {
+test('two uncertain preparations recover through status without a third upload', async () => {
   const originalFetch = globalThis.fetch;
   const operationId = '123e4567-e89b-42d3-a456-426614174000';
   const calls = [];
@@ -154,10 +114,7 @@ test('two uncertain submits recover through status without a third upload', asyn
   setAuthTokenProvider(() => token);
 
   try {
-    const envelope = await submitPdf(new Blob(['pdf']), {
-      target: 'English',
-      operationId,
-    });
+    const envelope = await preparePdf(new Blob(['pdf']), { operationId });
     assert.equal(envelope.state, 'running');
     assert.equal(calls.length, 3);
     assert.deepEqual(calls.map((call) => call.options.method || 'GET'), ['POST', 'POST', 'GET']);
@@ -168,39 +125,6 @@ test('two uncertain submits recover through status without a third upload', asyn
     assert.ok(
       calls.every((call) => call.options.headers.Authorization === 'Bearer first-account-token'),
     );
-  } finally {
-    setAuthTokenProvider(() => '');
-    globalThis.fetch = originalFetch;
-  }
-});
-
-
-test('PDF rerender binds its operation id and render options', async () => {
-  const originalFetch = globalThis.fetch;
-  const operationId = '123e4567-e89b-42d3-a456-426614174000';
-  const calls = [];
-  globalThis.fetch = async (url, options) => {
-    calls.push({ url, options });
-    return new Response(JSON.stringify({ request_id: operationId, state: 'queued' }), {
-      status: 200,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  };
-  setAuthTokenProvider(() => 'access-token');
-
-  try {
-    const envelope = await rerenderPdf('source id', {
-      operationId,
-      renderOptions: { page_layout_mode: 'fit', page_scale: 0.8 },
-    });
-    assert.equal(envelope.request_id, operationId);
-    assert.equal(calls.length, 1);
-    assert.equal(calls[0].url, '/api/pdf-translation/requests/source%20id/rerender');
-    assert.equal(calls[0].options.headers['Idempotency-Key'], operationId);
-    assert.deepEqual(JSON.parse(calls[0].options.body), {
-      page_layout_mode: 'fit',
-      page_scale: 0.8,
-    });
   } finally {
     setAuthTokenProvider(() => '');
     globalThis.fetch = originalFetch;

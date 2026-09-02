@@ -13,6 +13,12 @@ ENTITLEMENT_DISABLED = "ENTITLEMENT_DISABLED"
 ENTITLEMENT_UNKNOWN = "ENTITLEMENT_UNKNOWN"
 # The reservation would exceed the period allowance.
 PERIOD_QUOTA_EXCEEDED = "PERIOD_QUOTA_EXCEEDED"
+# A credit reservation would exceed the available credit grant.
+CREDITS_EXHAUSTED = "CREDITS_EXHAUSTED"
+# A binding quote reached its expiry before it was confirmed.
+QUOTE_EXPIRED = "QUOTE_EXPIRED"
+# A quote was reused with another owner, action, payload, or operation.
+QUOTE_MISMATCH = "QUOTE_MISMATCH"
 # An operational request-rate or in-flight limit has been reached.
 RATE_LIMIT_EXCEEDED = "RATE_LIMIT_EXCEEDED"
 # An idempotency key was replayed with different reservation inputs.

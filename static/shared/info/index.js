@@ -31,8 +31,8 @@ export const INFO_CATEGORIES = [
       {
         title: 'PDF translation',
         paragraphs: [
-          'Choose the target language, then select or drop a PDF. The app checks the file and starts processing it. Follow the page progress and download the translated PDF when it completes.',
-          'Anonymous use can translate a preview of the first pages. The PDF view shows the current page allowance before you upload a document.',
+          'Select or drop a PDF, then choose the target language. The app reads the document and shows the exact credit use before translation starts.',
+          'Confirm the target language and credit use to start translating. Follow the page progress and download the translated PDF when it completes.',
         ],
       },
     ],
@@ -210,34 +210,39 @@ export const INFO_CATEGORIES = [
     id: 'usage',
     label: 'Plans',
     title: 'Usage and plans',
-    summary: 'How allowances, balances and reservations work.',
-    lead: 'Your plan defines the allowances and limits for each translation type. PDF translation, for example, is measured in pages.',
+    summary: 'How plans, credits and reservations work.',
+    lead: 'Your plan provides a monthly credit budget. Work that uses credits shows the exact amount before it starts.',
     sections: [
       {
-        title: 'Your available usage',
+        title: 'Your available credits',
         paragraphs: [
-          'Your available usage depends on the current plan. The PDF view shows the page balance for a signed-in account or the preview limit for anonymous use.',
+          'The sidebar shows your current plan and available credits. Account shows the monthly grant, renewal date and the available Guest and Free plans.',
+          'Guest can be used without an account. Free requires sign-in so its credit balance is available on any signed-in device. Included monthly credits do not carry over.',
+          'PDF translation currently uses credits. Text, voice and image translation do not currently deduct from this balance.',
         ],
       },
       {
-        title: 'While a job is running',
+        title: 'Before work starts',
         paragraphs: [
-          'When a job starts, the app can temporarily set aside the usage it expects to need. This keeps the displayed balance accurate when more than one job is running. The balance is updated when the job finishes.',
+          'Uploading and inspecting a PDF does not use credits. The app first counts the pages and source characters, then shows one fixed credit amount. The confirmation dialog repeats that amount and the target language.',
+          'The amount you confirm is the amount the work uses. It does not increase if the actual processing costs more than expected.',
         ],
       },
       {
-        title: 'How the balance is updated',
+        title: 'Reservations and settlement',
         bullets: [
-          'Completed work is deducted from the applicable balance.',
-          'If a job fails because of a confirmed technical problem, its reserved usage is returned.',
-          'If the final result is still being checked, the usage stays reserved until the status is known.',
-          'A job cancelled after processing has started may still count toward usage.',
+          'Confirmation reserves the displayed credits and reduces the available balance immediately.',
+          'Completed work uses the reserved credits.',
+          'Cancelling before processing starts returns the complete reservation.',
+          'Stopping after processing starts does not return the credits.',
+          'A confirmed technical failure returns the reserved credits.',
+          'If the final status is still unknown, the credits stay reserved until it is known.',
         ],
       },
       {
-        title: 'Units that match the translation type',
+        title: 'Document limits',
         paragraphs: [
-          'A PDF plan can count pages, while another translation type can count jobs or the amount of original text. This makes each balance easier to understand.',
+          'Credits are the shared usage budget. A plan can also limit the size of one job. Guest translates a preview from a longer PDF; Free accepts longer PDFs within its per-document limit.',
         ],
       },
     ],
@@ -267,7 +272,7 @@ export const INFO_CATEGORIES = [
       {
         title: 'Technical and usage records',
         paragraphs: [
-          'A technical job record can remain for up to 400 days. It contains identifiers, task and status information, timestamps, timing and progress data, errors, artifact references and quota metadata. It does not contain the uploaded file or the full request and response payloads.',
+          'A technical job record can remain for up to 400 days. It contains identifiers, task and status information, timestamps, timing and progress data, errors, artifact references and credit metadata. It does not contain the uploaded file or the full request and response payloads.',
           'The app also keeps internal account or anonymous identifiers, job ownership and usage events so it can enforce allowances and reconnect a browser with pending work. These control records do not contain the source document or translated document.',
           'Diagnostic logs can contain session or request identifiers, status, timing, counts and errors. They are not intended to contain submitted text or document files. The app does not yet enforce one published retention period across all host and service logs.',
         ],
@@ -637,7 +642,7 @@ export const INFO_CATEGORIES = [
       },
       {
         question: 'Do I need an account?',
-        answer: 'Some workflows can be used anonymously with their own allowances. Signing in applies the plan and balance linked to your account.',
+        answer: 'No. The Guest plan can be used without an account. Sign in to use the larger monthly credit budget in the Free plan on any signed-in device.',
       },
       {
         question: 'How long are uploads and results kept?',
@@ -649,7 +654,7 @@ export const INFO_CATEGORIES = [
       },
       {
         question: 'What happens to usage when a job fails?',
-        answer: 'If a job fails because of a confirmed technical problem, its reserved usage is returned to the balance. If the final result is still being checked, the usage stays reserved until the status is known.',
+        answer: 'A confirmed technical failure returns the reserved credits. If the final result is still being checked, the credits stay reserved until the status is known.',
       },
     ],
   },

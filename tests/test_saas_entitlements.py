@@ -20,7 +20,7 @@ PLANS = {
     "free": EntitlementService.flatten(
         {
             "image_translation": {"enabled": True, "max_characters_per_job": 1500},
-            "pdf_translation": {"enabled": True, "pages_per_period": 12, "max_pages_per_job": 10},
+            "pdf_translation": {"enabled": True, "max_pages_per_job": 10},
         }
     ),
 }
@@ -47,17 +47,16 @@ class EntitlementTests(unittest.TestCase):
     def test_free_pdf_enabled_with_limits(self) -> None:
         entitlements = self.service.resolve(_principal("free"))
         entitlements.require_enabled("pdf_translation.enabled")
-        self.assertEqual(entitlements.get_int("pdf_translation.pages_per_period"), 12)
         self.assertEqual(entitlements.get_int("pdf_translation.max_pages_per_job"), 10)
 
     def test_missing_key_fails_safe(self) -> None:
         entitlements = self.service.resolve(_principal("anonymous"))
         self.assertFalse(entitlements.is_enabled("voice_translation.enabled"))
         with self.assertRaises(SaasError) as ctx:
-            entitlements.get_int("pdf_translation.pages_per_period")
+            entitlements.get_int("voice_translation.max_characters_per_job")
         self.assertEqual(ctx.exception.code, ENTITLEMENT_UNKNOWN)
         # A default makes the absence explicit at the call site instead.
-        self.assertEqual(entitlements.get_int("pdf_translation.pages_per_period", 0), 0)
+        self.assertEqual(entitlements.get_int("voice_translation.max_characters_per_job", 0), 0)
 
     def test_unknown_plan_resolves_to_empty_set(self) -> None:
         entitlements = self.service.resolve(_principal("enterprise"))
@@ -76,7 +75,7 @@ class EntitlementTests(unittest.TestCase):
         entitlements = service.resolve(principal)
 
         self.assertEqual(entitlements.plan_code, "free")
-        self.assertEqual(entitlements.get_int("pdf_translation.pages_per_period"), 12)
+        self.assertEqual(entitlements.get_int("pdf_translation.max_pages_per_job"), 10)
 
     def test_snapshot_is_a_stable_copy(self) -> None:
         entitlements = self.service.resolve(_principal("anonymous"))
@@ -102,8 +101,6 @@ class EntitlementTests(unittest.TestCase):
         settings = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
         pdf = settings["saas"]["plans"]["anonymous"]["pdf_translation"]
         self.assertTrue(pdf["enabled"])
-        self.assertEqual(pdf["pages_per_period"], 6)
-        self.assertEqual(pdf["period"], "month")
         self.assertEqual(pdf["max_pages_per_job"], 2)
         self.assertTrue(pdf["preview_first_pages"])
 

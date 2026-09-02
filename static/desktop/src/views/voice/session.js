@@ -31,7 +31,7 @@ import {
   persistSetupLanguages,
   persistVoiceModePreference,
 } from '../../../../src/domain/storage.js?v=20260829-voice-modes-11';
-import { getConfig, createVoiceSession as requestVoiceSession } from '../../shared/api.js?v=20260829-voice-modes-11';
+import { getConfig, createVoiceSession as requestVoiceSession } from '../../shared/api.js?v=20260902-credits-23';
 import {
   getDesktopMicrophoneState,
   setDesktopMicrophoneRuntime,

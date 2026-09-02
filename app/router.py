@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, File, Form, Header, HTTPException, Request, UploadFile
@@ -10,7 +10,15 @@ from pydantic import ConfigDict
 
 from app.asr_pc_export import live_pc_events_to_text
 from app.asr_pc_export import pc_export_filename
-from app.config import get_int, get_str, optional_str, rooted_path
+from app.config import get_bool, get_int, get_str, optional_str, rooted_path
+from app.credits.pdf_translation import (
+    attach_pdf_credit_context,
+    confirm_pdf_credit_translation,
+    quote_pdf_credit_translation,
+    require_pdf_credit_operation,
+    settle_pdf_credit_envelope,
+    submit_pdf_credit_preparation,
+)
 from app.image_admission import admit_image_operation
 from app.image_admission import read_image_upload
 from app.image_admission import validate_image_upload
@@ -32,17 +40,10 @@ from app.live_settings import merge_live_settings
 from app.live_settings import normalize_live_settings_delta
 from app.operation_ids import normalize_operation_id
 from app.operation_ids import operation_payload_hash
-from app.pdf_quota import finalize_pdf_reservation
-from app.pdf_quota import attach_pdf_preview
-from app.pdf_quota import require_pdf_request_owner
-from app.pdf_quota import submit_pdf_with_quota
-from app.pdf_ownership import record_pdf_rerender_owner
-from app.pdf_render_options import PdfRenderOptions
 from app.pdf_translation_bridge import PdfTranslationError
 from app.pdf_translation_bridge import cancel_pdf_request
 from app.pdf_translation_bridge import get_pdf_artifact
 from app.pdf_translation_bridge import get_pdf_request
-from app.pdf_translation_bridge import rerender_pdf_request
 from app.protocol import PROTOCOL_VERSION
 from app.saas_setup import resolve_request_context
 from app.saas_setup import tts_fairness_key_for_principal
@@ -88,6 +89,16 @@ class TextTranslationRequest(BaseModel):
     text: str
 
 
+class PdfCreditQuoteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    target_language: str
+
+
+class PdfCreditConfirmRequest(PdfCreditQuoteRequest):
+    quote_id: str
+
+
 @api_router.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
@@ -95,7 +106,6 @@ async def health() -> dict[str, str]:
 
 @api_router.get("/config")
 async def config() -> dict[str, Any]:
-    account_plan = get_str("saas.auth.user_plan", "free")
     return {
         "protocol_version": PROTOCOL_VERSION,
         "audio_input": {
@@ -113,15 +123,35 @@ async def config() -> dict[str, Any]:
             "stable": stable_voice_library_status(),
         },
         "auth": _auth_client_config(),
-        "pdf_translation": {
-            "account_plan": {
-                "pages_per_period": get_int(
-                    f"saas.plans.{account_plan}.pdf_translation.pages_per_period"
-                ),
-                "max_pages_per_job": get_int(
-                    f"saas.plans.{account_plan}.pdf_translation.max_pages_per_job"
-                ),
-            },
+        "credits": {
+            "plans": [
+                {
+                    "code": plan_code,
+                    "credits_per_period": get_int(
+                        f"saas.plans.{plan_code}.compute.credits_per_period"
+                    ),
+                    "period": get_str(
+                        f"saas.plans.{plan_code}.compute.period", "month"
+                    ),
+                    "account_required": plan_code != "anonymous",
+                    "price_minor_units": get_int(
+                        f"saas.plan_catalog.{plan_code}.price_minor_units"
+                    ),
+                    "currency": get_str(
+                        f"saas.plan_catalog.{plan_code}.currency", "EUR"
+                    ),
+                    "billing_period": get_str(
+                        f"saas.plan_catalog.{plan_code}.billing_period", "month"
+                    ),
+                    "pdf_pages_per_job": get_int(
+                        f"saas.plans.{plan_code}.pdf_translation.max_pages_per_job"
+                    ),
+                    "pdf_preview": get_bool(
+                        f"saas.plans.{plan_code}.pdf_translation.preview_first_pages"
+                    ),
+                }
+                for plan_code in ("anonymous", "free")
+            ],
         },
     }
 
@@ -374,25 +404,13 @@ def post_image_translation_cancel(request: Request, operation_id: str) -> dict[s
         raise HTTPException(status_code=exc.status_code, detail=_image_error_detail(exc))
 
 
-# PDF translation: unlike images, the submit returns a lifecycle envelope immediately
-# and the desktop client polls it — a PDF can take minutes, so the route must not
-# hold the connection. Sync defs for the same threadpool reason as the image routes.
-# The caller's plan gates the feature and its pages are reserved before the
-# upstream job starts (app/pdf_quota.py); the poll and cancel routes settle
-# that reservation when the job reaches a terminal state.
+# PDF preparation returns a lifecycle envelope immediately. The desktop client
+# polls while translation-services measures the document, then confirms the
+# fixed credit quote before compute starts.
 @api_router.post("/pdf-translation/requests")
 def post_pdf_translation_request(
     request: Request,
     document_file: UploadFile = File(...),
-    target_language: str = Form(...),
-    page_layout_mode: Literal["fit", "typeset"] = Form("typeset"),
-    page_scale: float = Form(0.9, ge=0.5, le=1.0),
-    render_size_mode: Literal["min", "median"] = Form("median"),
-    erase_fill_mode: Literal["flat", "inpaint"] = Form("inpaint"),
-    width_fit_mode: Literal["footprint", "extend_to_margin"] = Form("footprint"),
-    size_metric_mode: Literal["extent", "band", "fill"] = Form("extent"),
-    size_cohort_mode: Literal["off", "vlm"] = Form("vlm"),
-    pdf_structure_mode: Literal["source_only", "always"] = Form("source_only"),
     operation_id: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> dict[str, Any]:
     operation_id = normalize_operation_id(operation_id)
@@ -408,81 +426,67 @@ def post_pdf_translation_request(
         )
     if not content:
         raise HTTPException(status_code=400, detail="empty document upload")
-    render_options = PdfRenderOptions(
-        page_layout_mode=page_layout_mode,
-        page_scale=page_scale,
-        render_size_mode=render_size_mode,
-        erase_fill_mode=erase_fill_mode,
-        width_fit_mode=width_fit_mode,
-        size_metric_mode=size_metric_mode,
-        size_cohort_mode=size_cohort_mode,
-        pdf_structure_mode=pdf_structure_mode,
-    )
     try:
-        envelope, _ = submit_pdf_with_quota(
+        return submit_pdf_credit_preparation(
             request,
             document_bytes=content,
             filename=document_file.filename or "document.pdf",
             content_type=document_file.content_type or "application/pdf",
-            target_language=target_language,
             operation_id=operation_id,
-            render_options=render_options.model_dump(),
         )
     except PdfTranslationError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc))
-    return envelope
 
 
-@api_router.post("/pdf-translation/requests/{source_request_id}/rerender")
-def post_pdf_translation_rerender(
+@api_router.post("/pdf-translation/requests/{request_id}/quote")
+def post_pdf_translation_quote(
     request: Request,
-    source_request_id: str,
-    render_options: PdfRenderOptions,
-    operation_id: str | None = Header(default=None, alias="Idempotency-Key"),
+    request_id: str,
+    payload: PdfCreditQuoteRequest,
 ) -> dict[str, Any]:
-    operation_id = normalize_operation_id(operation_id)
-    source_event = require_pdf_request_owner(request, source_request_id)
-    principal, entitlements, _ = resolve_request_context(request)
-    entitlements.require_enabled("pdf_translation.enabled")
-    payload = render_options.model_dump()
-    payload_hash = operation_payload_hash(
-        "pdf_rerender",
-        parameters={
-            "source_request_id": str(source_request_id),
-            **{key: str(value) for key, value in payload.items()},
-        },
-    )
-    record_pdf_rerender_owner(principal, operation_id, payload_hash)
     try:
-        envelope = rerender_pdf_request(
-            source_request_id,
-            operation_id=operation_id,
-            render_options=payload,
+        return quote_pdf_credit_translation(
+            request,
+            request_id=request_id,
+            target_language=payload.target_language,
         )
     except PdfTranslationError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc))
-    if str(envelope.get("request_id") or "") != operation_id:
-        raise HTTPException(
-            status_code=502,
-            detail="translation-services returned an unexpected request_id",
+
+
+@api_router.post("/pdf-translation/requests/{request_id}/confirm")
+def post_pdf_translation_confirm(
+    request: Request,
+    request_id: str,
+    payload: PdfCreditConfirmRequest,
+) -> dict[str, Any]:
+    try:
+        return confirm_pdf_credit_translation(
+            request,
+            request_id=request_id,
+            quote_id=payload.quote_id,
+            target_language=payload.target_language,
         )
-    return attach_pdf_preview(envelope, source_event)
+    except PdfTranslationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc))
 
 
 @api_router.get("/pdf-translation/requests/{request_id}")
 def get_pdf_translation_request(request: Request, request_id: str) -> dict[str, Any]:
-    event = require_pdf_request_owner(request, request_id)
+    principal, _, _ = resolve_request_context(request)
+    operation = require_pdf_credit_operation(principal, request_id)
     try:
         envelope = get_pdf_request(request_id)
     except PdfTranslationError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc))
-    finalize_pdf_reservation(envelope)
-    return attach_pdf_preview(envelope, event)
+    settle_pdf_credit_envelope(principal, envelope)
+    return attach_pdf_credit_context(principal, envelope, operation=operation)
 
 
 @api_router.get("/pdf-translation/requests/{request_id}/artifacts/{artifact_name}")
 def get_pdf_translation_artifact(request: Request, request_id: str, artifact_name: str) -> Response:
-    require_pdf_request_owner(request, request_id)
+    principal, _, _ = resolve_request_context(request)
+    require_pdf_credit_operation(principal, request_id)
     try:
         data, media_type = get_pdf_artifact(request_id, artifact_name)
     except PdfTranslationError as exc:
@@ -498,13 +502,14 @@ def get_pdf_translation_artifact(request: Request, request_id: str, artifact_nam
 
 @api_router.post("/pdf-translation/requests/{request_id}/cancel")
 def post_pdf_translation_cancel(request: Request, request_id: str) -> dict[str, Any]:
-    event = require_pdf_request_owner(request, request_id)
+    principal, _, _ = resolve_request_context(request)
+    operation = require_pdf_credit_operation(principal, request_id)
     try:
         envelope = cancel_pdf_request(request_id)
     except PdfTranslationError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc))
-    finalize_pdf_reservation(envelope)
-    return attach_pdf_preview(envelope, event)
+    settle_pdf_credit_envelope(principal, envelope)
+    return attach_pdf_credit_context(principal, envelope, operation=operation)
 
 
 # One-shot text translation (typed/pasted text — the classic translator workflow).

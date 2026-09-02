@@ -13,8 +13,39 @@
       "publishable_key": "",
       "google_client_id": ""
     },
+    "credit_costs": {
+      "version": "credits-v1",
+      "quote_ttl_seconds": 900,
+      "denomination_eur": "0.001",
+      "actions": {
+        "pdf_translation": {
+          "formula": "minimum-plus-pages-plus-source-character-blocks",
+          "minimum_credits": 20,
+          "credits_per_page": 20,
+          "source_character_block_size": 1000,
+          "credits_per_source_character_block": 10,
+          "vision_page_credits": 0
+        }
+      }
+    },
+    "plan_catalog": {
+      "anonymous": {
+        "price_minor_units": 0,
+        "currency": "EUR",
+        "billing_period": "month"
+      },
+      "free": {
+        "price_minor_units": 0,
+        "currency": "EUR",
+        "billing_period": "month"
+      }
+    },
     "plans": {
       "anonymous": {
+        "compute": {
+          "credits_per_period": 300,
+          "period": "month"
+        },
         "text_translation": {
           "enabled": true,
           "max_characters_per_job": 5000,
@@ -37,8 +68,6 @@
         },
         "pdf_translation": {
           "enabled": true,
-          "pages_per_period": 6,
-          "period": "month",
           "max_pages_per_job": 2,
           "preview_first_pages": true
         },
@@ -47,6 +76,10 @@
         "rerender": { "enabled": true, "consumes_translation_quota": false }
       },
       "free": {
+        "compute": {
+          "credits_per_period": 3000,
+          "period": "month"
+        },
         "text_translation": {
           "enabled": true,
           "max_characters_per_job": 5000,
@@ -71,7 +104,7 @@
           "max_jobs_per_minute": 5,
           "max_jobs_per_hour": 30
         },
-        "pdf_translation": { "enabled": true, "pages_per_period": 50, "period": "month", "max_pages_per_job": 25 },
+        "pdf_translation": { "enabled": true, "max_pages_per_job": 25 },
         "document_persistence": { "enabled": false },
         "translation_editing": { "enabled": true },
         "rerender": { "enabled": true, "consumes_translation_quota": false },
@@ -80,7 +113,6 @@
     },
     "usage_metrics": [
       { "metric": "image_translation.jobs", "period_key": "image_translation.period", "limit_key": "image_translation.jobs_per_period" },
-      { "metric": "pdf_translation.pages", "period": "month", "limit_key": "pdf_translation.pages_per_period" },
       { "metric": "translation.source_characters", "period": "month", "limit_key": "translation.characters_per_period" }
     ]
   },

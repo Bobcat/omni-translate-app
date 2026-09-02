@@ -10,26 +10,42 @@ const MAX_ERROR_DETAIL_LENGTH = 240;
 async function ensureOk(response) {
   if (response.ok) return;
   const detail = await errorDetail(response);
-  const error = new Error(detail || `HTTP ${response.status}`);
+  const error = new Error(detail.message || `HTTP ${response.status}`);
   error.status = response.status;
+  error.code = detail.code || '';
+  error.details = detail.details || {};
   throw error;
 }
 
 async function errorDetail(response) {
   const text = await response.text();
-  if (!text) return '';
+  if (!text) return {};
   try {
     const payload = JSON.parse(text);
     const detail = payload?.detail;
-    if (typeof detail === 'string') return detail.slice(0, MAX_ERROR_DETAIL_LENGTH);
-    if (typeof detail?.message === 'string') return detail.message.slice(0, MAX_ERROR_DETAIL_LENGTH);
+    if (typeof detail === 'string') return { message: detail.slice(0, MAX_ERROR_DETAIL_LENGTH) };
+    if (typeof detail?.message === 'string') {
+      return {
+        message: detail.message.slice(0, MAX_ERROR_DETAIL_LENGTH),
+        code: String(detail.code || ''),
+        details: detail.details && typeof detail.details === 'object' ? detail.details : {},
+      };
+    }
     // Control-layer errors (entitlements, quota) carry { error: {...} }.
     const controlError = payload?.error;
-    if (typeof controlError?.message === 'string') return controlError.message.slice(0, MAX_ERROR_DETAIL_LENGTH);
+    if (typeof controlError?.message === 'string') {
+      return {
+        message: controlError.message.slice(0, MAX_ERROR_DETAIL_LENGTH),
+        code: String(controlError.code || ''),
+        details: controlError.details && typeof controlError.details === 'object'
+          ? controlError.details
+          : {},
+      };
+    }
   } catch {
-    return text.slice(0, MAX_ERROR_DETAIL_LENGTH);
+    return { message: text.slice(0, MAX_ERROR_DETAIL_LENGTH) };
   }
-  return '';
+  return {};
 }
 
 export async function getConfig() {
@@ -44,14 +60,8 @@ export async function getMe() {
   return response.json();
 }
 
-export async function getUsage() {
-  const response = await fetch('/api/usage', { headers: authHeaders({ Accept: 'application/json' }) });
-  await ensureOk(response);
-  return response.json();
-}
-
-export async function getEntitlements() {
-  const response = await fetch('/api/entitlements', {
+export async function getCredits() {
+  const response = await fetch('/api/credits', {
     headers: authHeaders({ Accept: 'application/json' }),
   });
   await ensureOk(response);
@@ -188,13 +198,9 @@ async function ensureAnonymousPrincipal(headers) {
   await anonymousPrincipalReady;
 }
 
-async function submitPdfOnce(file, { target, renderOptions, headers }) {
+async function preparePdfOnce(file, headers) {
   const form = new FormData();
   form.append('document_file', file);
-  form.append('target_language', String(target || ''));
-  for (const [key, value] of Object.entries(renderOptions || {})) {
-    form.append(key, String(value));
-  }
   return fetch('/api/pdf-translation/requests', {
     method: 'POST',
     body: form,
@@ -202,7 +208,7 @@ async function submitPdfOnce(file, { target, renderOptions, headers }) {
   });
 }
 
-export async function submitPdf(file, { target, operationId, renderOptions = {} }) {
+export async function preparePdf(file, { operationId }) {
   if (!operationId) throw new Error('PDF operation id missing');
   // One operation belongs to the account that started it. Pin its bearer
   // header so an account switch cannot move a retry or status lookup.
@@ -211,7 +217,7 @@ export async function submitPdf(file, { target, operationId, renderOptions = {} 
   for (let attempt = 0; attempt < 2; attempt += 1) {
     let response;
     try {
-      response = await submitPdfOnce(file, { target, renderOptions, headers });
+      response = await preparePdfOnce(file, headers);
     } catch (err) {
       // The request may have reached the app before the connection failed. One
       // replay with the same operation id is safe across quota and GPU work.
@@ -225,37 +231,32 @@ export async function submitPdf(file, { target, operationId, renderOptions = {} 
     await ensureOk(response);
     return response.json();
   }
-  throw new Error('PDF submit retry failed');
+  throw new Error('PDF preparation retry failed');
 }
 
-export async function rerenderPdf(sourceRequestId, { operationId, renderOptions = {} }) {
-  if (!operationId) throw new Error('PDF operation id missing');
-  const safeSourceId = encodeURIComponent(String(sourceRequestId || ''));
-  if (!safeSourceId) throw new Error('PDF source request id missing');
-  const headers = authHeaders({
-    'Idempotency-Key': String(operationId),
-    'Content-Type': 'application/json',
-    Accept: 'application/json',
+export async function quotePdf(requestId, { target }) {
+  const safeId = encodeURIComponent(String(requestId || ''));
+  const response = await fetch(`/api/pdf-translation/requests/${safeId}/quote`, {
+    method: 'POST',
+    headers: authHeaders({ 'Content-Type': 'application/json', Accept: 'application/json' }),
+    body: JSON.stringify({ target_language: String(target || '') }),
   });
-  await ensureAnonymousPrincipal(headers);
-  const url = `/api/pdf-translation/requests/${safeSourceId}/rerender`;
-  const body = JSON.stringify(renderOptions || {});
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    let response;
-    try {
-      response = await fetch(url, { method: 'POST', headers, body });
-    } catch (err) {
-      if (attempt === 0) continue;
-      return getPdfRequestWithHeaders(operationId, headers);
-    }
-    if (response.status === 408 || response.status >= 500) {
-      if (attempt === 0) continue;
-      return getPdfRequestWithHeaders(operationId, headers);
-    }
-    await ensureOk(response);
-    return response.json();
-  }
-  throw new Error('PDF rerender retry failed');
+  await ensureOk(response);
+  return response.json();
+}
+
+export async function confirmPdf(requestId, { quoteId, target }) {
+  const safeId = encodeURIComponent(String(requestId || ''));
+  const response = await fetch(`/api/pdf-translation/requests/${safeId}/confirm`, {
+    method: 'POST',
+    headers: authHeaders({ 'Content-Type': 'application/json', Accept: 'application/json' }),
+    body: JSON.stringify({
+      quote_id: String(quoteId || ''),
+      target_language: String(target || ''),
+    }),
+  });
+  await ensureOk(response);
+  return response.json();
 }
 
 async function getPdfRequestWithHeaders(requestId, headers) {

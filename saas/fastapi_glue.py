@@ -184,6 +184,9 @@ def create_saas_router(
     user_plan: str = "free",
     token_verifier: ExternalTokenVerifier | None = None,
     usage_metrics: list[Mapping[str, Any]] | None = None,
+    credit_metric: str = "compute.credits",
+    credit_period_key: str = "compute.period",
+    credit_limit_key: str = "compute.credits_per_period",
     cookie_name: str = DEFAULT_COOKIE_NAME,
     cookie_max_age_s: int = DEFAULT_COOKIE_MAX_AGE_S,
 ) -> APIRouter:
@@ -253,5 +256,22 @@ def create_saas_router(
                 }
             )
         return {"usage": usage}
+
+    @router.get("/credits")
+    def get_credits_endpoint(request: Request) -> dict[str, Any]:
+        principal = resolve_principal(request)
+        entitlements = entitlement_service.resolve(principal)
+        period = entitlements.get_str(credit_period_key)
+        limit = entitlements.get_int(credit_limit_key)
+        summary = quota_service.get_usage(principal, credit_metric, period)
+        return {
+            "credits": {
+                "plan": entitlements.plan_code,
+                "available": max(0, limit - summary.reserved - summary.consumed),
+                "grant": limit,
+                "period": summary.period_kind,
+                "period_end": summary.period_end,
+            }
+        }
 
     return router

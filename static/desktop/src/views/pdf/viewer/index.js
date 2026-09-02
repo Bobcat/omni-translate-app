@@ -109,6 +109,46 @@ export function pdfPageInViewport(pages, viewportTop, viewportHeight) {
   return closestPageNumber;
 }
 
+export function pdfLinkBounds(rect, viewport) {
+  if (!Array.isArray(rect) || rect.length !== 4 || !viewport?.convertToViewportPoint) return null;
+  const converted = [
+    ...viewport.convertToViewportPoint(rect[0], rect[1]),
+    ...viewport.convertToViewportPoint(rect[2], rect[3]),
+  ];
+  if (!Array.isArray(converted) || converted.length !== 4 || !converted.every(Number.isFinite)) return null;
+  const left = Math.min(converted[0], converted[2]);
+  const top = Math.min(converted[1], converted[3]);
+  const width = Math.abs(converted[2] - converted[0]);
+  const height = Math.abs(converted[3] - converted[1]);
+  return width > 0 && height > 0 ? { left, top, width, height } : null;
+}
+
+export function pdfExternalLinkUrl(value, baseUrl = globalThis.location?.href) {
+  const rawUrl = String(value || '').trim();
+  if (!rawUrl) return '';
+  try {
+    const url = new URL(rawUrl, baseUrl || 'https://localhost/');
+    return ['http:', 'https:', 'mailto:', 'tel:'].includes(url.protocol) ? url.href : '';
+  } catch {
+    return '';
+  }
+}
+
+export async function pdfDestinationPageNumber(documentProxy, destination) {
+  if (!documentProxy || !destination) return null;
+  const explicitDestination = typeof destination === 'string'
+    ? await documentProxy.getDestination(destination)
+    : destination;
+  if (!Array.isArray(explicitDestination) || !explicitDestination.length) return null;
+  const pageReference = explicitDestination[0];
+  if (Number.isInteger(pageReference)) return pageReference + 1;
+  try {
+    return (await documentProxy.getPageIndex(pageReference)) + 1;
+  } catch {
+    return null;
+  }
+}
+
 export function createPdfViewer({ label = 'PDF' } = {}) {
   const element = document.createElement('section');
   element.className = 'pdf-document-viewer';
@@ -185,13 +225,10 @@ export function createPdfViewer({ label = 'PDF' } = {}) {
   let maxUnitPageWidth = 0;
   let currentPageNumber = 1;
   let currentScale = 1;
-  let fitMode = 'width';
+  let nextFitAction = 'width';
   let loadToken = 0;
   let renderToken = 0;
-  let resizeFrame = 0;
   let scrollFrame = 0;
-  let lastFitContainerWidth = 0;
-  let lastFitContainerHeight = 0;
   let destroyed = false;
 
   function setMessage(message, isError = false) {
@@ -216,7 +253,7 @@ export function createPdfViewer({ label = 'PDF' } = {}) {
     nextButton.disabled = !hasDocument || currentPageNumber >= pageCount;
     zoomOutButton.disabled = !hasDocument || currentScale <= MIN_SCALE;
     zoomInButton.disabled = !hasDocument || currentScale >= MAX_SCALE;
-    const fitAction = fitMode === 'width' ? 'page' : 'width';
+    const fitAction = nextFitAction;
     const fitLabel = fitAction === 'width' ? 'Fit page width' : 'Fit page';
     fitButton.dataset.fitAction = fitAction;
     fitButton.setAttribute('aria-label', fitLabel);
@@ -281,11 +318,13 @@ export function createPdfViewer({ label = 'PDF' } = {}) {
       const canvas = document.createElement('canvas');
       canvas.setAttribute('role', 'img');
       canvas.setAttribute('aria-label', `${label}, page ${pageNumber} of ${pdfPages.length}`);
+      const linkLayer = document.createElement('div');
+      linkLayer.className = 'pdf-viewer-link-layer';
       const errorElement = document.createElement('div');
       errorElement.className = 'pdf-viewer-page-error';
       errorElement.textContent = 'This page could not be rendered.';
       errorElement.hidden = true;
-      pageElement.append(canvas, errorElement);
+      pageElement.append(canvas, linkLayer, errorElement);
       fragment.append(pageElement);
       return {
         pageNumber,
@@ -296,6 +335,8 @@ export function createPdfViewer({ label = 'PDF' } = {}) {
         cssHeight: unitViewport.height,
         element: pageElement,
         canvas,
+        linkLayer,
+        annotations: [],
         errorElement,
         renderTask: null,
         renderPromise: null,
@@ -304,6 +345,75 @@ export function createPdfViewer({ label = 'PDF' } = {}) {
     });
     maxUnitPageWidth = Math.max(0, ...pages.map((page) => page.unitWidth));
     pagesElement.replaceChildren(fragment);
+  }
+
+  async function followDocumentLink(annotation) {
+    const documentAtClick = pdfDocument;
+    let destinationPage = null;
+    try {
+      destinationPage = await pdfDestinationPageNumber(documentAtClick, annotation.dest);
+    } catch {}
+    if (!documentAtClick || documentAtClick !== pdfDocument) return;
+    if (!destinationPage) {
+      const actions = {
+        FirstPage: 1,
+        LastPage: documentAtClick.numPages,
+        NextPage: currentPageNumber + 1,
+        PrevPage: currentPageNumber - 1,
+      };
+      destinationPage = actions[annotation.action] || null;
+    }
+    if (destinationPage) goToPage(destinationPage);
+  }
+
+  function renderPageLinks(page) {
+    const viewport = page.pdfPage.getViewport({ scale: currentScale });
+    const fragment = document.createDocumentFragment();
+    for (const annotation of page.annotations) {
+      if (annotation?.subtype !== 'Link') continue;
+      const bounds = pdfLinkBounds(annotation.rect, viewport);
+      const externalUrl = pdfExternalLinkUrl(annotation.url);
+      const hasDocumentTarget = Boolean(annotation.dest || annotation.action);
+      if (!bounds || (!externalUrl && !hasDocumentTarget)) continue;
+
+      const link = document.createElement('a');
+      link.className = 'pdf-viewer-link';
+      link.style.left = `${bounds.left}px`;
+      link.style.top = `${bounds.top}px`;
+      link.style.width = `${bounds.width}px`;
+      link.style.height = `${bounds.height}px`;
+      const annotationText = String(
+        annotation.titleObj?.str || annotation.contentsObj?.str || '',
+      ).trim();
+      if (externalUrl) {
+        link.href = externalUrl;
+        link.rel = 'noopener noreferrer';
+        if (externalUrl.startsWith('http:') || externalUrl.startsWith('https:')) {
+          link.target = '_blank';
+        }
+        link.title = annotationText || String(annotation.url);
+        link.setAttribute('aria-label', annotationText || 'Open external link');
+      } else {
+        link.href = '#';
+        link.title = annotationText || 'Go to linked PDF page';
+        link.setAttribute('aria-label', annotationText || 'Go to linked PDF page');
+        link.addEventListener('click', (event) => {
+          event.preventDefault();
+          void followDocumentLink(annotation);
+        });
+      }
+      fragment.append(link);
+    }
+    page.linkLayer.replaceChildren(fragment);
+  }
+
+  async function loadPageLinks(page, token) {
+    try {
+      const annotations = await page.pdfPage.getAnnotations({ intent: 'display' });
+      if (token !== loadToken || destroyed || pages[page.pageNumber - 1] !== page) return;
+      page.annotations = Array.isArray(annotations) ? annotations : [];
+      renderPageLinks(page);
+    } catch {}
   }
 
   function layoutPages() {
@@ -315,6 +425,7 @@ export function createPdfViewer({ label = 'PDF' } = {}) {
       page.element.style.height = `${page.cssHeight}px`;
       page.canvas.style.width = `${page.cssWidth}px`;
       page.canvas.style.height = `${page.cssHeight}px`;
+      renderPageLinks(page);
     }
   }
 
@@ -446,21 +557,6 @@ export function createPdfViewer({ label = 'PDF' } = {}) {
     const anchor = preservePosition ? captureScrollAnchor() : null;
     cancelRenders();
     const token = renderToken;
-    if (fitMode) {
-      lastFitContainerWidth = viewportElement.clientWidth;
-      lastFitContainerHeight = viewportElement.clientHeight;
-      if (fitMode === 'page') {
-        const fittedPage = pages[currentPageNumber - 1] || pages[0];
-        currentScale = pdfFitPageScale(
-          lastFitContainerWidth,
-          lastFitContainerHeight,
-          fittedPage.unitWidth,
-          fittedPage.unitHeight,
-        );
-      } else {
-        currentScale = pdfFitWidthScale(lastFitContainerWidth, maxUnitPageWidth);
-      }
-    }
     layoutPages();
     setMessage('');
     if (resetScroll) {
@@ -476,18 +572,22 @@ export function createPdfViewer({ label = 'PDF' } = {}) {
     if (token === renderToken) setLoading(false);
   }
 
-  function scheduleFitRender() {
-    if (!fitMode || !pdfDocument || !pages.length || destroyed || viewportElement.clientWidth <= 0) return;
-    if (resizeFrame) cancelAnimationFrame(resizeFrame);
-    resizeFrame = requestAnimationFrame(() => {
-      resizeFrame = 0;
-      const width = viewportElement.clientWidth;
-      const height = viewportElement.clientHeight;
-      const widthChanged = Math.abs(width - lastFitContainerWidth) >= 2;
-      const heightChanged = fitMode === 'page' && Math.abs(height - lastFitContainerHeight) >= 2;
-      if (!widthChanged && !heightChanged) return;
-      refreshDocumentLayout();
-    });
+  function fitDocument(action, layoutOptions = {}) {
+    if (!pdfDocument || !pages.length || destroyed) return Promise.resolve();
+    if (action === 'page') {
+      const fittedPage = pages[currentPageNumber - 1] || pages[0];
+      currentScale = pdfFitPageScale(
+        viewportElement.clientWidth,
+        viewportElement.clientHeight,
+        fittedPage.unitWidth,
+        fittedPage.unitHeight,
+      );
+    } else {
+      currentScale = pdfFitWidthScale(viewportElement.clientWidth, maxUnitPageWidth);
+    }
+    nextFitAction = action === 'width' ? 'page' : 'width';
+    updateToolbar();
+    return refreshDocumentLayout(layoutOptions);
   }
 
   function goToPage(value) {
@@ -509,7 +609,6 @@ export function createPdfViewer({ label = 'PDF' } = {}) {
 
   function changeScale(nextScale) {
     if (!pdfDocument) return;
-    fitMode = null;
     currentScale = clampPdfScale(nextScale);
     updateToolbar();
     refreshDocumentLayout();
@@ -540,11 +639,7 @@ export function createPdfViewer({ label = 'PDF' } = {}) {
   });
   fitButton.addEventListener('click', () => {
     if (!pdfDocument) return;
-    fitMode = fitMode === 'width' ? 'page' : 'width';
-    lastFitContainerWidth = 0;
-    lastFitContainerHeight = 0;
-    updateToolbar();
-    refreshDocumentLayout();
+    fitDocument(nextFitAction);
   });
   pageInput.addEventListener('change', () => goToPage(pageInput.value));
   pageInput.addEventListener('keydown', (event) => {
@@ -552,8 +647,6 @@ export function createPdfViewer({ label = 'PDF' } = {}) {
   });
   viewportElement.addEventListener('scroll', scheduleViewportUpdate, { passive: true });
 
-  const resizeObserver = new ResizeObserver(scheduleFitRender);
-  resizeObserver.observe(viewportElement);
   updateToolbar();
 
   async function load(source) {
@@ -564,9 +657,7 @@ export function createPdfViewer({ label = 'PDF' } = {}) {
 
     currentPageNumber = 1;
     currentScale = 1;
-    fitMode = 'width';
-    lastFitContainerWidth = 0;
-    lastFitContainerHeight = 0;
+    nextFitAction = 'width';
     updateToolbar();
     setLoading(true);
     setMessage('Loading PDF…');
@@ -599,8 +690,9 @@ export function createPdfViewer({ label = 'PDF' } = {}) {
       );
       if (token !== loadToken || destroyed || task !== loadingTask) return false;
       buildPageElements(pdfPages);
+      for (const page of pages) void loadPageLinks(page, token);
       updateToolbar();
-      await refreshDocumentLayout({ resetScroll: true, preservePosition: false });
+      await fitDocument('width', { resetScroll: true, preservePosition: false });
       return true;
     } catch (error) {
       if (token !== loadToken || destroyed) return false;
@@ -629,9 +721,7 @@ export function createPdfViewer({ label = 'PDF' } = {}) {
     disposeDocument();
     currentPageNumber = 1;
     currentScale = 1;
-    fitMode = 'width';
-    lastFitContainerWidth = 0;
-    lastFitContainerHeight = 0;
+    nextFitAction = 'width';
     setLoading(false);
     setMessage('Choose a PDF to preview.');
     updateToolbar();
@@ -640,9 +730,7 @@ export function createPdfViewer({ label = 'PDF' } = {}) {
   function destroy() {
     if (destroyed) return;
     destroyed = true;
-    if (resizeFrame) cancelAnimationFrame(resizeFrame);
     if (scrollFrame) cancelAnimationFrame(scrollFrame);
-    resizeObserver.disconnect();
     viewportElement.removeEventListener('scroll', scheduleViewportUpdate);
     clear();
   }
@@ -652,6 +740,5 @@ export function createPdfViewer({ label = 'PDF' } = {}) {
     load,
     clear,
     destroy,
-    refreshLayout: scheduleFitRender,
   };
 }

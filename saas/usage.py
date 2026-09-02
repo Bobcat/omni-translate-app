@@ -108,6 +108,16 @@ class QuotaService:
             ),
         )
 
+    def get_reservation(self, reservation_id: uuid.UUID) -> UsageReservation:
+        row = self._store.get_usage_event(reservation_id)
+        if row is None:
+            raise SaasError(
+                "USAGE_RESERVATION_NOT_FOUND",
+                f"unknown usage reservation: {reservation_id}",
+                status_code=404,
+            )
+        return _reservation_from_row(row)
+
     def reserve(
         self,
         principal: Principal,

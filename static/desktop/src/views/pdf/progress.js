@@ -21,13 +21,10 @@ export function pdfPendingText(envelope) {
     return 'Assembling PDF…';
   }
 
-  const action = String(envelope?.task || '').toLowerCase() === 'rerender_pdf'
-    ? 'Rendering'
-    : 'Translating';
   if (typeof done === 'number' && typeof total === 'number' && total > 0) {
     // done counts finished pages. While a page is in flight, show that page
     // rather than leaving the counter at the previous completed page.
-    return `${action}… page ${Math.min(done + 1, total)} of ${total}`;
+    return `Translating… page ${Math.min(done + 1, total)} of ${total}`;
   }
-  return `${action}…`;
+  return 'Translating…';
 }

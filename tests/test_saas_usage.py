@@ -14,7 +14,7 @@ from saas.storage import SaasStore
 from saas.usage import QuotaService
 
 UTC = timezone.utc
-METRIC = "pdf_translation.pages"
+METRIC = "test.work_units"
 NOW = datetime(2026, 7, 15, 12, 0, tzinfo=UTC)
 
 

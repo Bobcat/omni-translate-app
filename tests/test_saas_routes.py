@@ -24,17 +24,23 @@ from saas.usage import QuotaService
 SECRET = "route-test-secret"
 
 
-def _make_app(db_path: Path, *, return_store: bool = False) -> FastAPI | tuple[FastAPI, SaasStore]:
+def _make_app(
+    db_path: Path,
+    *,
+    return_store: bool = False,
+) -> FastAPI | tuple[FastAPI, SaasStore]:
     store = SaasStore(db_path)
     plans = {
         "anonymous": EntitlementService.flatten(
             {
-                "image_translation": {"enabled": True, "max_characters_per_job": 1500},
-                "pdf_translation": {
+                "compute": {"credits_per_period": 300, "period": "month"},
+                "image_translation": {
                     "enabled": True,
-                    "pages_per_period": 12,
+                    "max_characters_per_job": 1500,
+                    "jobs_per_period": 12,
                     "period": "month",
                 },
+                "pdf_translation": {"enabled": True, "max_pages_per_job": 25},
             }
         )
     }
@@ -48,9 +54,9 @@ def _make_app(db_path: Path, *, return_store: bool = False) -> FastAPI | tuple[F
             tenant="test",
             usage_metrics=[
                 {
-                    "metric": "pdf_translation.pages",
-                    "period_key": "pdf_translation.period",
-                    "limit_key": "pdf_translation.pages_per_period",
+                    "metric": "image_translation.jobs",
+                    "period_key": "image_translation.period",
+                    "limit_key": "image_translation.jobs_per_period",
                 }
             ],
         )
@@ -106,7 +112,7 @@ class SaasRouteTests(unittest.TestCase):
         response = self.client.get("/api/usage")
         self.assertEqual(response.status_code, 200)
         (entry,) = response.json()["usage"]
-        self.assertEqual(entry["metric"], "pdf_translation.pages")
+        self.assertEqual(entry["metric"], "image_translation.jobs")
         self.assertEqual(entry["period"], "month")
         self.assertEqual((entry["reserved"], entry["consumed"]), (0, 0))
         self.assertEqual((entry["limit"], entry["remaining"]), (12, 12))
@@ -125,7 +131,7 @@ class SaasRouteTests(unittest.TestCase):
             )
             reservation = QuotaService(store).reserve(
                 principal,
-                metric="pdf_translation.pages",
+                metric="image_translation.jobs",
                 quantity=10,
                 limit=12,
                 period_kind="month",
@@ -138,6 +144,40 @@ class SaasRouteTests(unittest.TestCase):
             self.assertEqual(entry["consumed"], 20)
             self.assertEqual(entry["remaining"], 0)
             store.close()
+
+    def test_credits_summary_counts_reservations_as_unavailable(self) -> None:
+        with TemporaryDirectory() as tmp:
+            app, store = _make_app(
+                Path(tmp) / "saas.db",
+                return_store=True,
+            )
+            client = TestClient(app)
+            client.get("/api/me")
+            principal_id = uuid.UUID(client.cookies["ot_anon"].partition(".")[0])
+            principal = Principal(
+                tenant="test",
+                kind="anonymous",
+                id=principal_id,
+                plan_code="anonymous",
+            )
+            QuotaService(store).reserve(
+                principal,
+                metric="compute.credits",
+                quantity=80,
+                limit=300,
+                period_kind="month",
+                idempotency_key="credits:summary-test",
+            )
+
+            response = client.get("/api/credits")
+            store.close()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["credits"]["plan"], "anonymous")
+        self.assertEqual(response.json()["credits"]["available"], 220)
+        self.assertEqual(response.json()["credits"]["grant"], 300)
+        self.assertEqual(response.json()["credits"]["period"], "month")
+        self.assertTrue(response.json()["credits"]["period_end"])
 
     def test_rejected_first_requests_reuse_one_anonymous_identity(self) -> None:
         with TemporaryDirectory() as tmp:

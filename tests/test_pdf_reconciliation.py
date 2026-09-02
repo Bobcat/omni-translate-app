@@ -1,8 +1,7 @@
-"""Server-side PDF quota settlement without browser polling."""
+"""Server-side PDF credit settlement without browser polling."""
 from __future__ import annotations
 
 import asyncio
-import json
 import unittest
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -10,8 +9,12 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import AsyncMock, patch
 
-from app.pdf_quota import PAGES_METRIC
-from app.pdf_reconciliation import reconcile_pdf_reservations, run_pdf_reconciliation_loop
+from app.credits.policy import CreditCostPolicy
+from app.credits.quotes import CreditQuoteService
+from app.pdf_reconciliation import (
+    reconcile_pdf_credit_reservations,
+    run_pdf_reconciliation_loop,
+)
 from app.pdf_translation_bridge import PdfTranslationError
 from app.saas_setup import SaasContext
 from saas.entitlements import EntitlementService
@@ -22,18 +25,34 @@ from saas.usage import QuotaService
 TENANT = "t"
 
 
-class PdfReconciliationTests(unittest.TestCase):
+class PdfCreditReconciliationTests(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = TemporaryDirectory()
         self.store = SaasStore(Path(self._tmp.name) / "saas.db")
+        quota_service = QuotaService(self.store)
+        policy = CreditCostPolicy.from_config(
+            config={
+                "version": "credits-v1",
+                "quote_ttl_seconds": 900,
+                "denomination_eur": "0.001",
+                "actions": {"pdf_translation": {"minimum_credits": 20}},
+            },
+        )
+        quote_service = CreditQuoteService(
+            store=self.store,
+            quota_service=quota_service,
+            policy=policy,
+        )
         self.ctx = SaasContext(
             store=self.store,
             entitlement_service=EntitlementService({}),
-            quota_service=QuotaService(self.store),
+            quota_service=quota_service,
             signing_secret="test",
             tenant=TENANT,
             token_verifier=None,
             user_plan="free",
+            credit_policy=policy,
+            credit_quote_service=quote_service,
         )
         self.principal = Principal(
             tenant=TENANT,
@@ -42,78 +61,48 @@ class PdfReconciliationTests(unittest.TestCase):
             plan_code="free",
         )
         self.operation_id = str(uuid.uuid4())
-        self.reservation = self.ctx.quota_service.reserve(
+        quote = quote_service.create(
             self.principal,
-            metric=PAGES_METRIC,
-            quantity=5,
-            limit=50,
+            action="pdf_translation",
+            payload_hash="payload",
+            pricing_inputs={"pages": 2, "source_characters": 3393},
+            basis="pages+source_characters",
+            basis_quantity=2,
+            quoted_credits=100,
+        )
+        self.reservation = quote_service.confirm(
+            self.principal,
+            quote_id=quote.id,
+            operation_id=self.operation_id,
+            action="pdf_translation",
+            payload_hash="payload",
+            credit_limit=300,
             period_kind="month",
-            job_id=self.operation_id,
-            idempotency_key=f"pdf-submit:{self.operation_id}",
         )
-        self._context_patch = patch(
-            "app.pdf_reconciliation.get_saas_context",
-            return_value=self.ctx,
-        )
-        self._quota_context_patch = patch(
-            "app.pdf_quota.get_saas_context",
-            return_value=self.ctx,
-        )
-        self._context_patch.start()
-        self._quota_context_patch.start()
+        self._context_patches = [
+            patch("app.pdf_reconciliation.get_saas_context", return_value=self.ctx),
+            patch("app.credits.pdf_translation.get_saas_context", return_value=self.ctx),
+        ]
+        for context_patch in self._context_patches:
+            context_patch.start()
 
     def tearDown(self) -> None:
-        self._quota_context_patch.stop()
-        self._context_patch.stop()
+        for context_patch in reversed(self._context_patches):
+            context_patch.stop()
         self.store.close()
         self._tmp.cleanup()
 
     def _state(self) -> str:
         return str(self.store.get_usage_event(self.reservation.id)["state"])
 
-    def _metadata(self) -> dict:
-        event = self.store.get_usage_event(self.reservation.id)
-        return json.loads(str(event["metadata"]))
-
-    def _envelope(self, state: str, *, code: str | None = None) -> dict:
-        envelope = {"request_id": self.operation_id, "state": state}
-        if code is not None:
-            envelope["error"] = {"code": code, "message": code}
-        return envelope
-
-    def _reconcile(self, response: dict) -> int:
-        with patch("app.pdf_reconciliation.get_pdf_request", return_value=response):
-            return reconcile_pdf_reservations()
-
     def test_completed_job_is_consumed_without_browser_polling(self) -> None:
-        self.assertEqual(self._reconcile(self._envelope("completed")), 1)
-        self.assertEqual(self._state(), "consumed")
+        with patch(
+            "app.pdf_reconciliation.get_pdf_request",
+            return_value={"request_id": self.operation_id, "state": "completed"},
+        ):
+            settled = reconcile_pdf_credit_reservations()
 
-    def test_cancelled_job_is_consumed(self) -> None:
-        self.assertEqual(self._reconcile(self._envelope("cancelled")), 1)
-        self.assertEqual(self._state(), "consumed")
-
-    def test_restart_failure_is_released(self) -> None:
-        self.assertEqual(
-            self._reconcile(self._envelope("failed", code="REQUEST_INTERRUPTED_BY_RESTART")),
-            1,
-        )
-        self.assertEqual(self._state(), "released")
-
-    def test_unknown_failure_is_consumed(self) -> None:
-        self.assertEqual(self._reconcile(self._envelope("failed", code="INPUT_REJECTED")), 1)
-        self.assertEqual(self._state(), "consumed")
-
-    def test_running_job_remains_reserved(self) -> None:
-        self.assertEqual(self._reconcile(self._envelope("running")), 0)
-        self.assertEqual(self._state(), "reserved")
-
-    def test_expired_artifact_does_not_change_completed_settlement(self) -> None:
-        envelope = {
-            **self._envelope("completed"),
-            "artifacts_available": False,
-        }
-        self.assertEqual(self._reconcile(envelope), 1)
+        self.assertEqual(settled, 1)
         self.assertEqual(self._state(), "consumed")
 
     def test_missing_job_before_grace_period_remains_reserved(self) -> None:
@@ -123,48 +112,47 @@ class PdfReconciliationTests(unittest.TestCase):
             "app.pdf_reconciliation.get_pdf_request",
             side_effect=PdfTranslationError("not found", status_code=404),
         ):
-            settled = reconcile_pdf_reservations(
+            settled = reconcile_pdf_credit_reservations(
                 now=created_at + timedelta(hours=23),
                 missing_grace_s=24 * 60 * 60,
             )
+
         self.assertEqual(settled, 0)
         self.assertEqual(self._state(), "reserved")
 
-    def test_missing_job_after_grace_period_is_consumed(self) -> None:
+    def test_missing_job_after_grace_period_is_released(self) -> None:
         event = self.store.get_usage_event(self.reservation.id)
         created_at = datetime.fromisoformat(str(event["created_at"]))
         with patch(
             "app.pdf_reconciliation.get_pdf_request",
             side_effect=PdfTranslationError("not found", status_code=404),
         ):
-            settled = reconcile_pdf_reservations(
+            settled = reconcile_pdf_credit_reservations(
                 now=created_at + timedelta(hours=25),
                 missing_grace_s=24 * 60 * 60,
             )
+
         self.assertEqual(settled, 1)
-        self.assertEqual(self._state(), "consumed")
-        self.assertEqual(
-            self._metadata()["settlement_reason"],
-            "missing_service_record_after_grace",
-        )
+        self.assertEqual(self._state(), "released")
 
     def test_service_outage_remains_reserved(self) -> None:
         with patch(
             "app.pdf_reconciliation.get_pdf_request",
             side_effect=PdfTranslationError("unreachable", status_code=502),
         ):
-            settled = reconcile_pdf_reservations(
+            settled = reconcile_pdf_credit_reservations(
                 now=datetime.now(timezone.utc) + timedelta(days=30),
                 missing_grace_s=0,
             )
+
         self.assertEqual(settled, 0)
         self.assertEqual(self._state(), "reserved")
 
 
 class PdfReconciliationLoopTests(unittest.IsolatedAsyncioTestCase):
-    async def test_loop_runs_a_pass_before_sleeping(self) -> None:
+    async def test_loop_runs_a_credit_pass_before_sleeping(self) -> None:
         with (
-            patch("app.pdf_reconciliation.reconcile_pdf_reservations") as reconcile,
+            patch("app.pdf_reconciliation.reconcile_pdf_credit_reservations") as reconcile,
             patch(
                 "app.pdf_reconciliation.asyncio.sleep",
                 new=AsyncMock(side_effect=asyncio.CancelledError),

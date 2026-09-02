@@ -6,7 +6,7 @@ import {
   getImageRequest,
   translateImage,
   retranslateImage,
-} from '../../shared/api.js?v=20260829-voice-modes-11';
+} from '../../shared/api.js?v=20260902-credits-23';
 import { publishViewBusy } from '../../shared/view-activity.js?v=20260829-voice-modes-11';
 import { onAuthChange } from '../../auth.js';
 import {

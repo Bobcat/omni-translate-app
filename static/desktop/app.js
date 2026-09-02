@@ -15,18 +15,25 @@ import {
   VIEW_RECORDING_EVENT,
 } from './src/shared/view-activity.js?v=20260829-voice-modes-11';
 import { accountInitials } from '../shared/account-display.js';
-import { cancelImage, getConfig, getImageRequest } from './src/shared/api.js?v=20260829-voice-modes-11';
+import { cancelImage, getConfig, getImageRequest } from './src/shared/api.js?v=20260902-credits-23';
+import { creditPlanLabel, formatCreditCount } from './src/shared/credit-display.js';
+import {
+  configureDesktopCredits,
+  refreshDesktopCredits,
+  setDesktopCreditOwner,
+  subscribeDesktopCreditState,
+} from './src/shared/credit-state.js?v=20260902-credits-25';
 import { initAuth, onAuthChange, onBeforeSignOut } from './src/auth.js';
 import { registerImageSignOutCancellation } from '../shared/image-operation-recovery.js';
 import { createVoiceWorkflow } from './src/views/voice/index.js?v=20260829-voice-toolbar-1';
 import { createTextView } from './src/views/text/index.js?v=20260829-voice-modes-11';
 import { createImageView } from './src/views/image/index.js?v=20260829-voice-modes-11';
-import { createPdfView } from './src/views/pdf/index.js?v=20260831-pdfjs-9';
-import { createInfoView } from './src/views/info/index.js?v=20260831-pdfjs-1';
+import { createPdfView } from './src/views/pdf/index.js?v=20260902-credits-33';
+import { createInfoView } from './src/views/info/index.js?v=20260902-credits-1';
 import { createSettingsView } from './src/views/settings/index.js?v=20260829-voice-modes-11';
-import { createAccountView } from './src/views/account/index.js?v=20260829-voice-modes-11';
+import { createAccountView } from './src/views/account/index.js?v=20260902-credits-28';
 import { initDesktopAppearance } from './src/shared/appearance.js?v=20260829-voice-modes-11';
-import { getInfoCategory } from '../shared/info/index.js?v=20260831-pdfjs-1';
+import { getInfoCategory } from '../shared/info/index.js?v=20260902-credits-1';
 
 const STORAGE_KEY = 'omni-translate.desktop.shell';
 
@@ -55,7 +62,7 @@ const VIEW_FACTORIES = {
   voice: () => getVoiceWorkflow().view,
   text: createTextView,
   image: createImageView,
-  pdf: createPdfView,
+  pdf: () => createPdfView({ onViewPlans: navigateToAccount }),
   info: () => createInfoView({
     onNavigate: navigateInfoCategory,
     topicHref: (categoryId) => routeUrl(`info/${encodeURIComponent(categoryId)}`),
@@ -76,6 +83,8 @@ const sidebar = byId('sidebar');
 const sidebarToggle = byId('sidebarToggle');
 const sidebarToggleIcon = byId('sidebarToggleIcon');
 const navList = byId('navList');
+const sidebarCredits = byId('sidebarCredits');
+const auxNavList = byId('auxNavList');
 const accountNavList = byId('accountNavList');
 const presetStylesheet = byId('presetStylesheet');
 
@@ -87,6 +96,8 @@ registerImageSignOutCancellation({
   cancelRequest: cancelImage,
   onBeforeSignOut,
 });
+
+let sidebarAuthState = { signedIn: false, email: '', userId: '' };
 
 const initialShell = window.__OMNI_DESKTOP_INITIAL_SHELL__ || {};
 
@@ -121,11 +132,10 @@ function renderNav() {
   };
 
   const mainMarkup = NAV_ITEMS.map((item) => itemMarkup(item)).join('');
-  const auxiliaryMarkup = AUX_ITEMS
-    .map((item, index) => itemMarkup(item, index === 0 ? 'sidebar-route-bottom' : ''))
-    .join('');
+  const auxiliaryMarkup = AUX_ITEMS.map((item) => itemMarkup(item)).join('');
 
-  navList.innerHTML = `${mainMarkup}${auxiliaryMarkup}`;
+  navList.innerHTML = mainMarkup;
+  auxNavList.innerHTML = auxiliaryMarkup;
   accountNavList.innerHTML = `
     <li data-route="account" data-tooltip="Account" hidden>
       <a data-nav-route="account" href="${routeUrl('account')}">
@@ -134,23 +144,64 @@ function renderNav() {
       </a>
     </li>
   `;
+  updateSidebarAccount(sidebarAuthState);
 }
 
 function updateSidebarAccount(authState) {
+  sidebarAuthState = authState || sidebarAuthState;
   const item = accountNavList.querySelector('[data-route="account"]');
   const avatar = item?.querySelector('[data-sidebar-account-avatar]');
   if (!item || !avatar) return;
   item.hidden = false;
-  if (authState?.signedIn) {
+  if (sidebarAuthState.signedIn) {
     const initials = document.createElement('span');
     initials.className = 'sidebar-account-initials';
-    initials.textContent = accountInitials(authState.email);
+    initials.textContent = accountInitials(sidebarAuthState.email);
     avatar.replaceChildren(initials);
     avatar.classList.add('has-initials');
   } else {
     avatar.innerHTML = iconMarkup('user');
     avatar.classList.remove('has-initials');
   }
+}
+
+function updateSidebarCredits(creditState) {
+  sidebarCredits.hidden = !creditState.configured;
+  if (!creditState.configured) {
+    sidebarCredits.replaceChildren();
+    return;
+  }
+
+  sidebarCredits.innerHTML = `
+    <section class="sidebar-credit-card" aria-label="Credit balance">
+      <div class="sidebar-credit-heading">
+        <strong data-credit-plan>Credits</strong>
+        <a data-nav-route="account" href="${routeUrl('account')}">Plan details</a>
+      </div>
+      <p class="sidebar-credit-balance" data-credit-balance></p>
+      <div class="sidebar-credit-track" role="progressbar" aria-label="Credits available">
+        <span data-credit-track-fill></span>
+      </div>
+    </section>
+  `;
+
+  const credits = creditState.credits;
+  const balance = sidebarCredits.querySelector('[data-credit-balance]');
+  const track = sidebarCredits.querySelector('.sidebar-credit-track');
+  const fill = sidebarCredits.querySelector('[data-credit-track-fill]');
+  if (!credits) {
+    balance.textContent = creditState.error ? 'Credits unavailable' : 'Loading credits…';
+    track.hidden = true;
+    return;
+  }
+
+  sidebarCredits.querySelector('[data-credit-plan]').textContent = creditPlanLabel(credits.plan);
+  balance.textContent = `${formatCreditCount(credits.available)} of ${formatCreditCount(credits.grant)} credits available`;
+  const ratio = credits.grant > 0 ? Math.min(1, credits.available / credits.grant) : 0;
+  fill.style.width = `${ratio * 100}%`;
+  track.setAttribute('aria-valuemin', '0');
+  track.setAttribute('aria-valuemax', String(credits.grant));
+  track.setAttribute('aria-valuenow', String(credits.available));
 }
 
 const router = new RouterCore(appRoot, {
@@ -265,6 +316,10 @@ function navigateInfoCategory(categoryId) {
   router.navigate('info', category ? { categoryId: category.id } : null, { url: routeUrl(route) });
 }
 
+function navigateToAccount() {
+  router.navigate('account', null, { url: routeUrl('account') });
+}
+
 function navigateFromNavList(event) {
   const item = event.target.closest('[data-nav-route]');
   if (!item) return;
@@ -276,8 +331,17 @@ function navigateFromNavList(event) {
 }
 
 navList.addEventListener('click', navigateFromNavList);
+auxNavList.addEventListener('click', navigateFromNavList);
 accountNavList.addEventListener('click', navigateFromNavList);
-onAuthChange(updateSidebarAccount);
+sidebarCredits.addEventListener('click', navigateFromNavList);
+subscribeDesktopCreditState(updateSidebarCredits);
+onAuthChange((authState) => {
+  setDesktopCreditOwner(authState?.signedIn && authState.userId
+    ? `user:${String(authState.userId)}`
+    : 'anonymous');
+  updateSidebarAccount(authState);
+  refreshDesktopCredits().catch(() => {});
+});
 
 function init() {
   initDesktopAppearance(presetStylesheet);
@@ -293,7 +357,12 @@ function init() {
   // headers settle as early as possible. First paint does not wait on the
   // CDN-loaded SDK.
   getConfig()
-    .then((config) => initAuth(config?.auth || {}))
+    .then(async (config) => {
+      configureDesktopCredits(config?.credits || {});
+      updateSidebarAccount(sidebarAuthState);
+      await initAuth(config?.auth || {});
+      await refreshDesktopCredits();
+    })
     .catch(() => {});
 
   // Voice is the app's main flow: land there when the hash is empty or unknown.

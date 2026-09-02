@@ -105,6 +105,29 @@ CREATE TABLE IF NOT EXISTS quota_operations (
 );
 CREATE INDEX IF NOT EXISTS idx_quota_operations_reconciliation
     ON quota_operations (tenant, operation_kind, state, created_at);
+-- Product-neutral durable record for a fixed compute-price quote. The app
+-- calculates prices; this table only binds the result to an owner and payload.
+CREATE TABLE IF NOT EXISTS credit_quotes (
+    tenant TEXT NOT NULL,
+    id TEXT PRIMARY KEY,
+    owner_kind TEXT NOT NULL,
+    owner_id TEXT NOT NULL,
+    action TEXT NOT NULL,
+    payload_hash TEXT NOT NULL,
+    pricing_inputs TEXT NOT NULL,
+    cost_policy_version TEXT NOT NULL,
+    basis TEXT NOT NULL,
+    basis_quantity INTEGER NOT NULL CHECK (basis_quantity >= 0),
+    quoted_credits INTEGER NOT NULL CHECK (quoted_credits >= 0),
+    expires_at TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('open', 'confirmed', 'expired')),
+    operation_id TEXT,
+    reservation_id TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_credit_quotes_owner
+    ON credit_quotes (tenant, owner_kind, owner_id, created_at);
 """
 
 
@@ -432,6 +455,90 @@ class SaasStore:
                     str(operation_kind),
                     str(operation_id),
                 ),
+            )
+
+    # -- binding compute-price quotes ----------------------------------------
+
+    def insert_credit_quote(
+        self,
+        *,
+        tenant: str,
+        quote_id: uuid.UUID,
+        owner_kind: str,
+        owner_id: uuid.UUID,
+        action: str,
+        payload_hash: str,
+        pricing_inputs: dict[str, Any],
+        cost_policy_version: str,
+        basis: str,
+        basis_quantity: int,
+        quoted_credits: int,
+        expires_at: str,
+    ) -> None:
+        now = _utcnow()
+        with self.transaction() as conn:
+            conn.execute(
+                "INSERT INTO credit_quotes"
+                " (tenant, id, owner_kind, owner_id, action, payload_hash, pricing_inputs,"
+                " cost_policy_version, basis, basis_quantity, quoted_credits, expires_at,"
+                " state, created_at, updated_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?)",
+                (
+                    tenant,
+                    str(quote_id),
+                    owner_kind,
+                    str(owner_id),
+                    str(action),
+                    str(payload_hash),
+                    json.dumps(pricing_inputs, sort_keys=True, separators=(",", ":")),
+                    str(cost_policy_version),
+                    str(basis),
+                    int(basis_quantity),
+                    int(quoted_credits),
+                    str(expires_at),
+                    now,
+                    now,
+                ),
+            )
+
+    def get_credit_quote(self, quote_id: uuid.UUID) -> sqlite3.Row | None:
+        with self.transaction() as conn:
+            return conn.execute(
+                "SELECT * FROM credit_quotes WHERE id = ?", (str(quote_id),)
+            ).fetchone()
+
+    def get_credit_quote_by_operation(
+        self,
+        tenant: str,
+        operation_id: str,
+    ) -> sqlite3.Row | None:
+        with self.transaction() as conn:
+            return conn.execute(
+                "SELECT * FROM credit_quotes WHERE tenant = ? AND operation_id = ?"
+                " ORDER BY created_at DESC LIMIT 1",
+                (tenant, str(operation_id)),
+            ).fetchone()
+
+    def confirm_credit_quote(
+        self,
+        quote_id: uuid.UUID,
+        *,
+        operation_id: str,
+        reservation_id: uuid.UUID,
+    ) -> None:
+        with self.transaction() as conn:
+            conn.execute(
+                "UPDATE credit_quotes SET state = 'confirmed', operation_id = ?,"
+                " reservation_id = ?, updated_at = ? WHERE id = ? AND state = 'open'",
+                (str(operation_id), str(reservation_id), _utcnow(), str(quote_id)),
+            )
+
+    def expire_credit_quote(self, quote_id: uuid.UUID) -> None:
+        with self.transaction() as conn:
+            conn.execute(
+                "UPDATE credit_quotes SET state = 'expired', updated_at = ?"
+                " WHERE id = ? AND state = 'open'",
+                (_utcnow(), str(quote_id)),
             )
 
     # -- usage ledger -----------------------------------------------------------

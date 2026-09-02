@@ -6,9 +6,12 @@ import {
   pdfCanvasOutputScale,
   pdfFitPageScale,
   pdfFitWidthScale,
+  pdfDestinationPageNumber,
+  pdfExternalLinkUrl,
+  pdfLinkBounds,
   pdfPageInViewport,
   pdfScaleFromPercentage,
-} from '../../static/desktop/src/views/pdf/viewer/index.js?v=20260831-pdfjs-9';
+} from '../../static/desktop/src/views/pdf/viewer/index.js?v=20260901-pdfjs-14';
 
 
 test('PDF viewer scale stays inside its supported zoom range', () => {
@@ -61,4 +64,37 @@ test('PDF current page follows the page occupying most of the viewport', () => {
   assert.equal(pdfPageInViewport(pages, 400, 500), 2);
   assert.equal(pdfPageInViewport(pages, 1250, 500), 3);
   assert.equal(pdfPageInViewport([], 0, 500), 1);
+});
+
+
+test('PDF link rectangles are normalized after viewport conversion', () => {
+  const viewport = {
+    convertToViewportPoint: (x, y) => x === 1 && y === 2 ? [80, 90] : [20, 30],
+  };
+  assert.deepEqual(pdfLinkBounds([1, 2, 3, 4], viewport), {
+    left: 20,
+    top: 30,
+    width: 60,
+    height: 60,
+  });
+});
+
+
+test('PDF external links allow common web protocols and reject script URLs', () => {
+  assert.equal(pdfExternalLinkUrl('https://example.com/docs'), 'https://example.com/docs');
+  assert.equal(pdfExternalLinkUrl('mailto:hello@example.com'), 'mailto:hello@example.com');
+  assert.equal(pdfExternalLinkUrl('javascript:alert(1)'), '');
+  assert.equal(pdfExternalLinkUrl('data:text/html,hello'), '');
+});
+
+
+test('PDF destinations resolve named, indexed, and referenced pages', async () => {
+  const reference = { num: 12, gen: 0 };
+  const documentProxy = {
+    getDestination: async (name) => name === 'chapter' ? [reference, { name: 'Fit' }] : null,
+    getPageIndex: async (value) => value === reference ? 3 : -1,
+  };
+  assert.equal(await pdfDestinationPageNumber(documentProxy, [1, { name: 'Fit' }]), 2);
+  assert.equal(await pdfDestinationPageNumber(documentProxy, 'chapter'), 4);
+  assert.equal(await pdfDestinationPageNumber(documentProxy, 'missing'), null);
 });

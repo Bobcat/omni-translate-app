@@ -2,7 +2,7 @@ import {
   getInfoCategory,
   renderInfoArticle,
   renderInfoOverview,
-} from '../../../../shared/info/index.js?v=20260831-pdfjs-1';
+} from '../../../../shared/info/index.js?v=20260902-credits-1';
 
 export function createInfoView({ onNavigate = null, topicHref = null, overviewHref = '' } = {}) {
   const container = document.createElement('div');

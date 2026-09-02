@@ -1,6 +1,6 @@
 import { iconMarkup } from '../../shared/icons.js';
 import { populateLanguageSelect, recordLanguageMru } from '../../shared/languages.js';
-import { translateText } from '../../shared/api.js?v=20260829-voice-modes-11';
+import { translateText } from '../../shared/api.js?v=20260902-credits-23';
 import { publishViewBusy } from '../../shared/view-activity.js?v=20260829-voice-modes-11';
 import { guessSetupLanguages } from '../../../../src/domain/languages.js';
 import { loadSetupLanguages, persistSetupLanguages } from '../../../../src/domain/storage.js?v=20260829-voice-modes-11';

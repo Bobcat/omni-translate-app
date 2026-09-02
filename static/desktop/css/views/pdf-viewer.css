@@ -1,7 +1,3 @@
-.pdf-view .result-frame {
-  overflow: hidden;
-}
-
 .pdf-document-viewer {
   display: flex;
   flex: 1;
@@ -181,7 +177,7 @@
   overflow: auto;
   scrollbar-gutter: stable;
   padding: 18px;
-  background: var(--surface-muted);
+  background: var(--bg);
   overscroll-behavior: contain;
 }
 
@@ -212,9 +208,32 @@
   background: #fff;
 }
 
+.pdf-viewer-link-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.pdf-viewer-link {
+  position: absolute;
+  display: block;
+  background: transparent;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.pdf-viewer-link:focus-visible {
+  border-radius: 2px;
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+  background: var(--action-primary-soft);
+}
+
 .pdf-viewer-page-error {
   position: absolute;
   inset: 0;
+  z-index: 2;
   display: grid;
   place-items: center;
   padding: 24px;

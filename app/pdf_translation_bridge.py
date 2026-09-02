@@ -34,58 +34,62 @@ class PdfTranslationError(RuntimeError):
         self.status_code = status_code
 
 
-def submit_pdf(
+def prepare_pdf(
     *,
     document_bytes: bytes,
     filename: str,
     content_type: str,
-    target_language: str,
     operation_id: str,
     render_options: Mapping[str, Any],
 ) -> dict:
-    """Submit ``document_bytes`` for translation and return the lifecycle envelope.
-
-    ``target_language`` is a language name or ISO code; it is normalised to the
-    ISO code the service expects. The source is auto-detected downstream
-    (fixed ``auto``). Raises ``PdfTranslationError`` on invalid input (status
-    400) or a service failure (status 502).
-    """
-    try:
-        target_code = translation_language_code(target_language)
-    except ValueError as exc:
-        raise PdfTranslationError(str(exc), status_code=400) from exc
-    if not target_code:
-        raise PdfTranslationError("target language is required", status_code=400)
+    """Upload once and stop after authoritative PDF source measurement."""
     request_json = json.dumps(
         {
             "request_id": str(operation_id),
             "task": "translate_pdf",
             "priority": "normal",
             "source_lang_code": "auto",
-            "target_lang_code": target_code,
+            "quota_authorization_required": True,
             **dict(render_options),
         }
     )
-    return _submit_multipart(request_json, document_bytes, filename or "document.pdf", content_type or "application/pdf")
+    return _submit_multipart(
+        request_json,
+        document_bytes,
+        filename or "document.pdf",
+        content_type or "application/pdf",
+    )
 
 
-def rerender_pdf_request(
-    source_request_id: str,
+def authorize_pdf_request(
+    request_id: str,
     *,
-    operation_id: str,
-    render_options: Mapping[str, Any],
+    counting_version: str,
+    source_character_count: int,
+    target_language: str,
 ) -> dict:
-    """Rerender one owned completed PDF from its cached translations."""
-    safe_id = quote(str(source_request_id or "").strip(), safe="")
+    """Authorize one measured PDF and lock the selected target language."""
+    safe_id = quote(str(request_id or "").strip(), safe="")
     if not safe_id:
-        raise PdfTranslationError("source request_id is required", status_code=400)
-    payload = {"request_id": str(operation_id), **dict(render_options)}
+        raise PdfTranslationError("request_id is required", status_code=400)
+    try:
+        target_code = translation_language_code(target_language)
+    except ValueError as exc:
+        raise PdfTranslationError(str(exc), status_code=400) from exc
+    if not target_code:
+        raise PdfTranslationError("target language is required", status_code=400)
     return _read_json(
         "POST",
-        f"{_base_url()}/v1/requests/{safe_id}/rerender",
-        content=json.dumps(payload).encode("utf-8"),
+        f"{_base_url()}/v1/requests/{safe_id}/authorize",
+        content=json.dumps(
+            {
+                "source_character_counting_version": str(counting_version),
+                "source_character_count": int(source_character_count),
+                "target_lang_code": target_code,
+            }
+        ).encode("utf-8"),
         headers={"Content-Type": "application/json", "Accept": "application/json"},
-        timeout=_submit_timeout_s(),
+        timeout=_short_timeout_s(),
     )
 
 

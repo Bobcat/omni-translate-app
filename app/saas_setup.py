@@ -20,13 +20,15 @@ from pathlib import Path
 from fastapi import APIRouter, Request
 
 from app.config import REPO_ROOT, get_setting, get_str, optional_str
+from app.credits.policy import CreditCostPolicy
+from app.credits.quotes import CreditQuoteService
 from saas.entitlements import EntitlementService, EntitlementSet
 from saas.fastapi_glue import (
     create_saas_router,
     resolve_request_principal,
     stage_identity_cookie,
 )
-from saas.principals import Principal, generate_secret
+from saas.principals import Principal, generate_secret, sign_identity
 from saas.storage import SaasStore
 from saas.tokens import ExternalTokenVerifier
 from saas.usage import QuotaService
@@ -41,6 +43,8 @@ class SaasContext:
     tenant: str
     token_verifier: ExternalTokenVerifier | None
     user_plan: str
+    credit_policy: CreditCostPolicy | None = None
+    credit_quote_service: CreditQuoteService | None = None
 
 
 _context: SaasContext | None = None
@@ -73,14 +77,24 @@ def _build_context() -> SaasContext:
     signing_secret = optional_str("saas.signing_secret") or _load_or_create_signing_secret(
         REPO_ROOT / get_str("saas.signing_secret_path", "data/saas-signing.key")
     )
+    quota_service = QuotaService(store)
+    credit_policy = CreditCostPolicy.from_config(
+        config=dict(get_setting("saas.credit_costs", {}) or {}),
+    )
     return SaasContext(
         store=store,
         entitlement_service=EntitlementService(plans, plan_assignments),
-        quota_service=QuotaService(store),
+        quota_service=quota_service,
         signing_secret=signing_secret,
         tenant=tenant,
         token_verifier=_build_token_verifier(),
         user_plan=get_str("saas.auth.user_plan", "free"),
+        credit_policy=credit_policy,
+        credit_quote_service=CreditQuoteService(
+            store=store,
+            quota_service=quota_service,
+            policy=credit_policy,
+        ),
     )
 
 
@@ -164,6 +178,13 @@ def resolve_request_entitlements(request: Request) -> tuple[EntitlementSet, str 
     principal itself (e.g. a per-job ceiling without quota accounting)."""
     _, entitlements, token = resolve_request_context(request)
     return entitlements, token
+
+
+def stage_fresh_anonymous_identity(request: Request) -> None:
+    """Replace the browser's anonymous identity on the final response."""
+    ctx = get_saas_context()
+    identity_id = ctx.store.create_identity(ctx.tenant)
+    stage_identity_cookie(request, sign_identity(identity_id, ctx.signing_secret))
 
 
 def tts_fairness_key_for_principal(principal: Principal) -> str:

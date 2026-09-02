@@ -111,10 +111,6 @@ body {
   padding: 0;
 }
 
-.nav-links li.sidebar-route-bottom {
-  margin-top: auto;
-}
-
 /* A view with work in flight marks its sidebar icon (view-busy event). */
 .nav-links li.is-running .sidebar-icon {
   color: var(--accent);
@@ -175,6 +171,74 @@ body {
 
 .sidebar:not(.expanded) .sidebar-account-avatar {
   margin-right: 0;
+}
+
+.sidebar-credit-slot {
+  flex: none;
+  margin-top: 12px;
+}
+
+.sidebar-aux-nav {
+  flex: none;
+  margin-top: 8px;
+  overflow: visible;
+}
+
+.sidebar-credit-card {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+}
+
+.sidebar-credit-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.78rem;
+}
+
+.sidebar-credit-heading strong {
+  overflow: hidden;
+  color: var(--text-strong);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-credit-heading a {
+  flex: none;
+  color: var(--accent-strong);
+  text-decoration: none;
+}
+
+.sidebar-credit-heading a:hover {
+  text-decoration: underline;
+}
+
+.sidebar-credit-balance {
+  margin: 8px 0;
+  color: var(--text-muted);
+  font-size: 0.74rem;
+  line-height: 1.35;
+}
+
+.sidebar-credit-track {
+  height: 3px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--surface-muted);
+}
+
+.sidebar-credit-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+}
+
+.sidebar:not(.expanded) .sidebar-credit-slot {
+  display: none;
 }
 
 /* === Views (shared) === */
@@ -1296,6 +1360,273 @@ body {
   font-weight: 600;
 }
 
+.account-view {
+  max-width: 840px;
+}
+
+.account-credit-details {
+  margin: 0;
+  display: grid;
+  gap: 0;
+}
+
+.account-credit-row {
+  min-height: 42px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 24px;
+  border-top: 1px solid var(--border-subtle);
+  font-size: 0.87rem;
+}
+
+.account-credit-row:first-child {
+  border-top: 0;
+}
+
+.account-credit-row dt {
+  color: var(--text-muted);
+}
+
+.account-credit-row dd {
+  margin: 0;
+  color: var(--text-strong);
+  font-weight: 500;
+  text-align: right;
+}
+
+.account-identity {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.account-identity-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  color: var(--text-muted);
+  font-size: 0.76rem;
+}
+
+.account-identity-email {
+  color: var(--text-strong);
+  font-size: 0.9rem;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.account-identity-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.account-identity-actions .link-btn {
+  margin-right: -8px;
+}
+
+.account-credit-status {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.87rem;
+}
+
+.account-plans-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.account-plans-header p {
+  margin: 5px 0 0;
+  color: var(--text-muted);
+  font-size: 0.84rem;
+}
+
+.account-credit-help {
+  flex: none;
+  margin: -4px -8px 0 0;
+}
+
+.account-plan-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.account-plan-card {
+  min-width: 0;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-soft);
+}
+
+.account-plan-card.is-current {
+  border-color: var(--border-control-hover);
+  background: var(--panel);
+}
+
+.account-plan-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.account-plan-heading h4 {
+  margin: 0;
+  color: var(--text-strong);
+  font-size: 1.08rem;
+  font-weight: 600;
+}
+
+.account-plan-badge {
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--surface-muted);
+  color: var(--text-muted);
+  font-size: 0.68rem;
+  font-weight: 600;
+}
+
+.account-plan-price {
+  min-height: 70px;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.account-plan-price strong {
+  color: var(--text-strong);
+  font-size: 2rem;
+  font-weight: 550;
+  letter-spacing: -0.04em;
+}
+
+.account-plan-price span {
+  color: var(--text-muted);
+  font-size: 0.76rem;
+}
+
+.account-plan-action {
+  min-height: 40px;
+  display: grid;
+  place-items: center;
+  border-radius: 9px;
+  background: var(--surface-muted);
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-align: center;
+}
+
+.account-plan-card .google-signin-holder {
+  width: 100%;
+  max-width: 280px;
+  margin-inline: auto;
+  background: transparent;
+}
+
+.account-plan-features {
+  margin: 18px 0 0;
+  padding: 16px 0 0;
+  border-top: 1px solid var(--border-subtle);
+  list-style: none;
+}
+
+.account-plan-features li {
+  position: relative;
+  margin-top: 9px;
+  padding-left: 20px;
+  color: var(--text-color);
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+.account-plan-features li:first-child {
+  margin-top: 0;
+}
+
+.account-plan-features li::before {
+  position: absolute;
+  left: 1px;
+  content: '✓';
+  color: var(--text-subtle);
+}
+
+.account-credit-dialog {
+  width: min(520px, calc(100vw - 32px));
+  padding: 0;
+  border: 1px solid var(--border-control);
+  border-radius: 14px;
+  background: var(--panel);
+  color: var(--text-color);
+  box-shadow: var(--shadow-tooltip);
+}
+
+.account-credit-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.36);
+}
+
+.account-credit-dialog form {
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.account-credit-dialog h2,
+.account-credit-dialog p,
+.account-credit-dialog ul {
+  margin: 0;
+}
+
+.account-credit-dialog h2 {
+  color: var(--text-strong);
+  font-size: 1.2rem;
+}
+
+.account-credit-dialog p,
+.account-credit-dialog li {
+  font-size: 0.87rem;
+  line-height: 1.5;
+}
+
+.account-credit-dialog ul {
+  padding-left: 20px;
+}
+
+.account-credit-dialog li + li {
+  margin-top: 8px;
+}
+
+.account-dialog-close {
+  min-height: 38px;
+  align-self: flex-end;
+  padding: 8px 18px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--action-primary);
+  color: var(--text-inverse);
+  font: inherit;
+  font-size: 0.86rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.account-dialog-close:hover {
+  background: var(--action-primary-hover);
+}
+
 .appearance-setting {
   width: 100%;
   max-width: calc(var(--settings-label-width) + var(--settings-column-gap) + var(--settings-control-width));
@@ -1590,29 +1921,6 @@ body {
   }
 }
 
-/* === Sign-in card (Account view) ===
-   Heading, one-line reason and Google-rendered sign-in button. */
-
-.signin-card {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 12px;
-  text-align: center;
-}
-
-.signin-card-title {
-  margin: 0;
-  font-size: 0.95rem;
-  font-weight: 600;
-}
-
-.signin-card-reason {
-  margin: 0;
-  color: var(--muted);
-  font-size: 0.85rem;
-}
-
 .google-signin-holder {
   display: flex;
   align-items: center;
@@ -1628,160 +1936,6 @@ body {
   flex: 0 0 auto;
 }
 
-/* Plan page balance and preview scope above the dropzone. */
-.usage-line {
-  color: var(--muted);
-  font-size: 0.78rem;
-}
-
-.pdf-admission-loading {
-  display: grid;
-  min-height: 220px;
-  place-items: center;
-  color: var(--muted);
-  font-size: 0.9rem;
-}
-
-.pdf-quota-cta {
-  width: min(100%, 720px);
-  margin: 8px auto 24px;
-}
-
-.pdf-quota-cta-header {
-  margin-bottom: 24px;
-  text-align: center;
-}
-
-.pdf-quota-cta-header h2 {
-  margin: 0;
-  color: var(--text-strong);
-  font-size: clamp(1.5rem, 3vw, 2rem);
-  font-weight: 600;
-  letter-spacing: -0.025em;
-}
-
-.pdf-quota-cta-header p {
-  margin: 8px 0 0;
-  color: var(--muted);
-  font-size: 0.95rem;
-}
-
-.pdf-plan-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
-}
-
-.pdf-plan-card {
-  min-height: 360px;
-  padding: 24px;
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  background: var(--panel);
-  box-shadow: var(--shadow-soft);
-}
-
-.pdf-plan-card.is-featured {
-  border-color: var(--border-control-hover);
-}
-
-.pdf-plan-heading {
-  min-height: 32px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.pdf-plan-heading h3 {
-  margin: 0;
-  color: var(--text-strong);
-  font-size: 1.25rem;
-  font-weight: 600;
-}
-
-.pdf-plan-badge {
-  padding: 4px 9px;
-  border-radius: 999px;
-  background: var(--surface-muted);
-  color: var(--muted);
-  font-size: 0.72rem;
-  font-weight: 600;
-}
-
-.pdf-plan-price {
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
-  margin: 30px 0 20px;
-}
-
-.pdf-plan-price strong {
-  color: var(--text-strong);
-  font-size: 2.65rem;
-  font-weight: 500;
-  letter-spacing: -0.045em;
-}
-
-.pdf-plan-price span {
-  color: var(--muted);
-  font-size: 0.82rem;
-}
-
-.pdf-plan-current {
-  display: flex;
-  height: 40px;
-  align-items: center;
-  justify-content: center;
-  border-radius: 999px;
-  background: var(--surface-muted);
-  color: var(--muted);
-  font-size: 0.86rem;
-  font-weight: 600;
-}
-
-.pdf-plan-card .google-signin-holder {
-  width: 100%;
-  max-width: 280px;
-  margin-inline: auto;
-}
-
-.pdf-plan-unavailable {
-  display: grid;
-  height: 40px;
-  margin: 0;
-  place-items: center;
-  color: var(--muted);
-  font-size: 0.82rem;
-}
-
-.pdf-plan-features {
-  margin: 24px 0 0;
-  padding: 22px 0 0;
-  border-top: 1px solid var(--border);
-  list-style: none;
-}
-
-.pdf-plan-features li {
-  position: relative;
-  margin-top: 13px;
-  padding-left: 25px;
-  color: var(--text-color);
-  font-size: 0.88rem;
-  line-height: 1.4;
-}
-
-.pdf-plan-features li:first-child {
-  margin-top: 0;
-}
-
-.pdf-plan-features li::before {
-  position: absolute;
-  left: 2px;
-  content: '✓';
-  color: var(--text-subtle);
-}
-
 @media (max-width: 720px) {
   .view {
     padding: 16px;
@@ -1791,17 +1945,8 @@ body {
   .text-panes,
   .dropzone-card,
   .result-grid,
-  .pdf-plan-grid {
+  .account-plan-grid {
     grid-template-columns: minmax(0, 1fr);
-  }
-
-  .pdf-quota-cta {
-    width: min(100%, 360px);
-    margin-top: 0;
-  }
-
-  .pdf-plan-card {
-    min-height: 0;
   }
 
   .voice-panes,
