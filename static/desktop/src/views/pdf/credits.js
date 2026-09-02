@@ -53,6 +53,13 @@ export function createPdfCreditsView({ onViewPlans }) {
         <strong data-role="document-name">PDF translation</strong>
       </div>
       <div class="toolbar-actions">
+        <label class="field switch-field" data-role="show-original-field" hidden>
+          <span>Show original</span>
+          <span class="switch">
+            <input type="checkbox" data-role="show-original" role="switch" checked>
+            <span class="switch-slider" aria-hidden="true"></span>
+          </span>
+        </label>
         <a class="icon-square-btn" data-role="download" title="Download translated PDF" aria-label="Download translated PDF" hidden>${iconMarkup('download')}</a>
         <button type="button" class="icon-square-btn" data-role="reset" title="Choose another PDF" aria-label="Choose another PDF" hidden>${iconMarkup('x')}</button>
       </div>
@@ -66,10 +73,7 @@ export function createPdfCreditsView({ onViewPlans }) {
           <button type="button" class="browse-btn" data-role="browse">Browse your files</button>
         </section>
         <section class="pdf-credit-setup-side" aria-label="Translation setup">
-          <div>
-            <p class="pdf-credit-eyebrow">Translation</p>
-            <h2>Translate this PDF</h2>
-          </div>
+          <h2>Translate PDF</h2>
           <div data-role="setup-target-mount">
             <label class="pdf-credit-target-field" data-role="target-field">
               <span>Target language</span>
@@ -115,10 +119,7 @@ export function createPdfCreditsView({ onViewPlans }) {
             <p>Reading the document and counting the source text.</p>
           </div>
           <div class="pdf-credit-config" data-role="config" hidden>
-            <div>
-              <p class="pdf-credit-eyebrow">Translation</p>
-              <h2>Translate this PDF</h2>
-            </div>
+            <h2>Translate PDF</h2>
             <div data-role="config-target-mount"></div>
             <div class="pdf-credit-scope" data-role="scope"></div>
             <div class="pdf-credit-use-card">
@@ -185,6 +186,8 @@ export function createPdfCreditsView({ onViewPlans }) {
   const browseBtn = find('browse');
   const fileInput = find('file');
   const resetBtn = find('reset');
+  const showOriginalField = find('show-original-field');
+  const showOriginalToggle = find('show-original');
   const downloadLink = find('download');
   const viewPlansButton = find('view-plans');
   const setupViewPlansButton = find('setup-view-plans');
@@ -218,6 +221,7 @@ export function createPdfCreditsView({ onViewPlans }) {
   let pollTimer = 0;
   let runToken = 0;
   let quoteToken = 0;
+  let showOriginalPreference = showOriginalToggle.checked;
   let storage = null;
   try { storage = window.localStorage; } catch {}
 
@@ -273,6 +277,7 @@ export function createPdfCreditsView({ onViewPlans }) {
   }
 
   function showSourcePlaceholder() {
+    setOriginalAvailable(false);
     originalViewer.element.hidden = true;
     find('source-placeholder').hidden = false;
     find('source-name').textContent = sourceFileName || 'Source PDF';
@@ -282,6 +287,17 @@ export function createPdfCreditsView({ onViewPlans }) {
     find('source-placeholder').hidden = true;
     originalViewer.element.hidden = false;
     originalViewer.load(file);
+    setOriginalAvailable(true);
+  }
+
+  function applyOriginalVisibility() {
+    stage.classList.toggle('is-single', !showOriginalToggle.checked);
+  }
+
+  function setOriginalAvailable(available) {
+    showOriginalField.hidden = !available;
+    showOriginalToggle.checked = available && showOriginalPreference;
+    applyOriginalVisibility();
   }
 
   async function restoreSource(token, envelope) {
@@ -595,6 +611,7 @@ export function createPdfCreditsView({ onViewPlans }) {
     scope = null;
     originalViewer.clear();
     translatedViewer.clear();
+    setOriginalAvailable(false);
     if (translatedUrl) URL.revokeObjectURL(translatedUrl);
     translatedUrl = '';
     downloadLink.hidden = true;
@@ -657,6 +674,10 @@ export function createPdfCreditsView({ onViewPlans }) {
     recordLanguageMru(targetSelect.value);
     populateLanguageSelect(targetSelect, targetSelect.value);
     if (requestState === 'awaiting_quota') refreshQuote();
+  });
+  showOriginalToggle.addEventListener('change', () => {
+    showOriginalPreference = showOriginalToggle.checked;
+    applyOriginalVisibility();
   });
   find('translate').addEventListener('click', openConfirmDialog);
   viewPlansButton.addEventListener('click', onViewPlans);

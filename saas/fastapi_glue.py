@@ -9,10 +9,12 @@ otherwise the signed anonymous-cookie path applies.
 """
 from __future__ import annotations
 
+import json
 import math
+from datetime import datetime, timezone
 from typing import Any, Mapping
 
-from fastapi import APIRouter, Request, Response
+from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 
 from saas.entitlements import EntitlementService
@@ -273,5 +275,51 @@ def create_saas_router(
                 "period_end": summary.period_end,
             }
         }
+
+    @router.get("/credits/activity")
+    def get_credit_activity_endpoint(
+        request: Request,
+        from_at: datetime | None = None,
+        to_before: datetime | None = None,
+    ) -> dict[str, Any]:
+        principal = resolve_principal(request)
+        if from_at is not None and from_at.tzinfo is None:
+            raise HTTPException(status_code=422, detail="from_at must include a timezone")
+        if to_before is not None and to_before.tzinfo is None:
+            raise HTTPException(status_code=422, detail="to_before must include a timezone")
+        if from_at is not None and to_before is not None and from_at >= to_before:
+            raise HTTPException(status_code=422, detail="from_at must precede to_before")
+        rows = store.list_owner_usage_events(
+            principal.tenant,
+            principal.kind,
+            principal.id,
+            metric=credit_metric,
+            updated_from=(
+                from_at.astimezone(timezone.utc).isoformat() if from_at is not None else None
+            ),
+            updated_before=(
+                to_before.astimezone(timezone.utc).isoformat() if to_before is not None else None
+            ),
+            limit=20,
+        )
+        activity = []
+        for row in rows:
+            state = str(row["state"])
+            if state not in {"reserved", "consumed", "released"}:
+                continue
+            try:
+                metadata = json.loads(str(row["metadata"] or "{}"))
+            except (TypeError, ValueError):
+                metadata = {}
+            action = str(metadata.get("action") or "work") if isinstance(metadata, dict) else "work"
+            activity.append(
+                {
+                    "action": action,
+                    "credits": int(row["quantity"]),
+                    "state": state,
+                    "occurred_at": str(row["updated_at"]),
+                }
+            )
+        return {"activity": activity}
 
     return router

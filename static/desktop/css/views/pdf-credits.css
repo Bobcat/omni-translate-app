@@ -164,6 +164,15 @@
   background: var(--surface);
 }
 
+.pdf-credit-grid.is-single {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.pdf-credit-grid.is-single .pdf-credit-source,
+.pdf-credit-grid.is-single .pdf-credit-divider {
+  display: none;
+}
+
 .pdf-credit-source,
 .pdf-credit-side {
   display: flex;
@@ -294,15 +303,6 @@
   flex-direction: column;
   gap: 24px;
   padding: clamp(24px, 4vw, 42px);
-}
-
-.pdf-credit-eyebrow {
-  margin: 0 0 5px;
-  color: var(--text-subtle);
-  font-size: 0.72rem;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
 }
 
 .pdf-credit-target-field {

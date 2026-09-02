@@ -600,6 +600,42 @@ class SaasStore:
                 ).fetchall()
             )
 
+    def list_owner_usage_events(
+        self,
+        tenant: str,
+        owner_kind: str,
+        owner_id: uuid.UUID,
+        *,
+        metric: str,
+        updated_from: str | None = None,
+        updated_before: str | None = None,
+        limit: int = 20,
+    ) -> list[sqlite3.Row]:
+        """Newest billable usage records for one owner and metric."""
+        clauses = [
+            "tenant = ?",
+            "owner_kind = ?",
+            "owner_id = ?",
+            "metric = ?",
+            "billable = 1",
+        ]
+        parameters: list[Any] = [tenant, owner_kind, str(owner_id), str(metric)]
+        if updated_from is not None:
+            clauses.append("updated_at >= ?")
+            parameters.append(str(updated_from))
+        if updated_before is not None:
+            clauses.append("updated_at < ?")
+            parameters.append(str(updated_before))
+        parameters.append(max(1, int(limit)))
+        with self.transaction() as conn:
+            return list(
+                conn.execute(
+                    f"SELECT * FROM usage_events WHERE {' AND '.join(clauses)}"
+                    " ORDER BY updated_at DESC, id DESC LIMIT ?",
+                    parameters,
+                ).fetchall()
+            )
+
     def attach_job_to_usage_event(self, event_id: uuid.UUID, job_id: str) -> None:
         """Link an event to the host job id, which some flows only learn after
         the reservation exists (e.g. the upstream request id comes back from

@@ -28,10 +28,11 @@ import { registerImageSignOutCancellation } from '../shared/image-operation-reco
 import { createVoiceWorkflow } from './src/views/voice/index.js?v=20260829-voice-toolbar-1';
 import { createTextView } from './src/views/text/index.js?v=20260829-voice-modes-11';
 import { createImageView } from './src/views/image/index.js?v=20260829-voice-modes-11';
-import { createPdfView } from './src/views/pdf/index.js?v=20260902-credits-33';
+import { createPdfView } from './src/views/pdf/index.js?v=20260902-credits-35';
 import { createInfoView } from './src/views/info/index.js?v=20260902-credits-1';
 import { createSettingsView } from './src/views/settings/index.js?v=20260829-voice-modes-11';
-import { createAccountView } from './src/views/account/index.js?v=20260902-credits-28';
+import { createAccountView } from './src/views/account/index.js?v=20260902-credits-30';
+import { createUsageView } from './src/views/usage/index.js?v=20260902-credits-2';
 import { initDesktopAppearance } from './src/shared/appearance.js?v=20260829-voice-modes-11';
 import { getInfoCategory } from '../shared/info/index.js?v=20260902-credits-1';
 
@@ -50,6 +51,7 @@ const AUX_ITEMS = [
 ];
 
 const ACCOUNT_ITEM = { id: 'account', route: 'account', name: 'Account', icon: 'user' };
+const USAGE_ITEM = { id: 'usage', route: 'usage', name: 'Usage', icon: 'chart-no-axes-column' };
 
 let voiceWorkflow = null;
 
@@ -71,10 +73,11 @@ const VIEW_FACTORIES = {
   settings: () => createSettingsView({
     onToggleRecording: () => getVoiceWorkflow().toggleRecording(),
   }),
-  account: createAccountView,
+  account: () => createAccountView({ onViewUsage: navigateToUsage }),
+  usage: createUsageView,
 };
 
-const ALL_NAV_ITEMS = [...NAV_ITEMS, ...AUX_ITEMS, ACCOUNT_ITEM];
+const ALL_NAV_ITEMS = [...NAV_ITEMS, ...AUX_ITEMS, ACCOUNT_ITEM, USAGE_ITEM];
 
 const byId = (id) => document.getElementById(id);
 
@@ -206,8 +209,9 @@ function updateSidebarCredits(creditState) {
 
 const router = new RouterCore(appRoot, {
   onRouteDidMount: ({ to }) => {
+    const activeRoute = to.view === 'usage' ? 'account' : to.view;
     sidebar.querySelectorAll('[data-route]').forEach((item) => {
-      const active = item.dataset.route === to.view;
+      const active = item.dataset.route === activeRoute;
       item.classList.toggle('active', active);
       const link = item.querySelector('[data-nav-route]');
       if (active) link?.setAttribute('aria-current', 'page');
@@ -318,6 +322,10 @@ function navigateInfoCategory(categoryId) {
 
 function navigateToAccount() {
   router.navigate('account', null, { url: routeUrl('account') });
+}
+
+function navigateToUsage() {
+  router.navigate('usage', null, { url: routeUrl('usage') });
 }
 
 function navigateFromNavList(event) {

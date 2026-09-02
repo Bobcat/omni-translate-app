@@ -11,7 +11,10 @@ import {
 } from '../../shared/credit-state.js?v=20260902-credits-25';
 import { createAccountPlans } from './plans.js?v=20260902-credits-26';
 
-export function createAccountView() {
+export function createAccountView({ onViewUsage } = {}) {
+  if (typeof onViewUsage !== 'function') {
+    throw new Error('Account view requires a usage navigation action');
+  }
   const container = document.createElement('div');
   container.className = 'view settings-view account-view';
   const heading = document.createElement('h1');
@@ -23,12 +26,12 @@ export function createAccountView() {
   creditGroup.hidden = true;
   const plansGroup = createAccountPlans();
   container.append(heading, creditGroup, plansGroup);
-  initCreditGroup(creditGroup);
+  initCreditGroup(creditGroup, onViewUsage);
   container.__onActivate = () => refreshDesktopCredits().catch(() => {});
   return container;
 }
 
-function initCreditGroup(creditGroup) {
+function initCreditGroup(creditGroup, onViewUsage) {
   let creditState = null;
   let authState = { signedIn: false, email: '' };
 
@@ -43,11 +46,13 @@ function initCreditGroup(creditGroup) {
 
   function update() {
     creditGroup.hidden = !creditState?.configured;
-    if (!creditGroup.hidden) renderCreditGroup(creditGroup, creditState, authState);
+    if (!creditGroup.hidden) {
+      renderCreditGroup(creditGroup, creditState, authState, onViewUsage);
+    }
   }
 }
 
-function renderCreditGroup(creditGroup, creditState, authState) {
+function renderCreditGroup(creditGroup, creditState, authState, onViewUsage) {
   creditGroup.replaceChildren();
   if (isEnabled() && authState.signedIn) {
     creditGroup.appendChild(createAccountIdentity(authState));
@@ -75,6 +80,7 @@ function renderCreditGroup(creditGroup, creditState, authState) {
     `${formatCreditCount(credits.grant)} credits`,
   );
   appendCreditRow(details, 'Credits renew', formatCreditRenewal(credits.period_end));
+  appendCreditLinkRow(details, 'Usage', 'View usage', onViewUsage);
   creditGroup.appendChild(details);
 }
 
@@ -117,6 +123,22 @@ function appendCreditRow(details, label, value) {
   term.textContent = label;
   const description = document.createElement('dd');
   description.textContent = value;
+  row.append(term, description);
+  details.appendChild(row);
+}
+
+function appendCreditLinkRow(details, label, buttonLabel, onClick) {
+  const row = document.createElement('div');
+  row.className = 'account-credit-row';
+  const term = document.createElement('dt');
+  term.textContent = label;
+  const description = document.createElement('dd');
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'link-btn account-usage-link';
+  button.textContent = buttonLabel;
+  button.addEventListener('click', onClick);
+  description.appendChild(button);
   row.append(term, description);
   details.appendChild(row);
 }

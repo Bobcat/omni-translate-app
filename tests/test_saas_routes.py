@@ -179,6 +179,109 @@ class SaasRouteTests(unittest.TestCase):
         self.assertEqual(response.json()["credits"]["period"], "month")
         self.assertTrue(response.json()["credits"]["period_end"])
 
+    def test_credit_activity_is_owner_scoped_and_hides_internal_metadata(self) -> None:
+        with TemporaryDirectory() as tmp:
+            app, store = _make_app(Path(tmp) / "saas.db", return_store=True)
+            with TestClient(app) as owner_client, TestClient(app) as other_client:
+                owner_client.get("/api/me")
+                other_client.get("/api/me")
+                owner = Principal(
+                    tenant="test",
+                    kind="anonymous",
+                    id=uuid.UUID(owner_client.cookies["ot_anon"].partition(".")[0]),
+                    plan_code="anonymous",
+                )
+                other = Principal(
+                    tenant="test",
+                    kind="anonymous",
+                    id=uuid.UUID(other_client.cookies["ot_anon"].partition(".")[0]),
+                    plan_code="anonymous",
+                )
+                quota = QuotaService(store)
+                reserved = quota.reserve(
+                    owner,
+                    metric="compute.credits",
+                    quantity=20,
+                    limit=300,
+                    period_kind="month",
+                    idempotency_key="credits:reserved",
+                    metadata={"action": "pdf_translation", "payload_hash": "private"},
+                )
+                consumed = quota.reserve(
+                    owner,
+                    metric="compute.credits",
+                    quantity=30,
+                    limit=300,
+                    period_kind="month",
+                    idempotency_key="credits:consumed",
+                    metadata={"action": "pdf_translation"},
+                )
+                quota.consume(consumed.id)
+                released = quota.reserve(
+                    owner,
+                    metric="compute.credits",
+                    quantity=40,
+                    limit=300,
+                    period_kind="month",
+                    idempotency_key="credits:released",
+                    metadata={"action": "pdf_translation"},
+                )
+                quota.release(released.id, "technical failure")
+                quota.reserve(
+                    other,
+                    metric="compute.credits",
+                    quantity=99,
+                    limit=300,
+                    period_kind="month",
+                    idempotency_key="credits:other-owner",
+                    metadata={"action": "other_owner_work"},
+                )
+                with store.transaction() as conn:
+                    conn.execute(
+                        "UPDATE usage_events SET updated_at = ? WHERE id = ?",
+                        ("2026-08-31T12:00:00+00:00", str(reserved.id)),
+                    )
+                    conn.execute(
+                        "UPDATE usage_events SET updated_at = ? WHERE id = ?",
+                        ("2026-09-01T12:00:00+00:00", str(consumed.id)),
+                    )
+                    conn.execute(
+                        "UPDATE usage_events SET updated_at = ? WHERE id = ?",
+                        ("2026-09-02T12:00:00+00:00", str(released.id)),
+                    )
+
+                response = owner_client.get("/api/credits/activity")
+                filtered_response = owner_client.get(
+                    "/api/credits/activity",
+                    params={
+                        "from_at": "2026-09-01T00:00:00+00:00",
+                        "to_before": "2026-09-03T00:00:00+00:00",
+                    },
+                )
+                other_response = other_client.get("/api/credits/activity")
+            store.close()
+
+        self.assertEqual(response.status_code, 200)
+        activity = response.json()["activity"]
+        self.assertEqual(
+            [(entry["credits"], entry["state"]) for entry in activity],
+            [(40, "released"), (30, "consumed"), (20, "reserved")],
+        )
+        self.assertTrue(all(entry["action"] == "pdf_translation" for entry in activity))
+        self.assertTrue(all(entry["occurred_at"] for entry in activity))
+        self.assertTrue(
+            all(
+                set(entry) == {"action", "credits", "state", "occurred_at"}
+                for entry in activity
+            )
+        )
+        self.assertEqual(
+            [entry["credits"] for entry in filtered_response.json()["activity"]],
+            [40, 30],
+        )
+        self.assertEqual(other_response.json()["activity"][0]["credits"], 99)
+        self.assertEqual(reserved.state, "reserved")
+
     def test_rejected_first_requests_reuse_one_anonymous_identity(self) -> None:
         with TemporaryDirectory() as tmp:
             store = SaasStore(Path(tmp) / "saas.db")
