@@ -2,7 +2,7 @@ import {
   getInfoCategory,
   renderInfoArticle,
   renderInfoOverview,
-} from '../../../../shared/info/index.js?v=20260902-credits-1';
+} from '../../../../shared/info/index.js?v=20260903-help-info-2';
 
 export function createInfoView({ onNavigate = null, topicHref = null, overviewHref = '' } = {}) {
   const container = document.createElement('div');
@@ -15,20 +15,33 @@ export function createInfoView({ onNavigate = null, topicHref = null, overviewHr
     heading.focus({ preventScroll: true });
   }
 
+  function focusSection(section) {
+    const heading = section?.querySelector('h2');
+    if (!heading) return;
+    heading.tabIndex = -1;
+    heading.focus({ preventScroll: true });
+    section.scrollIntoView({ block: 'start' });
+  }
+
   function showOverview({ moveFocus = false } = {}) {
     renderInfoOverview(container, { categoryHref: topicHref });
     container.scrollTop = 0;
     if (moveFocus) focusHeading();
   }
 
-  function showArticle(categoryId, { moveFocus = true } = {}) {
+  function showArticle(categoryId, { sectionId = '', moveFocus = true } = {}) {
     if (!getInfoCategory(categoryId)) {
       showOverview({ moveFocus });
       return;
     }
-    renderInfoArticle(container, categoryId, { showBack: true, overviewHref });
+    const section = renderInfoArticle(container, categoryId, {
+      showBack: true,
+      overviewHref,
+      sectionId,
+    });
     container.scrollTop = 0;
-    if (moveFocus) focusHeading();
+    if (moveFocus && section) focusSection(section);
+    else if (moveFocus) focusHeading();
   }
 
   container.addEventListener('click', (event) => {
@@ -36,9 +49,14 @@ export function createInfoView({ onNavigate = null, topicHref = null, overviewHr
     if (categoryButton) {
       if (onNavigate) {
         event.preventDefault();
-        onNavigate(categoryButton.dataset.infoCategory);
+        onNavigate(
+          categoryButton.dataset.infoCategory,
+          categoryButton.dataset.infoSection || '',
+        );
       } else {
-        showArticle(categoryButton.dataset.infoCategory);
+        showArticle(categoryButton.dataset.infoCategory, {
+          sectionId: categoryButton.dataset.infoSection || '',
+        });
       }
       return;
     }
@@ -54,7 +72,8 @@ export function createInfoView({ onNavigate = null, topicHref = null, overviewHr
 
   container.__onRoute = (data) => {
     const categoryId = String(data?.categoryId || '');
-    if (categoryId) showArticle(categoryId);
+    const sectionId = String(data?.sectionId || '');
+    if (categoryId) showArticle(categoryId, { sectionId });
     else showOverview({ moveFocus: true });
   };
   showOverview();

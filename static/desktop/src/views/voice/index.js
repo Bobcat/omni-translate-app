@@ -38,10 +38,10 @@ export function createVoiceWorkflow() {
     </div>
     <div class="voice-panes">
       <article class="pane source-pane">
-        <div class="text-stream" id="voiceSourceText" data-empty="No speech recognized yet"></div>
+        <div class="text-stream" id="voiceSourceText" data-empty="Choose languages, then start recording and speak."></div>
       </article>
       <article class="pane target-pane">
-        <div class="text-stream" id="voiceTargetText" data-empty="No translation yet"></div>
+        <div class="text-stream" id="voiceTargetText" data-empty="Translation appears here."></div>
       </article>
     </div>
     <div class="voice-controls">

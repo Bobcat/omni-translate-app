@@ -127,6 +127,14 @@
   margin-top: 6px;
 }
 
+.pdf-credit-upload .upload-privacy-note {
+  max-width: 440px;
+  margin-top: 8px;
+  color: var(--text-subtle);
+  font-size: 0.72rem;
+  line-height: 1.45;
+}
+
 .pdf-credit-setup-side {
   gap: 24px;
   padding: clamp(28px, 4vw, 48px);

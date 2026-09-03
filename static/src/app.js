@@ -180,7 +180,11 @@ async function init() {
   els.settingsInfoNav.addEventListener('click', () => navigateSettingsPage('info'));
   els.settingsInfoPage.addEventListener('click', (event) => {
     const categoryButton = event.target.closest('[data-info-category]');
-    if (categoryButton) navigateSettingsPage(`info-${categoryButton.dataset.infoCategory}`);
+    if (categoryButton) {
+      const sectionId = categoryButton.dataset.infoSection || '';
+      const page = `info-${categoryButton.dataset.infoCategory}${sectionId ? `/${sectionId}` : ''}`;
+      navigateSettingsPage(page);
+    }
   });
   bindImageRenderControls();
   bindAppearanceSettings();

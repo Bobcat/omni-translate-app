@@ -13,24 +13,37 @@ import { renderAppearanceSettings } from './appearance.js';
 import { renderAccountSettings } from './account.js';
 import {
   getInfoCategory,
+  getInfoSection,
   renderInfoArticle,
   renderInfoOverview,
-} from '../../shared/info/index.js?v=20260902-credits-1';
+} from '../../shared/info/index.js?v=20260903-help-info-2';
 
 const PAGES = ['account', 'appearance', 'microphone', 'audio', 'history', 'dev-tools', 'tuning', 'voice-library', 'image-render'];
 
-function infoCategoryForPage(page) {
+function infoPageForPage(page) {
   if (!page.startsWith('info-')) return null;
-  return getInfoCategory(page.slice('info-'.length));
+  const [categoryId, sectionId = '', ...extra] = page.slice('info-'.length).split('/');
+  if (extra.length) return null;
+  const category = getInfoCategory(categoryId);
+  if (!category || (sectionId && !getInfoSection(category.id, sectionId))) return null;
+  return { category, sectionId };
 }
 
 function isInfoPage(page) {
-  return page === 'info' || Boolean(infoCategoryForPage(page));
+  return page === 'info' || Boolean(infoPageForPage(page));
 }
 
 function resetInfoScroll() {
   const scrollElement = els.settingsInfoPage.closest('.settings-views');
   if (scrollElement) scrollElement.scrollTop = 0;
+}
+
+function focusInfoSection(section) {
+  const heading = section?.querySelector('h2');
+  if (!heading) return;
+  heading.tabIndex = -1;
+  heading.focus({ preventScroll: true });
+  section.scrollIntoView({ block: 'start' });
 }
 
 export function setSettingsPage(page) {
@@ -56,16 +69,21 @@ export function setSettingsPage(page) {
     renderInfoOverview(els.settingsInfoPage, { showTitle: false });
     resetInfoScroll();
   } else {
-    const category = infoCategoryForPage(state.settingsPage);
-    if (category) {
-      renderInfoArticle(els.settingsInfoPage, category.id, { showTitle: false });
+    const infoPage = infoPageForPage(state.settingsPage);
+    if (infoPage) {
+      const section = renderInfoArticle(els.settingsInfoPage, infoPage.category.id, {
+        showTitle: false,
+        sectionId: infoPage.sectionId,
+      });
       resetInfoScroll();
+      if (section) focusInfoSection(section);
     }
   }
 }
 
 export function renderSettingsPage() {
   const page = state.settingsPage;
+  const infoPage = infoPageForPage(page);
   const root = page === state.settingsRootPage;
   els.settingsHomePage.hidden = page !== 'home';
   els.settingsAccountPage.hidden = page !== 'account';
@@ -103,8 +121,8 @@ export function renderSettingsPage() {
     els.settingsSheetTitle.textContent = 'Image translation';
   } else if (page === 'info') {
     els.settingsSheetTitle.textContent = 'Info & help';
-  } else if (infoCategoryForPage(page)) {
-    els.settingsSheetTitle.textContent = infoCategoryForPage(page).title;
+  } else if (infoPage) {
+    els.settingsSheetTitle.textContent = infoPage.category.title;
   } else {
     els.settingsSheetTitle.textContent = 'Settings';
   }

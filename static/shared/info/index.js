@@ -4,44 +4,10 @@
 
 export const INFO_CATEGORIES = [
   {
-    id: 'quick-start',
-    label: 'Getting started',
-    title: 'Quick start',
-    summary: 'The first steps for text, voice, images and PDFs.',
-    lead: 'Choose the translation type that matches your source. Each workflow starts differently and keeps the controls relevant to that format.',
-    sections: [
-      {
-        title: 'Text translation',
-        paragraphs: [
-          'Paste or type your text, then choose the target language. Translation starts automatically after a short pause. Copy the result when it is ready.',
-        ],
-      },
-      {
-        title: 'Voice translation',
-        paragraphs: [
-          'Choose the source and target languages, start a session and allow microphone access. Speak when the session is ready. The app shows the recognised speech and its translation, and can speak the result aloud.',
-        ],
-      },
-      {
-        title: 'Image translation',
-        paragraphs: [
-          'Choose the target language, then select or drop a PNG, JPEG or WebP image. Translation starts when the file is accepted. Compare the original and translated image, then download the result.',
-        ],
-      },
-      {
-        title: 'PDF translation',
-        paragraphs: [
-          'Select or drop a PDF, then choose the target language. The app reads the document and shows the exact credit use before translation starts.',
-          'Confirm the target language and credit use to start translating. Follow the page progress and download the translated PDF when it completes.',
-        ],
-      },
-    ],
-  },
-  {
     id: 'about',
     label: 'About',
     title: 'About Omni Translate',
-    summary: 'The purpose and ideas behind the app.',
+    summary: 'Why the project exists, how it is built and how PDF quality is measured.',
     lead: 'Omni Translate is an OmniScripta project. It brings text, voice, image and document translation together in one app.',
     sections: [
       {
@@ -80,7 +46,7 @@ export const INFO_CATEGORIES = [
         title: 'What the project became',
         paragraphs: [
           'The first transcript tool led to services for speech recognition, language models, document processing and generated speech. Omni Translate brings those parts together for text, voice, image and PDF translation.',
-          'It remains my personal pet project. I develop and host it independently, with the freedom to spend time on problems such as document quality that I find worth solving properly.',
+          'It remains my personal pet project. I am the project’s only engineer. I develop, host and maintain it independently. This gives me the freedom to spend time on problems such as document quality that I find worth solving properly.',
         ],
       },
       {
@@ -96,39 +62,44 @@ export const INFO_CATEGORIES = [
   },
   {
     id: 'how-it-works',
-    label: 'Guide',
+    label: 'How it works',
     title: 'How translation works',
-    summary: 'What happens in text, voice, image and PDF translation.',
-    lead: 'Each type of content is handled in the way that suits it best. This helps the app use context, structure and layout.',
+    summary: 'What each translation mode does with its source.',
+    lead: 'Each translation mode uses the context and structure that matter to its source.',
     sections: [
       {
+        id: 'choose-a-mode',
+        title: 'Choose by source',
+        paragraphs: [
+          'Use Text for text you can copy, Voice for spoken conversation, Image for text inside a picture and PDF for complete documents.',
+        ],
+      },
+      {
+        id: 'text',
         title: 'Text',
         paragraphs: [
-          'Text translation works directly with the words you enter. It uses the surrounding sentences to produce a natural, consistent translation.',
+          'Text translation uses the surrounding sentences to keep wording natural and consistent.',
         ],
       },
       {
+        id: 'voice',
         title: 'Voice',
         paragraphs: [
-          'Voice translation turns speech into written text, translates it and can speak the result in the target language. You can listen, read the recognised text and hear the translation in one place.',
+          'Voice translation recognises and translates each spoken turn. It shows both the recognised speech and the translation, and can speak the result aloud. The selected direction applies to the current turn; swap languages when the other person speaks.',
         ],
       },
       {
+        id: 'images',
         title: 'Images',
         paragraphs: [
           'Image translation finds visible text, translates it and places the translation back into the image. The result keeps the words connected to their original visual context.',
         ],
       },
       {
+        id: 'pdfs',
         title: 'PDFs',
         paragraphs: [
-          'PDF translation looks at both text and page structure. It can work with digital text, scanned pages and documents that combine the two.',
-        ],
-      },
-      {
-        title: 'Specialised from start to finish',
-        paragraphs: [
-          'Behind the scenes, Omni Translate uses separate tools matched to each format. These include speech recognition, OCR, translation, page layout and spoken output.',
+          'PDF translation uses both text and page structure. It works with digital text, scanned pages and documents that combine the two.',
         ],
       },
     ],
@@ -141,6 +112,7 @@ export const INFO_CATEGORIES = [
     lead: 'PDF translation is a core part of Omni Translate. It works with born-digital, scanned and hybrid PDFs while keeping text and page structure together.',
     sections: [
       {
+        id: 'three-kinds',
         title: 'Three kinds of PDF',
         bullets: [
           'Born-digital: exported from software such as a word processor or layout program. The letters are stored as selectable text, so the app can read them directly.',
@@ -149,18 +121,21 @@ export const INFO_CATEGORIES = [
         ],
       },
       {
+        id: 'complex-layouts',
         title: 'Complex page layouts',
         paragraphs: [
           'Any of these PDF types can contain columns, forms, footnotes, charts or text inside illustrations. Omni Translate detects this page structure and uses it to build the translated pages.',
         ],
       },
       {
+        id: 'building-pages',
         title: 'Building the translated pages',
         paragraphs: [
           'For every PDF, Omni Translate composes new pages for the translation. It adjusts placement, line breaks and text size when the target language needs more or less space than the source.',
         ],
       },
       {
+        id: 'best-pdf-result',
         title: 'Get the best PDF result',
         bullets: [
           'Choose the original digital PDF when you have it.',
@@ -178,12 +153,14 @@ export const INFO_CATEGORIES = [
     lead: 'Omni Translate uses context, recognised text and page layout together. This is especially important for documents, where meaning and structure belong together.',
     sections: [
       {
+        id: 'context-and-layout',
         title: 'Built for more than plain text',
         paragraphs: [
           'Documents, images and conversations contain more than individual sentences. Page order, text position and surrounding speech all add useful context. The app uses that information for the translation.',
         ],
       },
       {
+        id: 'quality-inputs',
         title: 'What helps quality',
         bullets: [
           'Complete sentences and pages provide useful context.',
@@ -193,12 +170,14 @@ export const INFO_CATEGORIES = [
         ],
       },
       {
+        id: 'final-check',
         title: 'A quick final check',
         paragraphs: [
           'A short review makes any translation more useful. Check names, dates, amounts and specialist terms. For documents, look over tables, captions and page order as well.',
         ],
       },
       {
+        id: 'professional-material',
         title: 'Important professional material',
         paragraphs: [
           'Omni Translate can save substantial time on specialist material. Legal, medical, financial and safety-critical translations should still receive the professional review required for their intended use.',
@@ -214,14 +193,22 @@ export const INFO_CATEGORIES = [
     lead: 'Your plan provides a monthly credit budget. Work that uses credits shows the exact amount before it starts.',
     sections: [
       {
+        id: 'account-required',
+        title: 'Do I need an account?',
+        paragraphs: [
+          'No. Guest can be used without an account. Free requires sign-in so its credit balance is available on any signed-in device.',
+        ],
+      },
+      {
+        id: 'available-credits',
         title: 'Your available credits',
         paragraphs: [
-          'The sidebar shows your current plan and available credits. Account shows the monthly grant, renewal date and the available Guest and Free plans.',
-          'Guest can be used without an account. Free requires sign-in so its credit balance is available on any signed-in device. Included monthly credits do not carry over.',
+          'The sidebar shows your current plan and available credits. Account shows the monthly grant, renewal date and the available Guest and Free plans. Included monthly credits do not carry over.',
           'PDF translation currently uses credits. Text, voice and image translation do not currently deduct from this balance.',
         ],
       },
       {
+        id: 'before-work-starts',
         title: 'Before work starts',
         paragraphs: [
           'Uploading and inspecting a PDF does not use credits. The app first counts the pages and source characters, then shows one fixed credit amount. The confirmation dialog repeats that amount and the target language.',
@@ -229,6 +216,7 @@ export const INFO_CATEGORIES = [
         ],
       },
       {
+        id: 'reservations-and-settlement',
         title: 'Reservations and settlement',
         bullets: [
           'Confirmation reserves the displayed credits and reduces the available balance immediately.',
@@ -240,6 +228,7 @@ export const INFO_CATEGORIES = [
         ],
       },
       {
+        id: 'document-limits',
         title: 'Document limits',
         paragraphs: [
           'Credits are the shared usage budget. A plan can also limit the size of one job. Guest translates a preview from a longer PDF; Free accepts longer PDFs within its per-document limit.',
@@ -249,12 +238,21 @@ export const INFO_CATEGORIES = [
   },
   {
     id: 'privacy',
-    label: 'Trust',
+    label: 'Privacy',
     title: 'Privacy and file handling',
     summary: 'Where content is processed and how long it remains available.',
     lead: 'The current public version uses self-hosted translation and speech services. These are the retention settings in effect on 16 August 2026.',
     sections: [
       {
+        id: 'current-limitations',
+        style: 'notice',
+        title: 'What is not in place yet',
+        paragraphs: [
+          'Omni Translate does not yet provide an in-app way to delete an account or its usage records. Temporary files are not stored in a personal document library and cannot be recovered from a backup. Do not submit confidential or regulated material that requires a contractual retention or deletion guarantee.',
+        ],
+      },
+      {
+        id: 'where-processing-happens',
         title: 'Where processing happens',
         paragraphs: [
           'Your text, audio, images and PDFs are processed on infrastructure operated by OmniScripta. They are not sent to an external translation or AI provider.',
@@ -262,6 +260,7 @@ export const INFO_CATEGORIES = [
         ],
       },
       {
+        id: 'temporary-content',
         title: 'Temporary translation content',
         bullets: [
           'Text is handled without creating a document job. A successful translated result can remain in the app’s in-memory retry cache for up to 30 seconds.',
@@ -270,6 +269,7 @@ export const INFO_CATEGORIES = [
         ],
       },
       {
+        id: 'technical-records',
         title: 'Technical and usage records',
         paragraphs: [
           'A technical job record can remain for up to 400 days. It contains identifiers, task and status information, timestamps, timing and progress data, errors, artifact references and credit metadata. It does not contain the uploaded file or the full request and response payloads.',
@@ -278,16 +278,11 @@ export const INFO_CATEGORIES = [
         ],
       },
       {
+        id: 'browser-storage',
         title: 'What the browser remembers',
         paragraphs: [
           'The browser stores preferences, sign-in state and identifiers that help recover pending work after a reload. Image and PDF recovery store an operation identifier and basic recovery details, not the uploaded file itself.',
           'Clearing the site data removes this browser-side information. It does not delete technical or usage records already held by the server.',
-        ],
-      },
-      {
-        title: 'Deletion and sensitive material',
-        paragraphs: [
-          'Temporary files are not placed in a personal document library, and the app does not offer backup recovery for them. There is not yet an in-app control for deleting an account or its usage records. Until a direct deletion channel and formal privacy policy are available, do not submit confidential or regulated material that requires a contractual retention or deletion guarantee.',
         ],
       },
     ],
@@ -613,70 +608,54 @@ export const INFO_CATEGORIES = [
       },
     ],
   },
-  {
-    id: 'faq',
-    label: 'FAQ',
-    title: 'Frequently asked questions',
-    summary: 'Short answers to common questions about the app.',
-    lead: 'Find quick answers about documents, accounts, quality and usage. The other guides offer more background when you want it.',
-    questions: [
-      {
-        question: 'Can Omni Translate translate a scanned PDF?',
-        answer: 'Yes. Omni Translate uses OCR to read scanned pages before translating them. Sharp, straight pages with good contrast give the app the best source.',
-      },
-      {
-        question: 'Does the app preserve the document layout?',
-        answer: 'The PDF feature uses the original page structure when composing the translation. It adjusts text size, placement and line breaks when the target language needs a different amount of space.',
-      },
-      {
-        question: 'Which translation type should I choose?',
-        answer: 'Use Text for text you can copy, Voice for conversations, Image for text inside a picture and PDF for complete documents. Each option uses a workflow designed for that format.',
-      },
-      {
-        question: 'How do I get the best PDF result?',
-        answer: 'Upload the original digital PDF when possible. For scans, use sharp and correctly oriented pages with complete edges. Remove password protection before uploading.',
-      },
-      {
-        question: 'Should I review the translation?',
-        answer: 'A quick review is useful for every important translation. Check names, dates, amounts and specialist terms. Material used for legal, medical, financial or safety decisions should receive the professional review required for that purpose.',
-      },
-      {
-        question: 'Do I need an account?',
-        answer: 'No. The Guest plan can be used without an account. Sign in to use the larger monthly credit budget in the Free plan on any signed-in device.',
-      },
-      {
-        question: 'How long are uploads and results kept?',
-        answer: 'Completed and failed image or PDF jobs are scheduled for deletion after 24 hours. Cancelled job data is scheduled for deletion after 10 minutes. Voice session files are kept for about 15 minutes after the session ends. See Privacy and file handling for the separate technical-record retention period.',
-      },
-      {
-        question: 'Is my content sent to an external AI provider?',
-        answer: 'No. Text, speech, images and PDFs are translated on infrastructure operated by OmniScripta. External services used for site delivery and optional sign-in do not perform the translation.',
-      },
-      {
-        question: 'What happens to usage when a job fails?',
-        answer: 'A confirmed technical failure returns the reserved credits. If the final result is still being checked, the credits stay reserved until the status is known.',
-      },
-    ],
-  },
+];
+
+export const INFO_QUESTIONS = [
+  { question: 'Can Omni Translate translate a scanned PDF?', categoryId: 'pdfs', sectionId: 'three-kinds' },
+  { question: 'Does the app preserve the document layout?', categoryId: 'pdfs', sectionId: 'building-pages' },
+  { question: 'Which translation type should I choose?', categoryId: 'how-it-works', sectionId: 'choose-a-mode' },
+  { question: 'How do I get the best PDF result?', categoryId: 'pdfs', sectionId: 'best-pdf-result' },
+  { question: 'Should I review the translation?', categoryId: 'quality', sectionId: 'final-check' },
+  { question: 'Do I need an account?', categoryId: 'usage', sectionId: 'account-required' },
+  { question: 'How long are uploads and results kept?', categoryId: 'privacy', sectionId: 'temporary-content' },
+  { question: 'Is my content sent to an external AI provider?', categoryId: 'privacy', sectionId: 'where-processing-happens' },
+  { question: 'What happens to usage when a job fails?', categoryId: 'usage', sectionId: 'reservations-and-settlement' },
 ];
 
 const INFO_GROUPS = [
   {
-    title: 'Get started',
-    categoryIds: ['quick-start', 'how-it-works', 'pdfs', 'quality'],
+    title: 'Using Omni Translate',
+    categoryIds: ['how-it-works', 'pdfs', 'quality'],
   },
   {
-    title: 'Account and data',
-    categoryIds: ['usage', 'privacy', 'faq'],
+    title: 'Plans and privacy',
+    categoryIds: ['usage', 'privacy'],
   },
   {
-    title: 'About the project',
-    categoryIds: ['about', 'under-the-hood', 'third-party-software'],
+    title: 'Project and technology',
+    categoryIds: ['about', 'under-the-hood'],
   },
 ];
 
 export function getInfoCategory(categoryId) {
   return INFO_CATEGORIES.find((category) => category.id === categoryId) || null;
+}
+
+export function getInfoSection(categoryId, sectionId) {
+  const category = getInfoCategory(categoryId);
+  return category?.sections?.find((section) => infoSectionId(section) === sectionId) || null;
+}
+
+function infoSectionId(section) {
+  if (section.id) return section.id;
+  return String(section.title || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '');
+}
+
+function infoGroupTitle(categoryId) {
+  return INFO_GROUPS.find((group) => group.categoryIds.includes(categoryId))?.title || 'Reference';
 }
 
 function element(tagName, className, text = '') {
@@ -703,7 +682,7 @@ export function renderInfoOverview(host, { showTitle = true, categoryHref = null
   header.appendChild(element(
     'p',
     'info-lead',
-    'Start with a practical guide, learn how each translation type works or read about the project and its technology.',
+    'Read how each translation mode works, how content is handled and what runs behind the app.',
   ));
   fragment.appendChild(header);
 
@@ -715,17 +694,16 @@ export function renderInfoOverview(host, { showTitle = true, categoryHref = null
     for (const categoryId of group.categoryIds) {
       const category = getInfoCategory(categoryId);
       if (!category) continue;
-      const href = typeof categoryHref === 'function' ? categoryHref(category.id) : '';
+      const href = typeof categoryHref === 'function' ? categoryHref(category.id, '') : '';
       const control = element(href ? 'a' : 'button', 'info-category-card');
       if (href) control.href = href;
       else control.type = 'button';
       control.dataset.infoCategory = category.id;
-      control.setAttribute('aria-label', `Open ${category.title}`);
+      control.setAttribute('aria-label', `Open ${category.label}`);
 
       const copy = element('span', 'info-category-copy');
       copy.append(
-        element('span', 'info-category-label', category.label),
-        element('strong', 'info-category-title', category.title),
+        element('strong', 'info-category-title', category.label),
         element('span', 'info-category-summary', category.summary),
       );
       const arrow = element('span', 'info-category-arrow');
@@ -738,17 +716,48 @@ export function renderInfoOverview(host, { showTitle = true, categoryHref = null
   }
   fragment.appendChild(groups);
 
-  const note = element('aside', 'info-trust-note');
-  note.append(
-    element('strong', '', 'New to Omni Translate?'),
-    element('p', '', 'Quick start shows the exact first steps for text, voice, image and PDF translation.'),
+  const questionIndex = element('section', 'info-question-index');
+  questionIndex.appendChild(element('h2', 'info-question-index-title', 'Common questions'));
+  const questionList = element('ul', 'info-question-list');
+  for (const item of INFO_QUESTIONS) {
+    const href = typeof categoryHref === 'function'
+      ? categoryHref(item.categoryId, item.sectionId)
+      : '';
+    const listItem = element('li', '');
+    const control = element(href ? 'a' : 'button', 'info-question-link', item.question);
+    if (href) control.href = href;
+    else control.type = 'button';
+    control.dataset.infoCategory = item.categoryId;
+    control.dataset.infoSection = item.sectionId;
+    listItem.appendChild(control);
+    questionList.appendChild(listItem);
+  }
+  questionIndex.appendChild(questionList);
+  fragment.appendChild(questionIndex);
+
+  const reference = getInfoCategory('third-party-software');
+  const referenceRow = element('div', 'info-reference-row');
+  referenceRow.appendChild(element('span', 'info-reference-label', 'Reference'));
+  const referenceHref = typeof categoryHref === 'function' ? categoryHref(reference.id, '') : '';
+  const referenceControl = element(
+    referenceHref ? 'a' : 'button',
+    'info-reference-link',
+    'Third-party software and licences',
   );
-  fragment.appendChild(note);
+  if (referenceHref) referenceControl.href = referenceHref;
+  else referenceControl.type = 'button';
+  referenceControl.dataset.infoCategory = reference.id;
+  referenceRow.appendChild(referenceControl);
+  fragment.appendChild(referenceRow);
   host.replaceChildren(fragment);
 }
 
-function appendSection(article, section) {
+function appendSection(article, categoryId, section) {
   const sectionNode = element('section', 'info-article-section');
+  const sectionId = infoSectionId(section);
+  sectionNode.id = `info-${categoryId}-${sectionId}`;
+  sectionNode.dataset.infoSection = sectionId;
+  if (section.style === 'notice') sectionNode.classList.add('info-article-notice');
   sectionNode.appendChild(element('h2', '', section.title));
   for (const paragraph of section.paragraphs || []) {
     sectionNode.appendChild(element('p', '', paragraph));
@@ -810,26 +819,14 @@ function appendSection(article, section) {
     sectionNode.appendChild(media);
   }
   article.appendChild(sectionNode);
-}
-
-function appendQuestions(article, questions) {
-  const list = element('div', 'info-faq-list');
-  questions.forEach((item, index) => {
-    const details = element('details', 'info-faq-item');
-    if (index === 0) details.open = true;
-    details.append(
-      element('summary', '', item.question),
-      element('p', '', item.answer),
-    );
-    list.appendChild(details);
-  });
-  article.appendChild(list);
+  return sectionNode;
 }
 
 export function renderInfoArticle(host, categoryId, {
   showBack = false,
   showTitle = true,
   overviewHref = '',
+  sectionId = '',
 } = {}) {
   const category = getInfoCategory(categoryId);
   if (!category) {
@@ -848,13 +845,17 @@ export function renderInfoArticle(host, categoryId, {
 
   const article = element('article', 'info-article');
   const header = element('header', 'info-article-header');
-  header.appendChild(element('p', 'info-eyebrow', category.label));
+  header.appendChild(element('p', 'info-eyebrow', infoGroupTitle(category.id)));
   if (showTitle) header.appendChild(element('h1', 'info-title', category.title));
   header.appendChild(element('p', 'info-lead', category.lead));
   article.appendChild(header);
 
-  for (const section of category.sections || []) appendSection(article, section);
-  if (category.questions?.length) appendQuestions(article, category.questions);
+  let targetSection = null;
+  for (const section of category.sections || []) {
+    const sectionNode = appendSection(article, category.id, section);
+    if (infoSectionId(section) === sectionId) targetSection = sectionNode;
+  }
   fragment.appendChild(article);
   host.replaceChildren(fragment);
+  return targetSection;
 }

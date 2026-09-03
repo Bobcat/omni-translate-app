@@ -55,7 +55,7 @@ export function createTextView() {
     </div>
     <div class="text-panes" id="textPanes">
       <article class="pane text-pane">
-        <textarea class="text-input" id="textInput" placeholder="Type or paste text to translate" aria-label="Source text"></textarea>
+        <textarea class="text-input" id="textInput" placeholder="Type or paste text. Translation starts after a short pause." aria-label="Source text"></textarea>
         <div class="text-pane-actions">
           <output class="text-character-count" id="textCharacterCount" for="textInput" hidden></output>
         </div>

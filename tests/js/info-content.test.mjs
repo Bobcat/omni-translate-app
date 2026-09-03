@@ -3,8 +3,31 @@ import test from 'node:test';
 
 import {
   INFO_CATEGORIES,
+  INFO_QUESTIONS,
   getInfoCategory,
+  getInfoSection,
 } from '../../static/shared/info/index.js';
+
+test('info overview topics exclude procedural help and the FAQ answer store', () => {
+  assert.equal(getInfoCategory('quick-start'), null);
+  assert.equal(getInfoCategory('faq'), null);
+  assert.equal(getInfoCategory('privacy').label, 'Privacy');
+  assert.equal(getInfoCategory('how-it-works').label, 'How it works');
+});
+
+test('common questions link to canonical sections without storing answers', () => {
+  assert.equal(INFO_QUESTIONS.length, 9);
+  assert.ok(INFO_QUESTIONS.every((item) => !Object.hasOwn(item, 'answer')));
+  assert.ok(INFO_QUESTIONS.every((item) => getInfoSection(item.categoryId, item.sectionId)));
+});
+
+test('privacy opens with the current product limitations', () => {
+  const privacy = getInfoCategory('privacy');
+
+  assert.equal(privacy.sections[0].id, 'current-limitations');
+  assert.equal(privacy.sections[0].style, 'notice');
+  assert.match(privacy.sections[0].paragraphs[0], /does not yet provide an in-app way to delete/);
+});
 
 test('third-party software notice is available as an info category', () => {
   const notice = getInfoCategory('third-party-software');

@@ -4,7 +4,7 @@
 
 import { els } from '../els.js';
 import { state } from '../state.js';
-import { setSettingsPage } from './pages.js?v=20260831-pdfjs-1';
+import { setSettingsPage } from './pages.js?v=20260903-help-info-2';
 import { renderAudioSettings } from './audio.js';
 import { renderTuningSettings } from './tuning.js';
 import { renderTtsSettings } from './tts.js';

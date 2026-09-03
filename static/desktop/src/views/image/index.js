@@ -61,13 +61,14 @@ export function createImageView() {
     <div class="dropzone-card" id="imageDropzone">
       <div class="dropzone-drop">
         ${iconMarkup('upload-cloud')}
-        <div class="dropzone-hint">Drag and drop an image</div>
+        <div class="dropzone-hint">Drop a PNG, JPEG or WebP image</div>
       </div>
       <div class="dropzone-sep"></div>
       <div class="dropzone-choose">
         <span>Or choose a file</span>
         <button type="button" class="browse-btn" id="imageBrowseBtn">Browse your files</button>
       </div>
+      <p class="upload-privacy-note">Do not upload confidential or regulated material that requires a contractual retention or deletion guarantee.</p>
     </div>
     <div class="result-grid" id="imageStage" hidden>
       <figure class="result-frame result-frame-original">

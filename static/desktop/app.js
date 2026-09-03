@@ -25,16 +25,19 @@ import {
 } from './src/shared/credit-state.js?v=20260902-credits-25';
 import { initAuth, onAuthChange, onBeforeSignOut } from './src/auth.js';
 import { registerImageSignOutCancellation } from '../shared/image-operation-recovery.js';
-import { createVoiceWorkflow } from './src/views/voice/index.js?v=20260829-voice-toolbar-1';
-import { createTextView } from './src/views/text/index.js?v=20260829-voice-modes-11';
-import { createImageView } from './src/views/image/index.js?v=20260829-voice-modes-11';
-import { createPdfView } from './src/views/pdf/index.js?v=20260902-credits-35';
-import { createInfoView } from './src/views/info/index.js?v=20260902-credits-1';
+import { createVoiceWorkflow } from './src/views/voice/index.js?v=20260903-help-info-1';
+import { createTextView } from './src/views/text/index.js?v=20260903-help-info-1';
+import { createImageView } from './src/views/image/index.js?v=20260903-help-info-1';
+import { createPdfView } from './src/views/pdf/index.js?v=20260903-help-info-1';
+import { createInfoView } from './src/views/info/index.js?v=20260903-help-info-2';
 import { createSettingsView } from './src/views/settings/index.js?v=20260829-voice-modes-11';
 import { createAccountView } from './src/views/account/index.js?v=20260902-credits-30';
 import { createUsageView } from './src/views/usage/index.js?v=20260902-credits-2';
 import { initDesktopAppearance } from './src/shared/appearance.js?v=20260829-voice-modes-11';
-import { getInfoCategory } from '../shared/info/index.js?v=20260902-credits-1';
+import {
+  getInfoCategory,
+  getInfoSection,
+} from '../shared/info/index.js?v=20260903-help-info-2';
 
 const STORAGE_KEY = 'omni-translate.desktop.shell';
 
@@ -67,7 +70,7 @@ const VIEW_FACTORIES = {
   pdf: () => createPdfView({ onViewPlans: navigateToAccount }),
   info: () => createInfoView({
     onNavigate: navigateInfoCategory,
-    topicHref: (categoryId) => routeUrl(`info/${encodeURIComponent(categoryId)}`),
+    topicHref: (categoryId, sectionId) => routeUrl(infoRoute(categoryId, sectionId)),
     overviewHref: routeUrl('info'),
   }),
   settings: () => createSettingsView({
@@ -305,19 +308,38 @@ function routeUrl(route) {
   return `${window.location.pathname}${window.location.search}#${route}`;
 }
 
+function infoRoute(categoryId, sectionId = '') {
+  const categoryPart = encodeURIComponent(categoryId);
+  return sectionId
+    ? `info/${categoryPart}/${encodeURIComponent(sectionId)}`
+    : `info/${categoryPart}`;
+}
+
 function parseRouteHash(hash) {
   const raw = String(hash || '').replace(/^#/, '');
   const [view, ...parts] = raw.split('/');
   if (!router.has(view)) return null;
   if (view !== 'info' || parts.length === 0) return { view, data: null };
-  const categoryId = parts.join('/');
-  return getInfoCategory(categoryId) ? { view, data: { categoryId } } : null;
+  if (parts.length > 2) return null;
+  let categoryId = '';
+  let sectionId = '';
+  try {
+    categoryId = decodeURIComponent(parts[0]);
+    sectionId = parts[1] ? decodeURIComponent(parts[1]) : '';
+  } catch {
+    return null;
+  }
+  if (!getInfoCategory(categoryId)) return null;
+  if (sectionId && !getInfoSection(categoryId, sectionId)) return null;
+  return { view, data: { categoryId, sectionId } };
 }
 
-function navigateInfoCategory(categoryId) {
+function navigateInfoCategory(categoryId, sectionId = '') {
   const category = getInfoCategory(categoryId);
-  const route = category ? `info/${encodeURIComponent(category.id)}` : 'info';
-  router.navigate('info', category ? { categoryId: category.id } : null, { url: routeUrl(route) });
+  const section = category && sectionId ? getInfoSection(category.id, sectionId) : null;
+  const data = category ? { categoryId: category.id, sectionId: section ? sectionId : '' } : null;
+  const route = category ? infoRoute(category.id, data.sectionId) : 'info';
+  router.navigate('info', data, { url: routeUrl(route) });
 }
 
 function navigateToAccount() {
@@ -377,7 +399,7 @@ function init() {
   const hash = window.location.hash.replace(/^#/, '');
   const initialRoute = parseRouteHash(hash) || { view: 'voice', data: null };
   const initialHash = initialRoute.view === 'info' && initialRoute.data?.categoryId
-    ? `info/${encodeURIComponent(initialRoute.data.categoryId)}`
+    ? infoRoute(initialRoute.data.categoryId, initialRoute.data.sectionId)
     : initialRoute.view;
   router.start(initialRoute.view, initialRoute.data, { url: routeUrl(initialHash) });
 }

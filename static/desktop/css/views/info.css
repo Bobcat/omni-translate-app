@@ -88,10 +88,6 @@
   transform: translateY(-1px);
 }
 
-.info-category-card[data-info-category='quick-start'] {
-  --info-topic-color: oklch(65% 0.08 40);
-}
-
 .info-category-card[data-info-category='how-it-works'] {
   --info-topic-color: oklch(65% 0.08 310);
 }
@@ -112,20 +108,12 @@
   --info-topic-color: oklch(65% 0.08 175);
 }
 
-.info-category-card[data-info-category='faq'] {
-  --info-topic-color: oklch(65% 0.08 95);
-}
-
 .info-category-card[data-info-category='about'] {
   --info-topic-color: oklch(65% 0.08 350);
 }
 
 .info-category-card[data-info-category='under-the-hood'] {
   --info-topic-color: oklch(65% 0.08 270);
-}
-
-.info-category-card[data-info-category='third-party-software'] {
-  --info-topic-color: oklch(65% 0.08 205);
 }
 
 .info-category-card:focus-visible {
@@ -139,16 +127,7 @@
   flex-direction: column;
 }
 
-.info-category-label {
-  color: var(--accent-strong);
-  font-size: 0.68rem;
-  font-weight: 700;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
-}
-
 .info-category-title {
-  margin-top: 8px;
   color: var(--text-strong);
   font-size: 1.02rem;
   font-weight: 600;
@@ -178,23 +157,78 @@
   height: 100%;
 }
 
-.info-trust-note {
-  max-width: 720px;
-  padding: 20px 22px;
-  border-left: 2px solid var(--accent);
-  background: var(--surface-soft);
+.info-question-index {
+  width: min(100%, 760px);
+  padding-top: 26px;
+  border-top: 1px solid var(--border);
 }
 
-.info-trust-note strong {
+.info-question-index-title {
+  margin: 0 0 12px;
   color: var(--text-strong);
-  font-size: 0.92rem;
+  font-size: 0.9rem;
+  font-weight: 600;
 }
 
-.info-trust-note p {
-  margin: 6px 0 0;
-  color: var(--text-muted);
-  font-size: 0.86rem;
-  line-height: 1.5;
+.info-question-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 24px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.info-question-link,
+.info-reference-link {
+  border: 0;
+  background: transparent;
+  color: var(--accent-strong);
+  font: inherit;
+  text-align: left;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.info-question-link {
+  display: inline-block;
+  padding: 4px 0;
+  font-size: 0.84rem;
+  line-height: 1.4;
+}
+
+.info-question-link:hover,
+.info-reference-link:hover {
+  text-decoration-color: currentColor;
+}
+
+.info-question-link:focus-visible,
+.info-reference-link:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 3px;
+}
+
+.info-reference-row {
+  width: min(100%, 760px);
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding-top: 2px;
+}
+
+.info-reference-label {
+  color: var(--text-subtle);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.info-reference-link {
+  padding: 4px 0;
+  font-size: 0.82rem;
 }
 
 .info-back-button {
@@ -232,6 +266,15 @@
   margin-top: 36px;
   padding-top: 30px;
   border-top: 1px solid var(--border);
+}
+
+.info-article-section.info-article-notice {
+  margin-top: 26px;
+  padding: 18px 20px;
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--accent);
+  border-radius: 0 10px 10px 0;
+  background: var(--surface-soft);
 }
 
 .info-article-section h2 {
@@ -349,55 +392,6 @@
   line-height: 1.5;
 }
 
-.info-faq-list {
-  margin-top: 34px;
-  border-top: 1px solid var(--border);
-}
-
-.info-faq-item {
-  border-bottom: 1px solid var(--border);
-}
-
-.info-faq-item summary {
-  position: relative;
-  padding: 18px 34px 18px 0;
-  color: var(--text-strong);
-  font-size: 0.96rem;
-  font-weight: 600;
-  list-style: none;
-  cursor: pointer;
-}
-
-.info-faq-item summary::-webkit-details-marker {
-  display: none;
-}
-
-.info-faq-item summary::after {
-  position: absolute;
-  top: 18px;
-  right: 4px;
-  content: '+';
-  color: var(--text-subtle);
-  font-size: 1.1rem;
-  font-weight: 400;
-}
-
-.info-faq-item[open] summary::after {
-  content: '\2212';
-}
-
-.info-faq-item summary:focus-visible {
-  outline: 2px solid var(--focus);
-  outline-offset: 2px;
-}
-
-.info-faq-item p {
-  margin: -2px 40px 18px 0;
-  color: var(--text-muted);
-  font-size: 0.9rem;
-  line-height: 1.65;
-}
-
 @media (max-width: 720px) {
   .info-view {
     padding-block: 28px;
@@ -409,6 +403,10 @@
 
   .info-category-card {
     min-height: 0;
+  }
+
+  .info-question-list {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 

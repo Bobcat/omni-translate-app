@@ -655,6 +655,26 @@ button {
   text-align: center;
 }
 
+.setup-guidance,
+.setup-upload-notice {
+  max-width: 330px;
+  margin: 0;
+  text-align: center;
+}
+
+.setup-guidance {
+  color: var(--text);
+  font-size: 0.88rem;
+  line-height: 1.4;
+}
+
+.setup-upload-notice {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 0.7rem;
+  line-height: 1.4;
+}
+
 .setup-mode-pill {
   --setup-mode-pill-accent: #2f6fce;
   --setup-mode-pill-bg: #e8f7ff;

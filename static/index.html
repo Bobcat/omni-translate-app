@@ -43,12 +43,12 @@
     <link rel="stylesheet" href="/themes/light.css?v=20260730-appearance-1">
     <link rel="stylesheet" href="/themes/dark.css?v=20260730-appearance-1">
     <link rel="stylesheet" href="/themes/warm.css?v=20260811-warm-palette-2">
-    <link rel="stylesheet" href="/styles/shell.css?v=20260827-voice-guardrails-1">
+    <link rel="stylesheet" href="/styles/shell.css?v=20260903-help-info-1">
     <link rel="stylesheet" href="/styles/image.css?v=20260809-mobile-css-split-1">
     <link rel="stylesheet" href="/styles/voice.css?v=20260827-voice-tts-stream-review-2">
     <link rel="stylesheet" href="/styles/settings/sheet.css?v=20260809-mobile-css-split-1">
     <link rel="stylesheet" href="/styles/settings/voice.css?v=20260809-mobile-css-split-1">
-    <link rel="stylesheet" href="/styles/settings/info.css?v=20260829-third-party-mint-1">
+    <link rel="stylesheet" href="/styles/settings/info.css?v=20260903-help-info-1">
     <link rel="stylesheet" href="/styles/responsive.css?v=20260812-language-bar-1">
   </head>
   <body>
@@ -97,6 +97,7 @@
         </article>
         <div class="setup-start-panel" id="setupStartPanel">
           <p class="setup-session-notice" id="sessionEndNotice" role="status" hidden></p>
+          <p class="setup-guidance">Choose languages, then start the microphone or select an image.</p>
           <button class="setup-mode-pill setup-start-button" id="startButton" type="button" title="From microphone" aria-label="From microphone">
             <svg class="setup-mode-icon" viewBox="0 0 24 24" aria-hidden="true">
               <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path>
@@ -122,6 +123,7 @@
             <span>From camera</span>
             <input class="image-file-input" id="cameraFileInput" type="file" accept="image/*" capture="environment">
           </label>
+          <p class="setup-upload-notice">For images, do not use confidential or regulated material that requires a contractual retention or deletion guarantee.</p>
           <button class="setup-fixture-button" id="setupFixtureButton" type="button" hidden>
             Start with fixture audio
           </button>
@@ -558,6 +560,6 @@
       </div>
 
     </main>
-    <script type="module" src="/src/app.js?v=20260902-credits-1"></script>
+    <script type="module" src="/src/app.js?v=20260903-help-info-2"></script>
   </body>
 </html>

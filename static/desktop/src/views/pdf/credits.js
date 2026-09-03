@@ -71,6 +71,7 @@ export function createPdfCreditsView({ onViewPlans }) {
           <h2>Drag and drop a PDF</h2>
           <p>or choose a file from your device</p>
           <button type="button" class="browse-btn" data-role="browse">Browse your files</button>
+          <p class="upload-privacy-note">Do not upload confidential or regulated material that requires a contractual retention or deletion guarantee.</p>
         </section>
         <section class="pdf-credit-setup-side" aria-label="Translation setup">
           <h2>Translate PDF</h2>
