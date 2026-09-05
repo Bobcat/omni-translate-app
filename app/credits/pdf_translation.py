@@ -238,6 +238,41 @@ def require_pdf_credit_operation(principal: Principal, request_id: str) -> Mappi
     return row
 
 
+def resume_pdf_credit_authorization(
+    principal: Principal,
+    envelope: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Retry authorization only for an already confirmed credit reservation."""
+    body = dict(envelope)
+    if str(body.get("state") or "").lower() != "awaiting_quota":
+        return body
+    ctx = _credit_context()
+    request_id = str(body.get("request_id") or "")
+    event = ctx.store.get_usage_event_by_job_id(
+        ctx.tenant,
+        request_id,
+        metric=CREDITS_METRIC,
+    )
+    if event is None or str(event["state"]) != "reserved":
+        return body
+    quote = ctx.credit_quote_service.for_operation(principal, request_id)
+    if quote is None or quote.action != PDF_CREDIT_ACTION:
+        raise RuntimeError("credit reservation has no confirmed PDF quote")
+    pricing = dict(quote.pricing_inputs)
+    try:
+        authorized = authorize_pdf_request(
+            request_id,
+            counting_version=str(pricing["source_character_counting_version"]),
+            source_character_count=int(pricing["source_characters"]),
+            target_language=str(pricing["target_lang_code"]),
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise RuntimeError("confirmed PDF quote has invalid authorization data") from exc
+    if str(authorized.get("request_id") or "") != request_id:
+        raise PdfTranslationError("translation-services returned an unexpected request_id")
+    return authorized
+
+
 def settle_pdf_credit_envelope(principal: Principal, envelope: Mapping[str, Any]) -> str:
     """Settle a confirmed PDF quote from durable upstream lifecycle state."""
     ctx = _credit_context()

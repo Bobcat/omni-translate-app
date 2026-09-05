@@ -16,6 +16,7 @@ from app.credits.pdf_translation import (
     confirm_pdf_credit_translation,
     quote_pdf_credit_translation,
     require_pdf_credit_operation,
+    resume_pdf_credit_authorization,
     settle_pdf_credit_envelope,
     submit_pdf_credit_preparation,
 )
@@ -477,6 +478,7 @@ def get_pdf_translation_request(request: Request, request_id: str) -> dict[str, 
     operation = require_pdf_credit_operation(principal, request_id)
     try:
         envelope = get_pdf_request(request_id)
+        envelope = resume_pdf_credit_authorization(principal, envelope)
     except PdfTranslationError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc))
     settle_pdf_credit_envelope(principal, envelope)

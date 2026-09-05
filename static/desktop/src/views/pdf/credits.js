@@ -444,9 +444,11 @@ export function createPdfCreditsView({ onViewPlans }) {
       scope = payload.pdf_scope || scope;
       renderQuote();
       remember();
+      return true;
     } catch (err) {
-      if (token !== quoteToken) return;
+      if (token !== quoteToken) return false;
       showError(err.message || 'Could not create the credit quote.');
+      return false;
     }
   }
 
@@ -526,8 +528,10 @@ export function createPdfCreditsView({ onViewPlans }) {
       if (token !== runToken) return;
       if (err?.code === 'QUOTE_EXPIRED') {
         quote = null;
-        await refreshQuote();
-        setStatus('The previous quote expired. Review the new credit amount before continuing.', true);
+        const refreshed = await refreshQuote();
+        if (refreshed) {
+          setStatus('The previous quote expired. Review the new credit amount before continuing.', true);
+        }
         setBusy(false);
         return;
       }

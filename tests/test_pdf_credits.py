@@ -14,14 +14,15 @@ from pypdf import PdfWriter
 from app.credits.pdf_translation import (
     confirm_pdf_credit_translation,
     quote_pdf_credit_translation,
+    resume_pdf_credit_authorization,
     settle_pdf_credit_envelope,
     submit_pdf_credit_preparation,
 )
 from app.credits.policy import CreditCostPolicy
 from app.credits.quotes import CREDITS_METRIC, CreditQuoteService
-from app.pdf_translation_bridge import prepare_pdf
+from app.pdf_translation_bridge import PdfTranslationError, prepare_pdf
 from saas.entitlements import EntitlementSet
-from saas.errors import CREDITS_EXHAUSTED, QUOTE_MISMATCH, SaasError
+from saas.errors import CREDITS_EXHAUSTED, QUOTE_EXPIRED, QUOTE_MISMATCH, SaasError
 from saas.principals import Principal
 from saas.storage import SaasStore
 from saas.usage import QuotaService
@@ -219,6 +220,24 @@ class PdfCreditFlowTests(unittest.TestCase):
         self.assertEqual(outcome, "released")
         self.assertEqual(self.usage(), (0, 0))
 
+    def test_cancel_before_authorization_returns_the_complete_reservation(self) -> None:
+        operation_id = str(uuid.uuid4())
+        self.prepare(operation_id)
+        quote = self.create_quote(operation_id)
+        self.confirm(operation_id, quote)
+
+        outcome = settle_pdf_credit_envelope(
+            self.principal,
+            {
+                "request_id": operation_id,
+                "state": "cancelled_before_authorization",
+                "quota": dict(QUOTA),
+            },
+        )
+
+        self.assertEqual(outcome, "released")
+        self.assertEqual(self.usage(), (0, 0))
+
     def test_cancel_after_compute_consumes_the_complete_quote(self) -> None:
         operation_id = str(uuid.uuid4())
         self.prepare(operation_id)
@@ -236,6 +255,162 @@ class PdfCreditFlowTests(unittest.TestCase):
 
         self.assertEqual(outcome, "consumed")
         self.assertEqual(self.usage(), (0, 390))
+
+    def test_recognized_technical_failures_return_the_complete_reservation(self) -> None:
+        for error_code in ("REQUEST_FAILED", "REQUEST_INTERRUPTED_BY_RESTART"):
+            with self.subTest(error_code=error_code):
+                operation_id = str(uuid.uuid4())
+                self.prepare(operation_id)
+                quote = self.create_quote(operation_id)
+                self.confirm(operation_id, quote)
+
+                outcome = settle_pdf_credit_envelope(
+                    self.principal,
+                    {
+                        "request_id": operation_id,
+                        "state": "failed",
+                        "quota": {
+                            **QUOTA,
+                            "compute_started_at_utc": datetime.now(timezone.utc).isoformat(),
+                        },
+                        "error": {"code": error_code},
+                    },
+                )
+
+                self.assertEqual(outcome, "released")
+                self.assertEqual(self.usage(), (0, 0))
+
+    def test_non_refundable_failure_consumes_the_complete_quote(self) -> None:
+        operation_id = str(uuid.uuid4())
+        self.prepare(operation_id)
+        quote = self.create_quote(operation_id)
+        self.confirm(operation_id, quote)
+
+        outcome = settle_pdf_credit_envelope(
+            self.principal,
+            {
+                "request_id": operation_id,
+                "state": "failed",
+                "quota": {
+                    **QUOTA,
+                    "compute_started_at_utc": datetime.now(timezone.utc).isoformat(),
+                },
+                "error": {"code": "INPUT_REJECTED"},
+            },
+        )
+
+        self.assertEqual(outcome, "consumed")
+        self.assertEqual(self.usage(), (0, 390))
+
+    def test_non_terminal_status_keeps_the_complete_reservation(self) -> None:
+        operation_id = str(uuid.uuid4())
+        self.prepare(operation_id)
+        quote = self.create_quote(operation_id)
+        self.confirm(operation_id, quote)
+
+        outcome = settle_pdf_credit_envelope(
+            self.principal,
+            {
+                "request_id": operation_id,
+                "state": "running",
+                "quota": {
+                    **QUOTA,
+                    "compute_started_at_utc": datetime.now(timezone.utc).isoformat(),
+                },
+            },
+        )
+
+        self.assertEqual(outcome, "reserved")
+        self.assertEqual(self.usage(), (390, 0))
+
+    def test_retry_after_lost_authorize_response_does_not_reserve_twice(self) -> None:
+        operation_id = str(uuid.uuid4())
+        self.prepare(operation_id)
+        quote = self.create_quote(operation_id)
+        waiting = {
+            "request_id": operation_id,
+            "state": "awaiting_quota",
+            "quota": dict(QUOTA),
+        }
+        queued = {
+            "request_id": operation_id,
+            "state": "queued",
+            "quota": dict(QUOTA),
+        }
+
+        with (
+            patch("app.credits.pdf_translation.get_pdf_request", return_value=waiting),
+            patch(
+                "app.credits.pdf_translation.authorize_pdf_request",
+                side_effect=[
+                    PdfTranslationError("authorization response was lost", status_code=502),
+                    queued,
+                ],
+            ) as authorize,
+        ):
+            with self.assertRaises(PdfTranslationError):
+                confirm_pdf_credit_translation(
+                    None,
+                    request_id=operation_id,
+                    quote_id=quote["id"],
+                    target_language="Dutch",
+                )
+            self.assertEqual(self.usage(), (390, 0))
+
+            envelope = confirm_pdf_credit_translation(
+                None,
+                request_id=operation_id,
+                quote_id=quote["id"],
+                target_language="Dutch",
+            )
+
+        self.assertEqual(authorize.call_count, 2)
+        self.assertEqual(envelope["credit_usage"]["credits"], 390)
+        self.assertEqual(self.usage(), (390, 0))
+
+    def test_status_recovery_resumes_an_already_reserved_authorization(self) -> None:
+        operation_id = str(uuid.uuid4())
+        self.prepare(operation_id)
+        quote = self.create_quote(operation_id)
+        waiting = {
+            "request_id": operation_id,
+            "state": "awaiting_quota",
+            "quota": dict(QUOTA),
+        }
+        with (
+            patch("app.credits.pdf_translation.get_pdf_request", return_value=waiting),
+            patch(
+                "app.credits.pdf_translation.authorize_pdf_request",
+                side_effect=PdfTranslationError(
+                    "authorization response was lost",
+                    status_code=502,
+                ),
+            ),
+            self.assertRaises(PdfTranslationError),
+        ):
+            confirm_pdf_credit_translation(
+                None,
+                request_id=operation_id,
+                quote_id=quote["id"],
+                target_language="Dutch",
+            )
+        self.assertEqual(self.usage(), (390, 0))
+
+        queued = {"request_id": operation_id, "state": "queued", "quota": dict(QUOTA)}
+        with patch(
+            "app.credits.pdf_translation.authorize_pdf_request",
+            return_value=queued,
+        ) as authorize:
+            recovered = resume_pdf_credit_authorization(self.principal, waiting)
+
+        self.assertEqual(recovered, queued)
+        authorize.assert_called_once_with(
+            operation_id,
+            counting_version="semantic-codepoints-v1",
+            source_character_count=32940,
+            target_language="nl",
+        )
+        self.assertEqual(self.usage(), (390, 0))
 
     def test_target_change_requires_its_own_quote(self) -> None:
         operation_id = str(uuid.uuid4())
@@ -277,6 +452,33 @@ class PdfCreditFlowTests(unittest.TestCase):
             )
 
         self.assertEqual(caught.exception.code, CREDITS_EXHAUSTED)
+        authorize.assert_not_called()
+        self.assertEqual(self.usage(), (0, 0))
+
+    def test_expired_quote_stops_before_authorization(self) -> None:
+        operation_id = str(uuid.uuid4())
+        self.prepare(operation_id)
+        quote = self.create_quote(operation_id)
+        expired_at = datetime.fromisoformat(quote["expires_at"]) + timedelta(seconds=1)
+        waiting = {
+            "request_id": operation_id,
+            "state": "awaiting_quota",
+            "quota": dict(QUOTA),
+        }
+        with (
+            patch("app.credits.pdf_translation.get_pdf_request", return_value=waiting),
+            patch("app.credits.quotes._utcnow", return_value=expired_at),
+            patch("app.credits.pdf_translation.authorize_pdf_request") as authorize,
+            self.assertRaises(SaasError) as caught,
+        ):
+            confirm_pdf_credit_translation(
+                None,
+                request_id=operation_id,
+                quote_id=quote["id"],
+                target_language="Dutch",
+            )
+
+        self.assertEqual(caught.exception.code, QUOTE_EXPIRED)
         authorize.assert_not_called()
         self.assertEqual(self.usage(), (0, 0))
 

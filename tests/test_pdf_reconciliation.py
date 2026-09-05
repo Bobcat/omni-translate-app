@@ -65,7 +65,12 @@ class PdfCreditReconciliationTests(unittest.TestCase):
             self.principal,
             action="pdf_translation",
             payload_hash="payload",
-            pricing_inputs={"pages": 2, "source_characters": 3393},
+            pricing_inputs={
+                "pages": 2,
+                "source_characters": 3393,
+                "source_character_counting_version": "semantic-codepoints-v1",
+                "target_lang_code": "nl",
+            },
             basis="pages+source_characters",
             basis_quantity=2,
             quoted_credits=100,
@@ -104,6 +109,65 @@ class PdfCreditReconciliationTests(unittest.TestCase):
 
         self.assertEqual(settled, 1)
         self.assertEqual(self._state(), "consumed")
+
+    def test_technical_failure_is_released_without_browser_polling(self) -> None:
+        with patch(
+            "app.pdf_reconciliation.get_pdf_request",
+            return_value={
+                "request_id": self.operation_id,
+                "state": "failed",
+                "error": {"code": "REQUEST_FAILED"},
+            },
+        ):
+            settled = reconcile_pdf_credit_reservations()
+
+        self.assertEqual(settled, 1)
+        self.assertEqual(self._state(), "released")
+
+    def test_cancel_after_compute_is_consumed_without_browser_polling(self) -> None:
+        with patch(
+            "app.pdf_reconciliation.get_pdf_request",
+            return_value={
+                "request_id": self.operation_id,
+                "state": "cancelled",
+                "quota": {"compute_started_at_utc": "2026-09-04T10:00:00+00:00"},
+            },
+        ):
+            settled = reconcile_pdf_credit_reservations()
+
+        self.assertEqual(settled, 1)
+        self.assertEqual(self._state(), "consumed")
+
+    def test_running_job_remains_reserved_without_browser_polling(self) -> None:
+        with patch(
+            "app.pdf_reconciliation.get_pdf_request",
+            return_value={"request_id": self.operation_id, "state": "running"},
+        ):
+            settled = reconcile_pdf_credit_reservations()
+
+        self.assertEqual(settled, 0)
+        self.assertEqual(self._state(), "reserved")
+
+    def test_confirmed_job_waiting_for_authorization_is_resumed(self) -> None:
+        waiting = {"request_id": self.operation_id, "state": "awaiting_quota"}
+        queued = {"request_id": self.operation_id, "state": "queued"}
+        with (
+            patch("app.pdf_reconciliation.get_pdf_request", return_value=waiting),
+            patch(
+                "app.credits.pdf_translation.authorize_pdf_request",
+                return_value=queued,
+            ) as authorize,
+        ):
+            settled = reconcile_pdf_credit_reservations()
+
+        self.assertEqual(settled, 0)
+        self.assertEqual(self._state(), "reserved")
+        authorize.assert_called_once_with(
+            self.operation_id,
+            counting_version="semantic-codepoints-v1",
+            source_character_count=3393,
+            target_language="nl",
+        )
 
     def test_missing_job_before_grace_period_remains_reserved(self) -> None:
         event = self.store.get_usage_event(self.reservation.id)

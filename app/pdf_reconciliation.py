@@ -7,7 +7,10 @@ import uuid
 from datetime import datetime, timezone
 
 from app.config import get_float
-from app.credits.pdf_translation import settle_pdf_credit_envelope
+from app.credits.pdf_translation import (
+    resume_pdf_credit_authorization,
+    settle_pdf_credit_envelope,
+)
 from app.credits.quotes import CREDITS_METRIC
 from app.pdf_translation_bridge import PdfTranslationError, get_pdf_request
 from app.saas_setup import get_saas_context
@@ -81,6 +84,7 @@ def reconcile_pdf_credit_reservations(
             plan_code="",
         )
         try:
+            envelope = resume_pdf_credit_authorization(principal, envelope)
             outcome = settle_pdf_credit_envelope(principal, envelope)
         except Exception:
             logger.warning("could not settle PDF credit request %s", request_id, exc_info=True)

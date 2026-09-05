@@ -175,6 +175,32 @@ class PdfTranslationRouteTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), body)
 
+    def test_status_resumes_an_already_confirmed_authorization(self) -> None:
+        principal = object()
+        operation = {"operation_id": "req-owned"}
+        waiting = {"request_id": "req-owned", "state": "awaiting_quota"}
+        queued = {"request_id": "req-owned", "state": "queued"}
+        body = {"request_id": "req-owned", "state": "queued", "pdf_scope": {}}
+        with (
+            patch(
+                "app.router.resolve_request_context",
+                return_value=(principal, None, None),
+            ),
+            patch("app.router.require_pdf_credit_operation", return_value=operation),
+            patch("app.router.get_pdf_request", return_value=waiting),
+            patch(
+                "app.router.resume_pdf_credit_authorization",
+                return_value=queued,
+            ) as resume,
+            patch("app.router.settle_pdf_credit_envelope"),
+            patch("app.router.attach_pdf_credit_context", return_value=body),
+        ):
+            response = self.client.get("/api/pdf-translation/requests/req-owned")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), body)
+        resume.assert_called_once_with(principal, waiting)
+
     def test_cancel_does_not_touch_an_unowned_request(self) -> None:
         with (
             patch("app.router.resolve_request_context", return_value=(object(), None, None)),

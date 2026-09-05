@@ -28,7 +28,7 @@ import { registerImageSignOutCancellation } from '../shared/image-operation-reco
 import { createVoiceWorkflow } from './src/views/voice/index.js?v=20260903-help-info-1';
 import { createTextView } from './src/views/text/index.js?v=20260903-help-info-1';
 import { createImageView } from './src/views/image/index.js?v=20260903-help-info-1';
-import { createPdfView } from './src/views/pdf/index.js?v=20260903-help-info-1';
+import { createPdfView } from './src/views/pdf/index.js?v=20260904-credits-recovery-1';
 import { createInfoView } from './src/views/info/index.js?v=20260903-help-info-2';
 import { createSettingsView } from './src/views/settings/index.js?v=20260829-voice-modes-11';
 import { createAccountView } from './src/views/account/index.js?v=20260902-credits-30';
