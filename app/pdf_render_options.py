@@ -11,7 +11,7 @@ class PdfRenderOptions(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    page_layout_mode: Literal["fit", "typeset"] = "typeset"
+    page_layout_mode: Literal["auto", "fit", "typeset"] = "auto"
     page_scale: float = Field(default=0.9, ge=0.5, le=1.0)
     render_size_mode: Literal["min", "median"] = "median"
     erase_fill_mode: Literal["flat", "inpaint"] = "inpaint"

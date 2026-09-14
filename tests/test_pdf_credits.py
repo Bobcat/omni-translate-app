@@ -206,6 +206,25 @@ class PdfCreditFlowTests(unittest.TestCase):
         self.assertEqual(settle_pdf_credit_envelope(self.principal, completed), "consumed")
         self.assertEqual(self.usage(), (0, 390))
 
+    def test_preparation_sends_auto_page_layout_mode(self) -> None:
+        operation_id = str(uuid.uuid4())
+        with patch(
+            "app.credits.pdf_translation.prepare_pdf",
+            return_value={"request_id": operation_id, "state": "queued"},
+        ) as prepare:
+            submit_pdf_credit_preparation(
+                None,
+                document_bytes=make_pdf(2),
+                filename="doc.pdf",
+                content_type="application/pdf",
+                operation_id=operation_id,
+            )
+
+        self.assertEqual(
+            prepare.call_args.kwargs["render_options"]["page_layout_mode"],
+            "auto",
+        )
+
     def test_cancel_before_compute_returns_the_complete_reservation(self) -> None:
         operation_id = str(uuid.uuid4())
         self.prepare(operation_id)
