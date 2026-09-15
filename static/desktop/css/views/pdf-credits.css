@@ -230,6 +230,11 @@
   user-select: none;
 }
 
+/* The text-layer selection rule outranks the guard above on specificity. */
+.pdf-credit-grid.is-resizing .textLayer :is(span, br) {
+  user-select: none;
+}
+
 .pdf-credit-source-placeholder {
   display: flex;
   flex: 1;

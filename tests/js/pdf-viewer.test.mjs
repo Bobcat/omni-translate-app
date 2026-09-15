@@ -11,7 +11,7 @@ import {
   pdfLinkBounds,
   pdfPageInViewport,
   pdfScaleFromPercentage,
-} from '../../static/desktop/src/views/pdf/viewer/index.js?v=20260901-pdfjs-14';
+} from '../../static/desktop/src/views/pdf/viewer/index.js?v=20260915-pdfjs-17';
 
 
 test('PDF viewer scale stays inside its supported zoom range', () => {

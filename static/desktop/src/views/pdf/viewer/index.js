@@ -220,6 +220,7 @@ export function createPdfViewer({ label = 'PDF' } = {}) {
   ];
 
   let loadingTask = null;
+  let pdfjsLib = null;
   let pdfDocument = null;
   let pages = [];
   let maxUnitPageWidth = 0;
@@ -265,11 +266,24 @@ export function createPdfViewer({ label = 'PDF' } = {}) {
     }
   }
 
-  function releasePage(page) {
+  function releasePage(page, { keepTextLayer = false } = {}) {
     const task = page.renderTask;
     page.renderTask = null;
     page.renderPromise = null;
     page.renderedScale = 0;
+    const textTask = page.textLayerTask;
+    page.textLayerTask = null;
+    if (textTask) {
+      textTask.cancel();
+      // A cancelled text layer may hold partially appended spans.
+      page.textLayer.replaceChildren();
+      page.textLayerRendered = false;
+      page.textLayerInstance = null;
+    } else if (!keepTextLayer) {
+      page.textLayer.replaceChildren();
+      page.textLayerRendered = false;
+      page.textLayerInstance = null;
+    }
     if (task) {
       // A cancelled PDF.js task may settle asynchronously. Give any immediate
       // replacement render its own canvas so the two tasks never share one.
@@ -285,9 +299,9 @@ export function createPdfViewer({ label = 'PDF' } = {}) {
     }
   }
 
-  function cancelRenders() {
+  function cancelRenders(options) {
     ++renderToken;
-    for (const page of pages) releasePage(page);
+    for (const page of pages) releasePage(page, options);
   }
 
   async function disposeDocument() {
@@ -303,6 +317,8 @@ export function createPdfViewer({ label = 'PDF' } = {}) {
         await task.destroy();
       } catch {}
     }
+    // Releases the shared measurement canvases; no-ops while layers render.
+    pdfjsLib?.TextLayer?.cleanup();
   }
 
   function buildPageElements(pdfPages) {
@@ -318,13 +334,16 @@ export function createPdfViewer({ label = 'PDF' } = {}) {
       const canvas = document.createElement('canvas');
       canvas.setAttribute('role', 'img');
       canvas.setAttribute('aria-label', `${label}, page ${pageNumber} of ${pdfPages.length}`);
+      const textLayer = document.createElement('div');
+      textLayer.className = 'textLayer';
+      textLayer.setAttribute('aria-hidden', 'true');
       const linkLayer = document.createElement('div');
       linkLayer.className = 'pdf-viewer-link-layer';
       const errorElement = document.createElement('div');
       errorElement.className = 'pdf-viewer-page-error';
       errorElement.textContent = 'This page could not be rendered.';
       errorElement.hidden = true;
-      pageElement.append(canvas, linkLayer, errorElement);
+      pageElement.append(canvas, textLayer, linkLayer, errorElement);
       fragment.append(pageElement);
       return {
         pageNumber,
@@ -335,6 +354,10 @@ export function createPdfViewer({ label = 'PDF' } = {}) {
         cssHeight: unitViewport.height,
         element: pageElement,
         canvas,
+        textLayer,
+        textLayerTask: null,
+        textLayerRendered: false,
+        textLayerInstance: null,
         linkLayer,
         annotations: [],
         errorElement,
@@ -423,8 +446,11 @@ export function createPdfViewer({ label = 'PDF' } = {}) {
       page.cssHeight = pageViewport.height;
       page.element.style.width = `${page.cssWidth}px`;
       page.element.style.height = `${page.cssHeight}px`;
+      page.element.style.setProperty('--scale-factor', String(currentScale));
+      page.element.style.setProperty('--user-unit', String(page.pdfPage.userUnit || 1));
       page.canvas.style.width = `${page.cssWidth}px`;
       page.canvas.style.height = `${page.cssHeight}px`;
+      page.textLayerInstance?.update({ viewport: pageViewport });
       renderPageLinks(page);
     }
   }
@@ -450,6 +476,34 @@ export function createPdfViewer({ label = 'PDF' } = {}) {
     const currentPoint = pageRect.top + ((anchor?.ratio || 0) * pageRect.height);
     const desiredPoint = viewportRect.top + (viewportElement.clientHeight / 2);
     viewportElement.scrollTop += currentPoint - desiredPoint;
+  }
+
+  // The text layer scales with CSS variables, so a completed render survives
+  // zooming; keeping it also keeps the user's text selection alive. Zoom only
+  // needs TextLayer.update() to re-measure the per-span horizontal correction.
+  async function renderPageText(page, viewport) {
+    if (!pdfjsLib?.TextLayer || page.textLayerRendered) return;
+    let textTask = null;
+    try {
+      page.textLayer.replaceChildren();
+      // streamTextContent() can throw on a torn-down transport; keep it inside
+      // the try so the fire-and-forget call never rejects unhandled.
+      textTask = new pdfjsLib.TextLayer({
+        textContentSource: page.pdfPage.streamTextContent(),
+        container: page.textLayer,
+        viewport,
+      });
+      page.textLayerTask = textTask;
+      await textTask.render();
+      page.textLayerRendered = page.textLayerTask === textTask;
+      if (page.textLayerRendered) page.textLayerInstance = textTask;
+    } catch (error) {
+      if (error?.name !== 'AbortException') {
+        console.error(`Could not render PDF text layer for page ${page.pageNumber}.`, error);
+      }
+    } finally {
+      if (textTask && page.textLayerTask === textTask) page.textLayerTask = null;
+    }
   }
 
   async function renderPage(page) {
@@ -484,6 +538,9 @@ export function createPdfViewer({ label = 'PDF' } = {}) {
         await task.promise;
         if (token !== renderToken || page.renderTask !== task) return;
         page.renderedScale = scaleAtStart;
+        // Text extraction has its own cancellation path; the busy state and the
+        // rendered canvas should not wait on it.
+        void renderPageText(page, pageViewport);
       } catch (error) {
         if (token !== renderToken || error?.name === 'RenderingCancelledException') return;
         console.error(`Could not render PDF page ${page.pageNumber}.`, error);
@@ -555,7 +612,7 @@ export function createPdfViewer({ label = 'PDF' } = {}) {
   async function refreshDocumentLayout({ resetScroll = false, preservePosition = true } = {}) {
     if (!pdfDocument || !pages.length || destroyed) return;
     const anchor = preservePosition ? captureScrollAnchor() : null;
-    cancelRenders();
+    cancelRenders({ keepTextLayer: true });
     const token = renderToken;
     layoutPages();
     setMessage('');
@@ -685,6 +742,7 @@ export function createPdfViewer({ label = 'PDF' } = {}) {
         return false;
       }
       pdfDocument = loadedDocument;
+      pdfjsLib = pdfjs;
       const pdfPages = await Promise.all(
         Array.from({ length: loadedDocument.numPages }, (_unused, index) => loadedDocument.getPage(index + 1)),
       );
