@@ -24,7 +24,7 @@ import {
 } from './credit-copy.js?v=20260902-credits-8';
 import { pdfPendingText } from './progress.js?v=20260902-credits-1';
 import { attachPdfSplitView } from './split-view.js?v=20260901-credits-9';
-import { createPdfViewer } from './viewer/index.js?v=20260915-pdfjs-17';
+import { createPdfViewer } from './viewer/index.js?v=20261006-pdfjs-quality-1';
 
 const POLL_INTERVAL_MS = 1000;
 const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;

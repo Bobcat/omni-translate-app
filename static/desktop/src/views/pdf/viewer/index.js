@@ -4,11 +4,10 @@ const PDFJS_WORKER_URL = new URL('legacy/build/pdf.worker.min.mjs', PDFJS_ROOT_U
 
 const MIN_SCALE = 0.25;
 const MAX_SCALE = 4;
-const ZOOM_FACTOR = 1.2;
+const ZOOM_FACTOR = 1.1;
 const VIEWPORT_GUTTER_PX = 36;
-const MIN_CANVAS_OUTPUT_SCALE = 2;
-const MAX_CANVAS_OUTPUT_SCALE = 3;
-const MAX_CANVAS_PIXELS = 16 * 1024 * 1024;
+const PDF_TO_CSS_UNITS = 96 / 72;
+const MAX_CANVAS_PIXELS = 4096 * 8192;
 const RENDER_MARGIN_VIEWPORTS = 1;
 const RETAIN_MARGIN_VIEWPORTS = 2.5;
 
@@ -35,7 +34,7 @@ export function clampPdfScale(value) {
 
 export function pdfFitWidthScale(containerWidth, pageWidth, gutter = VIEWPORT_GUTTER_PX) {
   const availableWidth = Number(containerWidth) - Number(gutter);
-  const sourceWidth = Number(pageWidth);
+  const sourceWidth = Number(pageWidth) * PDF_TO_CSS_UNITS;
   if (!(availableWidth > 0) || !(sourceWidth > 0)) return 1;
   return clampPdfScale(availableWidth / sourceWidth);
 }
@@ -49,8 +48,8 @@ export function pdfFitPageScale(
 ) {
   const availableWidth = Number(containerWidth) - Number(gutter);
   const availableHeight = Number(containerHeight) - Number(gutter);
-  const sourceWidth = Number(pageWidth);
-  const sourceHeight = Number(pageHeight);
+  const sourceWidth = Number(pageWidth) * PDF_TO_CSS_UNITS;
+  const sourceHeight = Number(pageHeight) * PDF_TO_CSS_UNITS;
   if (
     !(availableWidth > 0)
     || !(availableHeight > 0)
@@ -68,6 +67,10 @@ export function pdfScaleFromPercentage(value) {
   return clampPdfScale(percentage / 100);
 }
 
+export function pdfViewportScale(zoomScale) {
+  return Number(zoomScale) * PDF_TO_CSS_UNITS;
+}
+
 export function pdfCanvasOutputScale(
   width,
   height,
@@ -75,12 +78,74 @@ export function pdfCanvasOutputScale(
   maxCanvasPixels = MAX_CANVAS_PIXELS,
 ) {
   const cssPixels = Math.max(1, Number(width) * Number(height));
-  const preferred = Math.min(
-    MAX_CANVAS_OUTPUT_SCALE,
-    Math.max(MIN_CANVAS_OUTPUT_SCALE, Number(devicePixelRatio) || 1),
-  );
+  const ratio = Number(devicePixelRatio);
+  const preferred = Number.isFinite(ratio) && ratio > 0 ? ratio : 1;
   const pixelLimit = Math.max(1, Number(maxCanvasPixels) || MAX_CANVAS_PIXELS);
-  return Math.max(0.25, Math.min(preferred, Math.sqrt(pixelLimit / cssPixels)));
+  return Math.min(preferred, Math.sqrt(pixelLimit / cssPixels));
+}
+
+function approximateFraction(value) {
+  if (Math.floor(value) === value) return [value, 1];
+  const inverse = 1 / value;
+  const limit = 8;
+  if (inverse > limit) return [1, limit];
+  if (Math.floor(inverse) === inverse) return [1, inverse];
+
+  const target = value > 1 ? inverse : value;
+  let lowerNumerator = 0;
+  let lowerDenominator = 1;
+  let upperNumerator = 1;
+  let upperDenominator = 1;
+  while (true) {
+    const numerator = lowerNumerator + upperNumerator;
+    const denominator = lowerDenominator + upperDenominator;
+    if (denominator > limit) break;
+    if (target <= numerator / denominator) {
+      upperNumerator = numerator;
+      upperDenominator = denominator;
+    } else {
+      lowerNumerator = numerator;
+      lowerDenominator = denominator;
+    }
+  }
+  const useLower = target - (lowerNumerator / lowerDenominator)
+    < (upperNumerator / upperDenominator) - target;
+  const numerator = useLower ? lowerNumerator : upperNumerator;
+  const denominator = useLower ? lowerDenominator : upperDenominator;
+  return target === value ? [numerator, denominator] : [denominator, numerator];
+}
+
+export function pdfCanvasDimensions(width, height, outputScale) {
+  const sourceWidth = Math.max(1, Number(width) || 1);
+  const sourceHeight = Math.max(1, Number(height) || 1);
+  const scale = Math.max(Number.EPSILON, Number(outputScale) || 1);
+  const [scaleNumerator, scaleDenominator] = approximateFraction(scale);
+  const canvasWidth = Math.max(
+    scaleNumerator,
+    Math.floor((sourceWidth * scale) / scaleNumerator) * scaleNumerator,
+  );
+  const canvasHeight = Math.max(
+    scaleNumerator,
+    Math.floor((sourceHeight * scale) / scaleNumerator) * scaleNumerator,
+  );
+  const cssWidth = Math.max(
+    scaleDenominator,
+    Math.floor(sourceWidth / scaleDenominator) * scaleDenominator,
+  );
+  const cssHeight = Math.max(
+    scaleDenominator,
+    Math.floor(sourceHeight / scaleDenominator) * scaleDenominator,
+  );
+  return {
+    canvasWidth,
+    canvasHeight,
+    cssWidth,
+    cssHeight,
+    scaleX: canvasWidth / cssWidth,
+    scaleY: canvasHeight / cssHeight,
+    scaleRoundX: scaleDenominator,
+    scaleRoundY: scaleDenominator,
+  };
 }
 
 export function pdfPageInViewport(pages, viewportTop, viewportHeight) {
@@ -390,7 +455,7 @@ export function createPdfViewer({ label = 'PDF' } = {}) {
   }
 
   function renderPageLinks(page) {
-    const viewport = page.pdfPage.getViewport({ scale: currentScale });
+    const viewport = page.pdfPage.getViewport({ scale: pdfViewportScale(currentScale) });
     const fragment = document.createDocumentFragment();
     for (const annotation of page.annotations) {
       if (annotation?.subtype !== 'Link') continue;
@@ -441,13 +506,25 @@ export function createPdfViewer({ label = 'PDF' } = {}) {
 
   function layoutPages() {
     for (const page of pages) {
-      const pageViewport = page.pdfPage.getViewport({ scale: currentScale });
-      page.cssWidth = pageViewport.width;
-      page.cssHeight = pageViewport.height;
+      const pageViewport = page.pdfPage.getViewport({ scale: pdfViewportScale(currentScale) });
+      const outputScale = pdfCanvasOutputScale(
+        pageViewport.width,
+        pageViewport.height,
+        globalThis.devicePixelRatio,
+      );
+      const canvasDimensions = pdfCanvasDimensions(
+        pageViewport.width,
+        pageViewport.height,
+        outputScale,
+      );
+      page.cssWidth = canvasDimensions.cssWidth;
+      page.cssHeight = canvasDimensions.cssHeight;
       page.element.style.width = `${page.cssWidth}px`;
       page.element.style.height = `${page.cssHeight}px`;
-      page.element.style.setProperty('--scale-factor', String(currentScale));
+      page.element.style.setProperty('--scale-factor', String(pdfViewportScale(currentScale)));
       page.element.style.setProperty('--user-unit', String(page.pdfPage.userUnit || 1));
+      page.element.style.setProperty('--scale-round-x', `${canvasDimensions.scaleRoundX}px`);
+      page.element.style.setProperty('--scale-round-y', `${canvasDimensions.scaleRoundY}px`);
       page.canvas.style.width = `${page.cssWidth}px`;
       page.canvas.style.height = `${page.cssHeight}px`;
       page.textLayerInstance?.update({ viewport: pageViewport });
@@ -517,21 +594,26 @@ export function createPdfViewer({ label = 'PDF' } = {}) {
     let promise = null;
     promise = Promise.resolve().then(async () => {
       try {
-        const pageViewport = page.pdfPage.getViewport({ scale: scaleAtStart });
+        const pageViewport = page.pdfPage.getViewport({ scale: pdfViewportScale(scaleAtStart) });
         const outputScale = pdfCanvasOutputScale(
           pageViewport.width,
           pageViewport.height,
           globalThis.devicePixelRatio,
         );
-        page.canvas.width = Math.max(1, Math.ceil(pageViewport.width * outputScale));
-        page.canvas.height = Math.max(1, Math.ceil(pageViewport.height * outputScale));
-        const context = page.canvas.getContext('2d', { alpha: false });
-        if (!context) throw new Error('Canvas rendering is unavailable.');
+        const canvasDimensions = pdfCanvasDimensions(
+          pageViewport.width,
+          pageViewport.height,
+          outputScale,
+        );
+        page.canvas.width = canvasDimensions.canvasWidth;
+        page.canvas.height = canvasDimensions.canvasHeight;
         page.errorElement.hidden = true;
         task = page.pdfPage.render({
-          canvasContext: context,
+          canvas: page.canvas,
           viewport: pageViewport,
-          transform: outputScale === 1 ? null : [outputScale, 0, 0, outputScale, 0, 0],
+          transform: canvasDimensions.scaleX === 1 && canvasDimensions.scaleY === 1
+            ? null
+            : [canvasDimensions.scaleX, 0, 0, canvasDimensions.scaleY, 0, 0],
           background: '#ffffff',
         });
         page.renderTask = task;
@@ -730,6 +812,7 @@ export function createPdfViewer({ label = 'PDF' } = {}) {
         standardFontDataUrl: new URL('standard_fonts/', PDFJS_ROOT_URL).href,
         wasmUrl: new URL('wasm/', PDFJS_ROOT_URL).href,
         useWorkerFetch: true,
+        enableHWA: true,
         canvasMaxAreaInBytes: 64 * 1024 * 1024,
       });
       loadingTask = task;

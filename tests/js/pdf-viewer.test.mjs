@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   clampPdfScale,
+  pdfCanvasDimensions,
   pdfCanvasOutputScale,
   pdfFitPageScale,
   pdfFitWidthScale,
@@ -11,7 +12,8 @@ import {
   pdfLinkBounds,
   pdfPageInViewport,
   pdfScaleFromPercentage,
-} from '../../static/desktop/src/views/pdf/viewer/index.js?v=20260915-pdfjs-17';
+  pdfViewportScale,
+} from '../../static/desktop/src/views/pdf/viewer/index.js?v=20261006-pdfjs-quality-1';
 
 
 test('PDF viewer scale stays inside its supported zoom range', () => {
@@ -23,16 +25,22 @@ test('PDF viewer scale stays inside its supported zoom range', () => {
 
 
 test('PDF fit-width scale uses the available pane width', () => {
-  assert.equal(pdfFitWidthScale(648, 612, 36), 1);
-  assert.equal(pdfFitWidthScale(342, 612, 36), 0.5);
+  assert.equal(pdfFitWidthScale(852, 612, 36), 1);
+  assert.equal(pdfFitWidthScale(444, 612, 36), 0.5);
   assert.equal(pdfFitWidthScale(0, 612, 36), 1);
 });
 
 
 test('PDF fit-page scale keeps the whole page inside the pane', () => {
-  assert.equal(pdfFitPageScale(648, 828, 612, 792, 36), 1);
-  assert.equal(pdfFitPageScale(648, 432, 612, 792, 36), 0.5);
+  assert.equal(pdfFitPageScale(852, 1092, 612, 792, 36), 1);
+  assert.equal(pdfFitPageScale(852, 564, 612, 792, 36), 0.5);
   assert.equal(pdfFitPageScale(0, 432, 612, 792, 36), 1);
+});
+
+
+test('PDF zoom percentage uses the viewer standard 96-DPI CSS scale', () => {
+  assert.equal(pdfViewportScale(1), 4 / 3);
+  assert.equal(pdfViewportScale(0.9), 1.2);
 });
 
 
@@ -47,10 +55,34 @@ test('PDF zoom percentage accepts plain and percent-suffixed values', () => {
 
 
 test('PDF canvas scale respects HiDPI and the canvas pixel ceiling', () => {
-  assert.equal(pdfCanvasOutputScale(1000, 1000, 1), 2);
+  assert.equal(pdfCanvasOutputScale(1000, 1000, 1), 1);
   assert.equal(pdfCanvasOutputScale(1000, 1000, 3), 3);
-  assert.equal(pdfCanvasOutputScale(1000, 1000, 4), 3);
+  assert.equal(pdfCanvasOutputScale(1000, 1000, 4), 4);
   assert.equal(pdfCanvasOutputScale(4000, 4000, 2, 4_000_000), 0.5);
+});
+
+
+test('PDF canvas dimensions preserve a rational device-pixel scale', () => {
+  assert.deepEqual(pdfCanvasDimensions(816.4, 1056.6, 1), {
+    canvasWidth: 816,
+    canvasHeight: 1056,
+    cssWidth: 816,
+    cssHeight: 1056,
+    scaleX: 1,
+    scaleY: 1,
+    scaleRoundX: 1,
+    scaleRoundY: 1,
+  });
+  assert.deepEqual(pdfCanvasDimensions(816.4, 1056.6, 1.25), {
+    canvasWidth: 1020,
+    canvasHeight: 1320,
+    cssWidth: 816,
+    cssHeight: 1056,
+    scaleX: 1.25,
+    scaleY: 1.25,
+    scaleRoundX: 4,
+    scaleRoundY: 4,
+  });
 });
 
 
