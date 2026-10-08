@@ -34,6 +34,11 @@ _PLAN_CONFIG = {
         "compute": {"credits_per_period": 1000000},
         "voice_library": {"curate": True},
     },
+    # A capability value that is not a boolean must never grant the write.
+    "malformed": {
+        "compute": {"credits_per_period": 1000000},
+        "voice_library": {"curate": "false"},
+    },
 }
 PLANS = {code: EntitlementService.flatten(values) for code, values in _PLAN_CONFIG.items()}
 
@@ -126,6 +131,31 @@ class VoiceLibraryRouteTests(unittest.TestCase):
     def test_public_reads_still_answer_for_anonymous_callers(self) -> None:
         response = self.client.get("/api/health")
         self.assertEqual(response.status_code, 200)
+
+    def test_a_malformed_capability_value_does_not_grant_the_write(self) -> None:
+        identity_id = self.store.get_or_create_external_identity(TENANT, OPERATOR_SUB)
+        malformed_ctx = SaasContext(
+            store=self.store,
+            entitlement_service=EntitlementService(PLANS, {str(identity_id): "malformed"}),
+            quota_service=QuotaService(self.store),
+            signing_secret="voice-library-test-secret",
+            tenant=TENANT,
+            token_verifier=_StubVerifier(),
+            user_plan="free",
+        )
+        with patch("app.saas_setup.get_saas_context", return_value=malformed_ctx):
+            with patch("app.router.generate_stable_sample") as generate:
+                response = self.client.post(
+                    "/api/voice-library/stable",
+                    json={"language": LANGUAGE, "gender": GENDER, "engine": "voxcpm2"},
+                    headers=self._operator_headers(),
+                )
+        self.assertEqual(response.status_code, 403)
+        details = response.json()["error"]["details"]
+        self.assertEqual(response.json()["error"]["code"], ENTITLEMENT_DISABLED)
+        self.assertEqual(details["entitlement"], "voice_library.curate")
+        self.assertEqual(details["plan"], "malformed")
+        self.assertEqual(generate.call_count, 0)
 
 
 class VoiceLibraryCurationGuardTests(unittest.TestCase):

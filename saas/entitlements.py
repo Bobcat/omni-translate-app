@@ -27,7 +27,11 @@ class EntitlementSet:
         return key in self._values
 
     def is_enabled(self, key: str) -> bool:
-        return bool(self._values.get(key, False))
+        # Strict: a capability counts as enabled only when the plan says so with
+        # an actual boolean. Config values arrive from JSON, where "false", 0
+        # and [] are all easy to write by accident, and coercing them would let
+        # a malformed plan entry grant a capability.
+        return self._values.get(key) is True
 
     def require_enabled(self, key: str) -> None:
         if not self.is_enabled(key):
