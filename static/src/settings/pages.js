@@ -4,6 +4,7 @@
 
 import { state } from '../state.js';
 import { els } from '../els.js';
+import { isDevMode } from './dev-mode.js';
 import { renderTuningSettings } from './tuning.js';
 import { renderTtsSettings } from './tts.js';
 import { renderVoiceLibraryPage, voiceLibraryOnExit } from './voice-library.js';
@@ -19,6 +20,29 @@ import {
 } from '../../shared/info/index.js?v=20260903-help-info-2';
 
 const PAGES = ['account', 'appearance', 'microphone', 'audio', 'history', 'dev-tools', 'tuning', 'voice-library', 'image-render'];
+
+// Menu rows that only exist while dev mode is on. Everything else in the sheet
+// is the user-facing set the desktop settings view also offers.
+const DEV_ONLY_ROWS = [
+  els.settingsAudioNav,
+  els.settingsHistoryNav,
+  els.settingsImageRenderNav,
+  els.settingsDevToolsNav,
+];
+
+/** Whether a subpage is part of the developer-only set. */
+export function isDevOnlyPage(page) {
+  return page === 'audio' || page === 'history' || page === 'dev-tools'
+    || page === 'tuning' || page === 'voice-library' || page === 'image-render';
+}
+
+/** Show or hide the developer rows for the current mode. */
+export function renderSettingsMenuRows() {
+  const devMode = isDevMode();
+  for (const row of DEV_ONLY_ROWS) {
+    if (row) row.hidden = !devMode;
+  }
+}
 
 function infoPageForPage(page) {
   if (!page.startsWith('info-')) return null;

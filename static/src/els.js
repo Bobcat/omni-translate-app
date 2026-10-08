@@ -75,6 +75,7 @@ export const els = {
   settingsTuningNav: document.querySelector('#settingsTuningNav'),
   settingsTuningPage: document.querySelector('#settingsTuningPage'),
   devToolsShowControls: document.querySelector('#devToolsShowControls'),
+  devToolsDevMode: document.querySelector('#devToolsDevMode'),
   devToolsStorageReset: document.querySelector('#devToolsStorageReset'),
   setupFixtureButton: document.querySelector('#setupFixtureButton'),
   settingsMicrophonePage: document.querySelector('#settingsMicrophonePage'),

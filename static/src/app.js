@@ -35,6 +35,14 @@ import {
   handleSettingsBack,
 } from './settings/sheet.js';
 import {
+  initDevMode,
+  setDevMode,
+} from './settings/dev-mode.js';
+import {
+  isDevOnlyPage,
+  renderSettingsMenuRows,
+} from './settings/pages.js?v=20260903-help-info-2';
+import {
   renderAudioSettings,
   handlePreGainInput,
   handleAutoGainControlChange,
@@ -120,6 +128,17 @@ init().catch(() => {
   setStatus('error');
 });
 
+// Dev mode only controls which settings rows are offered; leaving it while a
+// developer subpage is open would strand that page, so return to the root.
+function handleDevModeChange() {
+  const enabling = els.devToolsDevMode.checked;
+  setDevMode(enabling);
+  renderSettingsMenuRows();
+  if (!enabling && isDevOnlyPage(state.settingsPage)) {
+    navigateSettingsPage('home');
+  }
+}
+
 async function init() {
   // Paint the language pills before the network request so they show
   // the right values from the start (state.js already initialised them
@@ -191,6 +210,7 @@ async function init() {
   els.voiceLibraryControls.addEventListener('change', handleVoiceLibraryChange);
   els.voiceLibraryControls.addEventListener('click', handleVoiceLibraryClick);
   els.devToolsShowControls.addEventListener('change', handleDevToolsShowControlsChange);
+  els.devToolsDevMode.addEventListener('change', handleDevModeChange);
   els.devToolsStorageReset.addEventListener('click', handleClearAppStorage);
   els.setupFixtureButton.addEventListener('click', handleSetupFixtureClick);
   els.installAppRow.addEventListener('click', () => handleInstallApp({ closeSettings: closeSettingsSheet }));
@@ -234,6 +254,8 @@ async function init() {
   setupAutoFollow(els.sourceText);
   setupAutoFollow(els.targetText);
   renderTranscript();
+  initDevMode();
+  renderSettingsMenuRows();
   initAppearance();
   renderAppearanceSettings();
   renderAudioSettings();

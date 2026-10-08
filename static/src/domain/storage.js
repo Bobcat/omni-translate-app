@@ -188,9 +188,9 @@ export function loadDevToolsSettings() {
     const showControls = typeof saved.showControls === 'boolean'
       ? saved.showControls
       : Boolean(saved.showPcExport);
-    return { showControls };
+    return { showControls, devMode: Boolean(saved.devMode) };
   } catch {
-    return { showControls: false };
+    return { showControls: false, devMode: false };
   }
 }
 
