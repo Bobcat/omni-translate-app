@@ -180,6 +180,17 @@ def resolve_request_entitlements(request: Request) -> tuple[EntitlementSet, str 
     return entitlements, token
 
 
+def require_voice_library_curation(request: Request) -> Principal:
+    """Guard the shared voice-library writes: generating, keeping or discarding
+    a sample changes the reference voice every session in that language uses.
+    Reads stay public — the browser plays the sample, and the TTS bridge reads
+    the WAV straight from disk. Fails closed: a plan without the capability is
+    refused, so a missing plan entry can never grant curation."""
+    principal, entitlements, _ = resolve_request_context(request)
+    entitlements.require_enabled("voice_library.curate")
+    return principal
+
+
 def stage_fresh_anonymous_identity(request: Request) -> None:
     """Replace the browser's anonymous identity on the final response."""
     ctx = get_saas_context()
