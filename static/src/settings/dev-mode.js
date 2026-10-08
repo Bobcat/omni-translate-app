@@ -43,13 +43,13 @@ export function setDevMode(enabled) {
 
 /** Apply the URL switch at start-up: enabling wins, `?dev=0` turns it off. */
 export function applyDevModeParam(search = window.location.search) {
-  if (isDevModeEnabled(search)) {
-    setDevMode(true);
-    stripDevParam();
-    return true;
-  }
-  if (new URLSearchParams(search).has(DEV_PARAM)) setDevMode(false);
-  return false;
+  const params = new URLSearchParams(search);
+  if (!params.has(DEV_PARAM)) return false;
+  setDevMode(isDevModeEnabled(search));
+  // Strip the parameter either way: it is a one-visit switch, and a copied URL
+  // must not keep re-applying it.
+  stripDevParam();
+  return true;
 }
 
 export function initDevMode() {

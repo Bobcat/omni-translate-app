@@ -129,13 +129,15 @@ init().catch(() => {
 });
 
 // Dev mode only controls which settings rows are offered; leaving it while a
-// developer subpage is open would strand that page, so return to the root.
+// developer subpage is open would strand that page, so return to the root. That
+// has to pop the history entry the subpage pushed (the back path), not push a
+// second one, or browser Back would walk straight back onto the hidden page.
 function handleDevModeChange() {
   const enabling = els.devToolsDevMode.checked;
   setDevMode(enabling);
   renderSettingsMenuRows();
   if (!enabling && isDevOnlyPage(state.settingsPage)) {
-    navigateSettingsPage('home');
+    handleSettingsBack();
   }
 }
 
