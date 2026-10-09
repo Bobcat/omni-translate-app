@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 
 let importCounter = 0;
 
-function installBrowserStubs({ search = '', stored = null, setItemThrows = false } = {}) {
+function installBrowserStubs({ search = '', hash = '', stored = null, setItemThrows = false } = {}) {
   const store = new Map();
   if (stored !== null) store.set('dev_tools_settings', JSON.stringify(stored));
   globalThis.localStorage = {
@@ -26,13 +26,20 @@ function installBrowserStubs({ search = '', stored = null, setItemThrows = false
     writable: true,
   });
   globalThis.window = {
-    location: { href: `https://example.test/?${search}`, search: search ? `?${search}` : '' },
+    location: {
+      href: `https://example.test/${search ? `?${search}` : ''}${hash}`,
+      search: search ? `?${search}` : '',
+      hash,
+      pathname: '/',
+    },
     history: {
       state: null,
       replaceState(_state, _title, url) {
         this.lastUrl = url;
+        const [path, fragment = ''] = String(url).split('#');
         globalThis.window.location.href = `https://example.test${url}`;
-        globalThis.window.location.search = url.includes('?') ? `?${url.split('?')[1]}` : '';
+        globalThis.window.location.search = path.includes('?') ? `?${path.split('?')[1]}` : '';
+        globalThis.window.location.hash = fragment ? `#${fragment}` : '';
       },
       lastUrl: null,
     },
@@ -97,10 +104,17 @@ test('?dev=0 turns a remembered mode off and strips the parameter', async () => 
 });
 
 test('stripping the parameter keeps the unrelated query and hash', async () => {
-  const { history } = installBrowserStubs({ search: 'dev&mobile=1' });
+  const { history } = installBrowserStubs({ search: 'dev&mobile=1', hash: '#settings' });
   const { initDevMode } = await loadModule();
   initDevMode();
-  assert.equal(history.lastUrl, '/?mobile=1');
+  assert.equal(history.lastUrl, '/?mobile=1#settings');
+});
+
+test('a URL without the parameter is left untouched', async () => {
+  const { history } = installBrowserStubs({ search: 'mobile=1', hash: '#voice' });
+  const { initDevMode } = await loadModule();
+  initDevMode();
+  assert.equal(history.lastUrl, null);
 });
 
 test('a malformed persisted value keeps dev mode off', async () => {
