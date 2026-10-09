@@ -30,11 +30,10 @@ import {
   applyVoiceCloningStatusMessage,
   applyVoiceModeSettingsMessage,
   applyVoiceSessionReady,
-  resetVoiceOptions,
 } from './voice-options.js';
-import { closeVoiceOptionsSheet } from '../ui/voice-options-sheet.js';
 import { audioQueue } from './audio-queue.js';
 import {
+  applySessionTeardown,
   hideVadHint,
   handleVadState,
   resetLiveRecordingToSetup,
@@ -156,10 +155,7 @@ export function handleMessage(msg) {
     hideVadHint();
     cleanupClientSession({ keepSocket: false });
     state.sessionId = null;
-    // The sheet is only reachable while a session runs, so it closes with it.
-    closeVoiceOptionsSheet();
-    resetVoiceOptions();
-    resetLiveRecordingToSetup();
+    applySessionTeardown();
     state.sessionEndMessage = endMessage;
     renderLifecycle();
   }

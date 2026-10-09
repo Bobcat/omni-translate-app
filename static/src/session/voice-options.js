@@ -17,30 +17,38 @@ import {
   voiceFallbackModeFor,
   voiceModeSelectionStatus,
 } from '../domain/voice-selection.js';
+import { ttsSupportsVoiceSelection } from '../settings/tts.js';
 import { LANE_IDS } from '../shared/constants.js';
 
 /** Called when a message carries voice state that the open sheet also shows. */
 let _onChange = null;
+/** The shared audio queue, so enabling automatic speaking unlocks playback
+ *  inside the user's tap. Mirrors the existing controls in settings/tts.js. */
+let _audioQueue = null;
 
 let _options = {
   mode: DEFAULT_VOICE_MODE,
   fallbackMode: DEFAULT_VOICE_MODE,
-  available: false,
   cloningStatus: {},
 };
 
-export function configureVoiceOptions({ available = false, onChange = null } = {}) {
-  _options.available = Boolean(available);
+export function configureVoiceOptions({ onChange = null, audioQueue = null } = {}) {
   _onChange = typeof onChange === 'function' ? onChange : null;
-  // The stored preference outlives a reload, like the desktop choice; without
-  // one the session default stands.
+  if (audioQueue) _audioQueue = audioQueue;
+  // The stored preferences outlive a reload, exactly like the desktop choice;
+  // without them the session defaults stand.
   const stored = loadAutoSpeakPreference();
   if (stored !== null) state.ttsSettings.auto_speak = stored;
+  resetVoiceOptions();
 }
 
-/** The control is only offered while the active TTS backend supports modes. */
+/**
+ * Whether the modes can be offered right now. This follows the settings that
+ * are actually submitted with a session, not just the startup capability: the
+ * backend can be switched independently of the advertised default.
+ */
 export function voiceModeAvailable() {
-  return _options.available;
+  return ttsSupportsVoiceSelection();
 }
 
 export function voiceMode() {
@@ -55,9 +63,13 @@ export function autoSpeak() {
   return Boolean(state.ttsSettings.auto_speak);
 }
 
-/** The mode a new session starts with. */
+/**
+ * The mode a new session should start with, or null when the effective backend
+ * cannot select one. The server rejects an explicit mode it cannot honour, so
+ * an unavailable mode must be omitted rather than sent as the default.
+ */
 export function sessionVoiceMode() {
-  return _options.mode;
+  return voiceModeAvailable() ? _options.mode : null;
 }
 
 function notify() {
@@ -69,7 +81,7 @@ function notify() {
  * one is, and the stored choice decides the next session otherwise.
  */
 export function setVoiceMode(mode) {
-  if (!_options.available) return;
+  if (!voiceModeAvailable()) return;
   const previousMode = _options.mode;
   const normalized = normalizeVoiceMode(mode);
   _options.fallbackMode = voiceFallbackModeFor(_options.fallbackMode, mode, previousMode);
@@ -89,14 +101,18 @@ export function setVoiceMode(mode) {
 /** Automatic speaking is a per-session choice once a session is live. */
 export function setAutoSpeak(enabled) {
   const next = Boolean(enabled);
+  const wasOn = Boolean(state.ttsSettings.auto_speak);
   state.ttsSettings.auto_speak = next;
   persistAutoSpeakPreference(next);
-  if (state.socket?.isOpen?.()) state.socket.updateTtsSettings({ auto_speak: next });
+  // Unlock playback inside the tap that turned it on, as the other two
+  // automatic-speaking controls do.
+  if (next && !wasOn) _audioQueue?.preparePcmPlayback?.();
   notify();
 }
 
 /** The `ready` payload: the server's mode and per-lane cloning status win. */
-export function applyVoiceSessionReady(msg) {  _options.mode = normalizeVoiceMode(msg?.voice_mode ?? _options.mode);
+export function applyVoiceSessionReady(msg) {
+  _options.mode = normalizeVoiceMode(msg?.voice_mode ?? _options.mode);
   _options.fallbackMode = voiceFallbackModeFor('female', _options.mode);
   const statuses = {};
   for (const laneId of LANE_IDS) {
@@ -128,7 +144,7 @@ export function storedVoiceMode() {
   return normalizeVoiceMode(loadVoiceModePreference());
 }
 
-/** Drop session state: the clone status and the mode both come from storage
+/** Drop session state: the clone status clears and the mode comes from storage
  * again, so the next session starts from the user's stored choice. */
 export function resetVoiceOptions() {
   _options.cloningStatus = {};

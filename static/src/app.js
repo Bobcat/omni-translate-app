@@ -160,8 +160,8 @@ async function init() {
   // Voice selection is a backend capability, not a stored preference: the
   // control is only offered while the active TTS backend supports the modes.
   configureVoiceOptions({
-    available: Boolean(config.tts?.capabilities?.voice_selection),
     onChange: renderVoiceOptionsSheet,
+    audioQueue,
   });
   applyVoiceLibraryStatus(config.voice_library?.stable || {});
 

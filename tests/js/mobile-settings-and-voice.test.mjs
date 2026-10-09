@@ -192,7 +192,10 @@ stubs.elementFor('#voiceOptionsSheet').hidden = true;
 // switch. Only the network call is stubbed.
 globalThis.fetch = async (url) => {
   const body = String(url).includes('/api/config')
-    ? { auth: { configured: false }, tts: { capabilities: { voice_selection: true } } }
+    ? {
+      auth: { configured: false },
+      tts: { backend: 'nanovllm_voxcpm', capabilities: { voice_selection: true } },
+    }
     : {};
   return {
     ok: true,
@@ -208,7 +211,8 @@ const { state } = await import('../../static/src/state.js');
 const voiceOptions = await import('../../static/src/session/voice-options.js');
 const { renderLifecycle } = await import('../../static/src/ui/render-status.js');
 const { APP_MODES } = await import('../../static/src/shared/constants.js');
-const { openVoiceOptionsSheet } = await import('../../static/src/ui/voice-options-sheet.js');
+let sentTts = null;
+const { openVoiceOptionsSheet, closeVoiceOptionsSheet } = await import('../../static/src/ui/voice-options-sheet.js');
 const { renderVoiceOptionsSheet } = await import('../../static/src/ui/voice-options-sheet.js');
 
 test.after(() => {
@@ -356,35 +360,47 @@ test('the voice icon opens the sheet', () => {
 });
 
 test('the voice sheet closes through its own close button', () => {
+  stubs.history.pushState({ view: 'live_recording' }, '', '/');
   openVoiceOptionsSheet();
   stubs.elementFor('#closeVoiceOptionsButton').fire('click');
 
   assert.equal(voiceSheet().hidden, true);
+  assert.equal(stubs.history.current.view, 'live_recording');
 });
 
-test('the voice sheet owns no history entry', () => {
+test('the voice sheet owns exactly one history entry while open', () => {
   const before = stubs.history.entries.length;
   openVoiceOptionsSheet();
+  assert.equal(stubs.history.entries.length, before + 1);
+  assert.equal(stubs.history.current.view, 'voiceOptionsSheet');
 
-  // A session-scoped panel must not touch the page stack: closing it used to
-  // walk the browser back past the running session.
-  assert.equal(stubs.history.entries.length, before);
+  // Closing pops only that entry, so the page stack is as it was.
+  closeVoiceOptionsSheet();
+  assert.equal(stubs.history.entries.length, before + 1);
 });
 
-test('going back closes the voice sheet without leaving the session', async () => {
-  // A real session always sits on top of some history; without an entry the
-  // stub has nothing to go back to.
-  stubs.history.pushState(null, '', '/');
+test('going back closes the sheet and leaves the session entry current', async () => {
+  // A live session sits on its own entry; the sheet adds one on top.
+  stubs.history.pushState({ view: 'live_recording' }, '', '/');
   openVoiceOptionsSheet();
   assert.equal(voiceSheet().hidden, false);
 
   stubs.history.back();
   await settle();
 
-  // The panel closes and Back stops there: the entry the session sits on is
-  // still current, so the user does not land back on the setup screen.
+  // Back closed the sheet and the session entry is current again, so a second
+  // Back reaches the finish path instead of leaving the document.
   assert.equal(voiceSheet().hidden, true);
-  assert.equal(stubs.history.current, null);
+  assert.equal(stubs.history.current.view, 'live_recording');
+});
+
+test('the sheet closes through its button and the session entry stays', () => {
+  stubs.history.pushState({ view: 'live_recording' }, '', '/');
+  openVoiceOptionsSheet();
+  closeVoiceOptionsSheet();
+
+  assert.equal(voiceSheet().hidden, true);
+  assert.equal(stubs.history.current.view, 'live_recording');
 });
 
 test('choosing a voice updates the state and the stored preference', () => {
@@ -428,16 +444,77 @@ test('the cloning guidance appears only for the clone voice', () => {
   assert.match(stubs.elementFor('#voiceCloningGuidance').textContent, /speak clearly/);
 });
 
-test('the voices are disabled when the backend cannot select them', () => {
-  voiceOptions.configureVoiceOptions({ available: false });
+test('a backend without voice modes disables the voices but keeps speaking', () => {
+  // Kokoro speaks translations but cannot select one of the product modes.
+  state.ttsSettings.backend = 'kokoro';
   openVoiceOptionsSheet();
 
   assert.equal(voiceOptions.voiceModeAvailable(), false);
-  assert.equal(stubs.elementFor('#voiceAutoSpeak').disabled, true);
+  assert.equal(
+    stubs.elementFor('#voiceAutoSpeak').disabled,
+    false,
+    'automatic speaking is a separate capability from voice selection',
+  );
   // A disabled control cannot change the voice either.
   stubs.elementFor('#voiceModeGroup').fire('change', { target: { name: 'voiceMode', value: 'male' } });
   assert.equal(voiceOptions.voiceMode(), 'female');
-  voiceOptions.configureVoiceOptions({ available: true });
+});
+
+test('automatic speaking is disabled when speech output is off', () => {
+  state.ttsSettings.enabled = false;
+  openVoiceOptionsSheet();
+
+  assert.equal(stubs.elementFor('#voiceAutoSpeak').disabled, true);
+  state.ttsSettings.enabled = true;
+});
+
+test('the automatic-speaking switch sends the full TTS snapshot', () => {
+  const socket = {
+    isOpen: () => true,
+    updateTtsSettings: (settings) => { sentTts = settings; },
+  };
+  state.socket = socket;
+  state.ttsSettings.backend = 'nanovllm_voxcpm';
+  openVoiceOptionsSheet();
+
+  const autoSpeak = stubs.elementFor('#voiceAutoSpeak');
+  autoSpeak.checked = false;
+  autoSpeak.fire('change');
+
+  // The server replaces the session snapshot, so a delta would drop the rest.
+  assert.equal(sentTts.auto_speak, false);
+  assert.equal(sentTts.backend, 'nanovllm_voxcpm');
+  assert.ok(sentTts.kokoro, 'the nested voice settings travel with it');
+  state.socket = null;
+});
+
+test('every way out of a session clears the panel and the session voice state', async () => {
+  const { applySessionTeardown } = await import('../../static/src/session/lifecycle.js');
+
+  for (const path of ['server ended', 'socket closed', 'local finish']) {
+    with_(path);
+    stubs.history.reset();
+    stubs.store.clear();
+    voiceOptions.resetVoiceOptions();
+    state.appMode = APP_MODES.LIVE_RECORDING;
+    voiceOptions.applyVoiceSessionReady({
+      voice_mode: 'speaker_clone',
+      voice_cloning_status: { a_to_b: { state: 'preparing', fallback_voice_mode: 'male' } },
+    });
+    openVoiceOptionsSheet();
+    assert.equal(voiceSheet().hidden, false, path);
+
+    applySessionTeardown();
+
+    assert.equal(voiceSheet().hidden, true, `${path}: panel closes`);
+    assert.deepEqual(voiceOptions.voiceCloningStatus(), {}, `${path}: clone status clears`);
+    assert.equal(state.appMode, APP_MODES.SETUP, `${path}: back to setup`);
+  }
+
+  // The stored choice survives, so the next session starts where the user left.
+  assert.equal(voiceOptions.voiceMode(), 'female');
+
+  function with_() { /* each path shares one teardown; the label documents it */ }
 });
 
 test('the voice icon is only in the document while a session runs', () => {

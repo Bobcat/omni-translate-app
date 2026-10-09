@@ -33,7 +33,8 @@ import { updateActionButtons } from '../ui/action-buttons.js';
 import { renderAudioSettings } from '../settings/audio.js';
 import { renderTuningSettings } from '../settings/tuning.js';
 import { sessionTtsSettingsPayload } from '../settings/tts.js';
-import { sessionVoiceMode } from './voice-options.js';
+import { resetVoiceOptions, sessionVoiceMode } from './voice-options.js';
+import { closeVoiceOptionsSheet } from '../ui/voice-options-sheet.js';
 import { renderTranscript } from '../ui/render-turn.js';
 import { handleVoiceOptionsPopstate } from '../ui/voice-options-sheet.js';
 import { enableTranscriptAutoFollow } from '../ui/auto-follow.js';
@@ -101,7 +102,7 @@ export async function startListening({ withMic = true } = {}) {
       () => {
         if (state.socket !== socket) return;
         cleanupClientSession({ keepSocket: false });
-        resetLiveRecordingToSetup();
+        applySessionTeardown();
         setStatus('idle');
       },
     );
@@ -189,7 +190,7 @@ export function finishSession() {
   hideVadHint();
   renderMicLevel(0);
   renderAudioSettings();
-  resetLiveRecordingToSetup();
+  applySessionTeardown();
 }
 
 export async function startMicrophoneCapture() {
@@ -450,6 +451,17 @@ export function cleanupClientSession({ keepSocket = false } = {}) {
     state.socket = null;
     state.sessionId = null;
   }
+}
+
+/**
+ * Leave a voice session behind, however it ended: the server's `ended` event, a
+ * dropped socket, or the local finish action. The panel and the session-only
+ * voice state belong to the session, so every path goes through here.
+ */
+export function applySessionTeardown() {
+  closeVoiceOptionsSheet({ popHistory: false });
+  resetVoiceOptions();
+  resetLiveRecordingToSetup();
 }
 
 export function resetLiveRecordingToSetup() {

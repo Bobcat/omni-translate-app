@@ -8,6 +8,7 @@ import { VOICE_MODE_SPEAKER_CLONE } from '../domain/voice-selection.js';
 import { visibleVoiceCloningGuidance, visibleVoiceCloningStatus } from '../domain/cloning-status.js';
 import { currentLaneId } from '../domain/lanes.js';
 import { setupSheetSwipeClose } from './sheets.js';
+import { sessionTtsSettingsPayload } from '../settings/tts.js';
 import {
   autoSpeak,
   setAutoSpeak,
@@ -35,7 +36,14 @@ export function initVoiceOptionsSheet() {
     setVoiceMode(input.value);
   });
   els.voiceAutoSpeak.addEventListener('change', () => {
-    setAutoSpeak(els.voiceAutoSpeak.checked);
+    const enabled = els.voiceAutoSpeak.checked;
+    setAutoSpeak(enabled);
+    // The server replaces the session's TTS snapshot with what it receives, so
+    // a partial update would drop the backend and voice settings. Send the same
+    // full payload the TTS settings page sends.
+    if (state.socket?.isOpen?.()) {
+      state.socket.updateTtsSettings(sessionTtsSettingsPayload());
+    }
   });
   setupSheetSwipeClose({
     layer: els.voiceOptionsSheet,
@@ -45,24 +53,42 @@ export function initVoiceOptionsSheet() {
   });
 }
 
-// This sheet deliberately owns no history entry. It exists only while a voice
-// session runs, so it must not push or pop the page stack: closing it used to
-// walk the browser back past the session and land on the setup screen.
+// The sheet owns exactly one history entry while it is open, the same way the
+// other sheets do. Without it, Back would consume the live-session entry: the
+// sheet would close, but the session entry would be gone and a second Back
+// would leave the document instead of finishing the session.
+let _ownsHistoryEntry = false;
+
 export function openVoiceOptionsSheet() {
   els.voiceOptionsSheet.hidden = false;
   renderVoiceOptionsSheet();
+  if (!_ownsHistoryEntry && history.state?.view !== 'voiceOptionsSheet') {
+    history.pushState({ view: 'voiceOptionsSheet' }, '');
+    _ownsHistoryEntry = true;
+  }
 }
 
-export function closeVoiceOptionsSheet() {
+export function closeVoiceOptionsSheet({ popHistory = true } = {}) {
+  const wasOwned = _ownsHistoryEntry;
+  _ownsHistoryEntry = false;
   els.voiceOptionsSheet.hidden = true;
+  if (popHistory && wasOwned && history.state?.view === 'voiceOptionsSheet') {
+    history.back();
+  }
 }
 
 /** Called by the app's popstate router. */
 export function handleVoiceOptionsPopstate() {
-  if (els.voiceOptionsSheet.hidden) return false;
-  // Back closes the panel and stops there, rather than continuing into the
-  // session's own history entries.
+  const owned = _ownsHistoryEntry;
+  _ownsHistoryEntry = false;
+  const wasOpen = !els.voiceOptionsSheet.hidden;
   els.voiceOptionsSheet.hidden = true;
+  if (!wasOpen) return false;
+  if (owned) {
+    // The entry that was just popped was ours, so this Back only closed the
+    // sheet. Put the session's entry back to keep the stack as it was.
+    history.pushState({ view: 'live_recording' }, '');
+  }
   return true;
 }
 
@@ -88,7 +114,9 @@ export function renderVoiceOptionsSheet() {
   if (!els.voiceOptionsSheet || els.voiceOptionsSheet.hidden) return;
   renderModeOptions();
   els.voiceAutoSpeak.checked = autoSpeak();
-  els.voiceAutoSpeak.disabled = !voiceModeAvailable();
+  // Speech playback is a separate capability from voice selection: a backend
+  // that cannot switch modes can still speak translations automatically.
+  els.voiceAutoSpeak.disabled = !state.ttsSettings.enabled;
 
   const status = visibleVoiceCloningStatus(
     {

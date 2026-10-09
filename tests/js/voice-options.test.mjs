@@ -6,6 +6,22 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 const store = new Map();
+// The session module reaches settings/tts.js for the capability check, and that
+// module reads els.js at import time.
+const elementStub = () => new Proxy({
+  hidden: false, textContent: '', value: '', checked: false, disabled: false,
+  children: [], dataset: {}, style: {},
+  classList: { add() {}, remove() {}, toggle() {} },
+  addEventListener() {}, removeEventListener() {}, append() {}, replaceChildren() {},
+  querySelector: () => elementStub(), querySelectorAll: () => [], closest: () => null,
+}, { get: (o, k) => (k in o ? o[k] : () => undefined) });
+globalThis.document = {
+  querySelector: () => elementStub(),
+  querySelectorAll: () => [],
+  createElement: () => elementStub(),
+  createDocumentFragment: () => elementStub(),
+  addEventListener() {},
+};
 Object.defineProperty(globalThis, 'navigator', {
   value: { language: 'en-US', languages: ['en-US'] },
   configurable: true,
@@ -19,6 +35,18 @@ globalThis.localStorage = {
 
 const { state } = await import('../../static/src/state.js');
 const voice = await import('../../static/src/session/voice-options.js');
+
+/** A backend the product voice modes are available on. */
+function useVoiceCapableBackend() {
+  state.ttsCapabilities = { voice_selection: true };
+  state.ttsSettings.backend = 'nanovllm_voxcpm';
+}
+
+/** A backend that speaks but cannot select a voice mode. */
+function usePlainBackend() {
+  state.ttsCapabilities = { voice_selection: true };
+  state.ttsSettings.backend = 'kokoro';
+}
 
 function fakeSocket() {
   const sent = [];
@@ -34,14 +62,62 @@ test.beforeEach(() => {
   store.clear();
   state.socket = null;
   state.ttsSettings.auto_speak = true;
-  voice.configureVoiceOptions({ available: true });
+  state.ttsSettings.enabled = true;
+  useVoiceCapableBackend();
+  voice.configureVoiceOptions({});
 });
 
-test('the control stays unavailable without backend support', () => {
-  voice.configureVoiceOptions({ available: false });
+test('a backend without voice selection offers no modes and sends none', () => {
+  usePlainBackend();
   assert.equal(voice.voiceModeAvailable(), false);
   voice.setVoiceMode('male');
   assert.equal(voice.voiceMode(), 'female');
+  // The server rejects an explicit mode it cannot honour, so it must be omitted.
+  assert.equal(voice.sessionVoiceMode(), null);
+});
+
+test('a voice-capable backend sends the chosen mode', () => {
+  voice.setVoiceMode('male');
+  assert.equal(voice.sessionVoiceMode(), 'male');
+});
+
+test('a stored choice is restored on a fresh load', () => {
+  store.set('voice_mode', JSON.stringify({ mode: 'male' }));
+  voice.configureVoiceOptions({});
+  assert.equal(voice.voiceMode(), 'male');
+  assert.equal(voice.sessionVoiceMode(), 'male');
+
+  store.set('voice_mode', JSON.stringify({ mode: 'speaker_clone' }));
+  voice.configureVoiceOptions({});
+  assert.equal(voice.voiceMode(), 'speaker_clone');
+});
+
+test('a malformed stored choice falls back to the default', () => {
+  store.set('voice_mode', JSON.stringify({ mode: 'nonsense' }));
+  voice.configureVoiceOptions({});
+  assert.equal(voice.voiceMode(), 'female');
+});
+
+test('enabling automatic speaking unlocks playback inside the tap', () => {
+  const queue = { prepared: 0, preparePcmPlayback() { this.prepared += 1; } };
+  voice.configureVoiceOptions({ audioQueue: queue });
+  state.ttsSettings.auto_speak = false;
+
+  voice.setAutoSpeak(true);
+  assert.equal(queue.prepared, 1, 'enabling prepares playback');
+
+  voice.setAutoSpeak(false);
+  voice.setAutoSpeak(false);
+  assert.equal(queue.prepared, 1, 'disabling and repeats do not prepare');
+});
+
+test('a session teardown keeps the stored choice for the next session', () => {
+  voice.setVoiceMode('male');
+  voice.applyVoiceSessionReady({ voice_mode: 'speaker_clone' });
+  voice.resetVoiceOptions();
+
+  assert.equal(voice.voiceMode(), 'male');
+  assert.deepEqual(voice.voiceCloningStatus(), {});
 });
 
 test('choosing a mode persists it and tells the live session', () => {
@@ -93,7 +169,8 @@ test('automatic speaking persists and reaches the live session', () => {
   voice.setAutoSpeak(false);
 
   assert.equal(voice.autoSpeak(), false);
-  assert.deepEqual(socket.sent, [{ type: 'update_tts_settings', settings: { auto_speak: false } }]);
+  // The panel sends the complete snapshot; this module only owns the boolean.
+  assert.deepEqual(socket.sent, []);
   assert.deepEqual(JSON.parse(store.get('tts_global')), { auto_speak: false });
 });
 
