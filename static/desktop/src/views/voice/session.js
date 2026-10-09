@@ -42,10 +42,15 @@ import {
   publishViewBusy,
   publishViewRecording,
 } from '../../shared/view-activity.js?v=20260829-voice-modes-11';
+import {
+  VOICE_MODES,
+  normalizeVoiceMode,
+  voiceCloningStatusFromMessage,
+  voiceFallbackModeFor,
+  voiceModeSelectionStatus,
+} from '../../../../src/domain/voice-selection.js';
 
 const LANE_IDS = ['a_to_b', 'b_to_a'];
-const STABLE_VOICE_MODES = ['female', 'male'];
-const VOICE_MODES = [...STABLE_VOICE_MODES, 'speaker_clone'];
 
 const MIC_STATES = { LISTENING: 'listening', OFF: 'off' };
 const TURN_STATES = {
@@ -123,8 +128,7 @@ export function visibleText(committed, preview) {
 // autoplay is blocked so the user can start playback manually.
 export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
   const initialLanguages = loadSetupLanguages() || guessSetupLanguages();
-  const storedVoiceMode = loadVoiceModePreference();
-  const initialVoiceMode = VOICE_MODES.includes(storedVoiceMode) ? storedVoiceMode : 'female';
+  const initialVoiceMode = normalizeVoiceMode(loadVoiceModePreference());
 
   const state = {
     socket: null,
@@ -143,9 +147,7 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
     ttsAutoSpeak: loadAutoSpeakPreference() ?? true,
     voiceModeAvailable: false,
     voiceMode: initialVoiceMode,
-    voiceCloneFallbackMode: STABLE_VOICE_MODES.includes(initialVoiceMode)
-      ? initialVoiceMode
-      : 'female',
+    voiceCloneFallbackMode: voiceFallbackModeFor('female', initialVoiceMode),
     voiceCloningStatus: {},
     audioPlayback: null,
     captureMutedForPlayback: false,
@@ -704,20 +706,15 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
 
   function setVoiceMode(mode) {
     if (!state.ttsEnabled || !state.voiceModeAvailable) return;
-    const normalized = VOICE_MODES.includes(mode) ? mode : 'female';
-    if (STABLE_VOICE_MODES.includes(normalized)) {
-      state.voiceCloneFallbackMode = normalized;
-    } else if (STABLE_VOICE_MODES.includes(state.voiceMode)) {
-      state.voiceCloneFallbackMode = state.voiceMode;
-    }
+    const normalized = normalizeVoiceMode(mode);
+    state.voiceCloneFallbackMode = voiceFallbackModeFor(state.voiceCloneFallbackMode, normalized);
     state.voiceMode = normalized;
     persistVoiceModePreference(normalized);
     for (const laneId of LANE_IDS) {
-      state.voiceCloningStatus[laneId] = {
-        state: normalized === 'speaker_clone' ? 'preparing' : 'off',
-        reason: normalized === 'speaker_clone' ? 'insufficient_clear_speech' : 'disabled',
-        fallbackVoiceMode: state.voiceCloneFallbackMode,
-      };
+      state.voiceCloningStatus[laneId] = voiceModeSelectionStatus(
+        normalized,
+        state.voiceCloneFallbackMode,
+      );
     }
     state.socket?.updateVoiceMode(normalized);
     emit();
@@ -834,11 +831,10 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
     if (msg.type === 'voice_cloning_status') {
       const laneId = String(msg.lane_id || '');
       if (LANE_IDS.includes(laneId)) {
-        state.voiceCloningStatus[laneId] = {
-          state: String(msg.state || 'off'),
-          reason: String(msg.reason || ''),
-          fallbackVoiceMode: String(msg.fallback_voice_mode || state.voiceCloneFallbackMode),
-        };
+        state.voiceCloningStatus[laneId] = voiceCloningStatusFromMessage(
+          msg,
+          state.voiceCloneFallbackMode,
+        );
       }
       emit();
       return;
@@ -892,13 +888,10 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
     state.voiceCloningStatus = Object.fromEntries(
       Object.entries(msg.voice_cloning_status || {})
         .filter(([laneId]) => LANE_IDS.includes(laneId))
-        .map(([laneId, status]) => [laneId, {
-          state: String(status?.state || 'off'),
-          reason: String(status?.reason || ''),
-          fallbackVoiceMode: String(
-            status?.fallback_voice_mode || state.voiceCloneFallbackMode,
-          ),
-        }]),
+        .map(([laneId, status]) => [laneId, voiceCloningStatusFromMessage(
+          status,
+          state.voiceCloneFallbackMode,
+        )]),
     );
     hideVadHint();
     emit();
