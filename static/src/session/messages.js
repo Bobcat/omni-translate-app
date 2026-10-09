@@ -32,6 +32,7 @@ import {
   applyVoiceSessionReady,
   resetVoiceOptions,
 } from './voice-options.js';
+import { closeVoiceOptionsSheet } from '../ui/voice-options-sheet.js';
 import { audioQueue } from './audio-queue.js';
 import {
   hideVadHint,
@@ -155,6 +156,8 @@ export function handleMessage(msg) {
     hideVadHint();
     cleanupClientSession({ keepSocket: false });
     state.sessionId = null;
+    // The sheet is only reachable while a session runs, so it closes with it.
+    closeVoiceOptionsSheet({ popHistory: false });
     resetVoiceOptions();
     resetLiveRecordingToSetup();
     state.sessionEndMessage = endMessage;

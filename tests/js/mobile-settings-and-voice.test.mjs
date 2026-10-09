@@ -198,6 +198,8 @@ const sheet = await import('../../static/src/settings/sheet.js');
 const { setDevMode } = await import('../../static/src/settings/dev-mode.js');
 const { state } = await import('../../static/src/state.js');
 const voiceOptions = await import('../../static/src/session/voice-options.js');
+const { renderLifecycle } = await import('../../static/src/ui/render-status.js');
+const { APP_MODES } = await import('../../static/src/shared/constants.js');
 const { openVoiceOptionsSheet } = await import('../../static/src/ui/voice-options-sheet.js');
 const { renderVoiceOptionsSheet } = await import('../../static/src/ui/voice-options-sheet.js');
 
@@ -413,6 +415,26 @@ test('the voices are disabled when the backend cannot select them', () => {
   stubs.elementFor('#voiceModeGroup').fire('change', { target: { name: 'voiceMode', value: 'male' } });
   assert.equal(voiceOptions.voiceMode(), 'female');
   voiceOptions.configureVoiceOptions({ available: true });
+});
+
+test('the voice icon only appears while a session runs', () => {
+  const icon = () => stubs.elementFor('#voiceOptionsButton');
+
+  state.appMode = APP_MODES.SETUP;
+  renderLifecycle();
+  assert.equal(icon().hidden, true, 'setup must not offer the voice icon');
+
+  state.appMode = APP_MODES.LIVE_RECORDING;
+  renderLifecycle();
+  assert.equal(icon().hidden, false, 'a running session offers the voice icon');
+
+  state.appMode = APP_MODES.IMAGE_TRANSLATION;
+  renderLifecycle();
+  assert.equal(icon().hidden, true, 'the image view has no speech output');
+
+  // Leave the app in setup, the normal starting state for the other tests.
+  state.appMode = APP_MODES.SETUP;
+  renderLifecycle();
 });
 
 test.after(() => {

@@ -77,21 +77,19 @@ button {
   position: relative;
 }
 
-/* Voice options and settings share the right-hand grid cell as one flex row, so
-   the centred title keeps its position whichever icons are visible. */
-.titlebar-settings-button,
-.titlebar-voice-button {
-  display: inline-flex;
-  flex-direction: row-reverse;
-  align-items: center;
-  gap: 4px;
-}
-
+/* Both icons sit in the right-hand grid cell, which keeps the centred title in
+   place. The voice button is offset by one icon width plus the gap so the two do
+   not overlap; the settings button stays on the outer edge. */
 .titlebar-voice-button {
   grid-column: 3;
   grid-row: 1;
   justify-self: end;
   position: relative;
+  margin-right: 36px;
+}
+
+.titlebar-voice-button[hidden] {
+  display: none;
 }
 
 .titlebar-settings-button::before,
