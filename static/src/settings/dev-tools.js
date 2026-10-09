@@ -60,6 +60,7 @@ export async function handleInstallApp({ closeSettings } = {}) {
 
 export function renderDevToolsSettings() {
   els.devToolsShowControls.checked = state.devToolsSettings.showControls;
+  els.devToolsDevMode.checked = state.devToolsSettings.devMode;
 }
 
 export function handleDevToolsShowControlsChange() {

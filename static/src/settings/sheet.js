@@ -4,7 +4,8 @@
 
 import { els } from '../els.js';
 import { state } from '../state.js';
-import { setSettingsPage } from './pages.js?v=20260903-help-info-2';
+import { isDevOnlyPage, setSettingsPage } from './pages.js?v=20260903-help-info-2';
+import { isDevMode } from './dev-mode.js';
 import { renderAudioSettings } from './audio.js';
 import { renderTuningSettings } from './tuning.js';
 import { renderTtsSettings } from './tts.js';
@@ -97,7 +98,10 @@ export function handleSettingsSheetPopstate(event) {
   const newState = event?.state;
   if (newState?.view === 'settingsSheet' && newState.page) {
     _settingsSheetDepth = Math.max(1, _settingsSheetDepth - 1);
-    setSettingsPage(newState.page);
+    // A page that dev mode has since hidden must not come back through the
+    // browser's Back button; fall back to the sheet root.
+    const page = !isDevMode() && isDevOnlyPage(newState.page) ? state.settingsRootPage : newState.page;
+    setSettingsPage(page);
   } else {
     _settingsSheetDepth = 0;
     els.settingsSheet.hidden = true;

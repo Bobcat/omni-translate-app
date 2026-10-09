@@ -47,6 +47,7 @@ from app.pdf_translation_bridge import get_pdf_artifact
 from app.pdf_translation_bridge import get_pdf_request
 from app.protocol import PROTOCOL_VERSION
 from app.saas_setup import resolve_request_context
+from app.saas_setup import require_voice_library_curation
 from app.saas_setup import tts_fairness_key_for_principal
 from app.sessions import SESSIONS
 from app.text_translation_policy import admit_text_translation
@@ -579,7 +580,7 @@ def post_stable_voice_sample(request: Request, payload: GenerateStableVoiceSampl
         raise HTTPException(status_code=400, detail="gender_required")
     if not engine:
         raise HTTPException(status_code=400, detail="engine_required")
-    principal, _, _ = resolve_request_context(request)
+    principal = require_voice_library_curation(request)
     try:
         info = generate_stable_sample(
             tag,
@@ -597,9 +598,10 @@ def post_stable_voice_sample(request: Request, payload: GenerateStableVoiceSampl
 
 
 @api_router.post("/voice-library/stable/{language}/{gender}/keep-pending")
-async def post_keep_pending_stable_sample(language: str, gender: str) -> dict[str, Any]:
+async def post_keep_pending_stable_sample(request: Request, language: str, gender: str) -> dict[str, Any]:
     tag = (language or "").strip().lower()
     gender_key = (gender or "").strip().lower()
+    require_voice_library_curation(request)
     try:
         info = keep_pending_stable_sample(tag, gender_key)
     except FileNotFoundError as exc:
@@ -610,9 +612,10 @@ async def post_keep_pending_stable_sample(language: str, gender: str) -> dict[st
 
 
 @api_router.post("/voice-library/stable/{language}/{gender}/discard-pending")
-async def post_discard_pending_stable_sample(language: str, gender: str) -> dict[str, Any]:
+async def post_discard_pending_stable_sample(request: Request, language: str, gender: str) -> dict[str, Any]:
     tag = (language or "").strip().lower()
     gender_key = (gender or "").strip().lower()
+    require_voice_library_curation(request)
     try:
         info = discard_pending_stable_sample(tag, gender_key)
     except FileNotFoundError as exc:

@@ -87,6 +87,19 @@ class EntitlementTests(unittest.TestCase):
         flat = EntitlementService.flatten({"a": {"b": {"c": 1}, "d": "x"}, "e": True})
         self.assertEqual(flat, {"a.b.c": 1, "a.d": "x", "e": True})
 
+    def test_only_a_boolean_enables_a_capability(self) -> None:
+        # JSON config makes "false", 0 and [] easy to write by accident; none of
+        # them may grant a capability.
+        for value in ("false", "true", "", 1, 0, -1, None, [], {}, [1]):
+            with self.subTest(value=value):
+                entitlements = EntitlementSet("malformed", {"feature.enabled": value})
+                self.assertFalse(entitlements.is_enabled("feature.enabled"))
+                with self.assertRaises(SaasError) as ctx:
+                    entitlements.require_enabled("feature.enabled")
+                self.assertEqual(ctx.exception.code, ENTITLEMENT_DISABLED)
+        strict = EntitlementSet("strict", {"feature.enabled": True})
+        self.assertTrue(strict.is_enabled("feature.enabled"))
+
     def test_shipped_free_plan_does_not_promise_document_persistence(self) -> None:
         settings = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
         self.assertFalse(settings["saas"]["plans"]["free"]["document_persistence"]["enabled"])

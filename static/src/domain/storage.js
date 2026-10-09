@@ -188,14 +188,20 @@ export function loadDevToolsSettings() {
     const showControls = typeof saved.showControls === 'boolean'
       ? saved.showControls
       : Boolean(saved.showPcExport);
-    return { showControls };
+    // Strict, like the capability values: a malformed entry must keep the
+    // developer rows hidden rather than enable them.
+    return { showControls, devMode: saved.devMode === true };
   } catch {
-    return { showControls: false };
+    return { showControls: false, devMode: false };
   }
 }
 
 export function saveDevToolsSettings(devToolsSettings) {
-  localStorage.setItem(DEV_TOOLS_SETTINGS_KEY, JSON.stringify(devToolsSettings));
+  try {
+    localStorage.setItem(DEV_TOOLS_SETTINGS_KEY, JSON.stringify(devToolsSettings));
+  } catch (_) {
+    // ignore quota / disabled storage: the mode still applies for this visit
+  }
 }
 
 export function loadImageRenderSettings() {

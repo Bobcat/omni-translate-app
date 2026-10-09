@@ -500,6 +500,17 @@
             </div>
 
             <div class="settings-page" id="settingsDevToolsPage" hidden>
+              <label class="settings-nav-row settings-toggle-row" for="devToolsDevMode">
+                <span>
+                  <strong>Dev mode</strong>
+                  <small>Show developer options in Settings</small>
+                </span>
+                <span class="switch">
+                  <input id="devToolsDevMode" type="checkbox" role="switch">
+                  <span class="switch-track" aria-hidden="true"></span>
+                  <span class="switch-thumb" aria-hidden="true"></span>
+                </span>
+              </label>
               <button class="settings-nav-row" id="settingsTuningNav" type="button">
                 <span>
                   <strong>ASR tuning</strong>
@@ -560,6 +571,6 @@
       </div>
 
     </main>
-    <script type="module" src="/src/app.js?v=20260903-help-info-2"></script>
+    <script type="module" src="/src/app.js?v=20261008-dev-mode-1"></script>
   </body>
 </html>
