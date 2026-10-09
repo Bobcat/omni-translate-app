@@ -42,8 +42,16 @@ function makeElement(overrides = {}) {
     listenerCount(type) {
       return (listeners.get(type) || []).length;
     },
-    appendChild(node) { children.push(node); return node; },
-    append(...nodes) { children.push(...nodes); },
+    parentElement: null,
+    appendChild(node) { node.parentElement = this; children.push(node); return node; },
+    append(...nodes) { for (const node of nodes) this.appendChild(node); },
+    remove() {
+      if (!this.parentElement) return;
+      const siblings = this.parentElement.children;
+      const at = siblings.indexOf(this);
+      if (at >= 0) siblings.splice(at, 1);
+      this.parentElement = null;
+    },
     replaceChildren(...nodes) {
       children.length = 0;
       children.push(...nodes);
@@ -432,24 +440,28 @@ test('the voices are disabled when the backend cannot select them', () => {
   voiceOptions.configureVoiceOptions({ available: true });
 });
 
-test('the voice icon only appears while a session runs', () => {
+test('the voice icon is only in the document while a session runs', () => {
   const icon = () => stubs.elementFor('#voiceOptionsButton');
 
   state.appMode = APP_MODES.SETUP;
   renderLifecycle();
-  assert.equal(icon().hidden, true, 'setup must not offer the voice icon');
+  // Detached rather than hidden: a stale stylesheet cannot display an element
+  // that is not in the titlebar.
+  assert.equal(icon().parentElement, null, 'setup must not carry the voice icon');
 
   state.appMode = APP_MODES.LIVE_RECORDING;
   renderLifecycle();
-  assert.equal(icon().hidden, false, 'a running session offers the voice icon');
+  assert.notEqual(icon().parentElement, null, 'a running session offers the icon');
+  assert.equal(icon().hidden, false);
 
   state.appMode = APP_MODES.IMAGE_TRANSLATION;
   renderLifecycle();
-  assert.equal(icon().hidden, true, 'the image view has no speech output');
+  assert.equal(icon().parentElement, null, 'the image view has no speech output');
 
   // Leave the app in setup, the normal starting state for the other tests.
   state.appMode = APP_MODES.SETUP;
   renderLifecycle();
+  assert.equal(icon().parentElement, null);
 });
 
 test.after(() => {

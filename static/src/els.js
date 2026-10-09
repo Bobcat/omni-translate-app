@@ -46,6 +46,7 @@ export const els = {
   accountButton: document.querySelector('#accountButton'),
   accountButtonIcon: document.querySelector('#accountButtonIcon'),
   accountButtonInitials: document.querySelector('#accountButtonInitials'),
+  titlebar: document.querySelector('.app-titlebar'),
   settingsButton: document.querySelector('#settingsButton'),
   titlebarBackButton: document.querySelector('#titlebarBackButton'),
   sourceText: document.querySelector('#sourceText'),
