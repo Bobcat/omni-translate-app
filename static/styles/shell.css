@@ -160,11 +160,14 @@ button {
   color: var(--text);
 }
 
+/* Sits left of the voice icon, which is left of the settings icon: each step is
+   one icon width plus the gap. The badge is wider than an icon, so it clears
+   both buttons rather than one. */
 .titlebar-vad-badge {
   grid-column: 3;
   grid-row: 1;
   justify-self: end;
-  margin-right: 36px;
+  margin-right: 72px;
 }
 
 .app.is-image-translation .app-titlebar {
