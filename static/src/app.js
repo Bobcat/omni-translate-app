@@ -4,6 +4,7 @@
 
 import { api } from './api-client.js';
 import { mergeSettings } from './shared/utils.js';
+import { shouldReloadForVersion } from './domain/entry-version.js';
 import { DEFAULT_TUNING_SETTINGS } from './shared/constants.js';
 import { els } from './els.js';
 import { state } from './state.js';
@@ -146,6 +147,35 @@ function handleDevModeChange() {
   }
 }
 
+// Must match the ?v= on this module's script tag in index.html. The backend
+// serves the same value, and a mismatch means this bundle is older than the
+// page that loaded it — typical for an installed app whose shell was cached
+// while the assets behind it moved on.
+const ENTRY_VERSION = '20261009-voice-options-2';
+const VERSION_RELOAD_KEY = 'entry_version_reload';
+
+async function resolveEntryVersion(serverVersion) {
+  let lastReload = 0;
+  try {
+    lastReload = Number(sessionStorage.getItem(VERSION_RELOAD_KEY) || 0);
+  } catch {
+    return;
+  }
+  if (!shouldReloadForVersion(ENTRY_VERSION, serverVersion, lastReload, Date.now())) return;
+  try {
+    sessionStorage.setItem(VERSION_RELOAD_KEY, String(Date.now()));
+  } catch {
+    return;
+  }
+  try {
+    const names = await caches.keys();
+    await Promise.all(names.map((name) => caches.delete(name)));
+  } catch {
+    // No Cache Storage here; a plain reload still fetches the new entry.
+  }
+  window.location.reload();
+}
+
 async function init() {
   // Paint the language pills before the network request so they show
   // the right values from the start (state.js already initialised them
@@ -153,6 +183,7 @@ async function init() {
   // empty until /api/config returns.
   renderLanguageControls();
   const config = await api.getConfig();
+  await resolveEntryVersion(config.entry_version);
   state.audioInputSampleRate = config.audio_input?.sample_rate_hz || 16000;
   state.tuningSettings = mergeSettings(DEFAULT_TUNING_SETTINGS, config.live_settings || {});
   applyTtsConfig(config.tts || {});
