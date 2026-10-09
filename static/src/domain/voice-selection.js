@@ -29,23 +29,30 @@ export function normalizeVoiceMode(mode) {
 
 /**
  * The voice that speaks while the speaker clone still collects speech. It only
- * ever names a stable voice: choosing a stable mode makes it the fallback, and
- * choosing the clone keeps the previous fallback.
+ * ever names a stable voice: a stable choice becomes the fallback, a choice
+ * that is not a product mode keeps the voice that is currently speaking, and
+ * choosing the clone leaves the existing fallback untouched.
+ *
+ * `mode` is the requested value before normalization and `currentMode` is the
+ * one that was active until now, because the clone falls back to the voice that
+ * was speaking, not to the previously prepared fallback.
  */
-export function voiceFallbackModeFor(currentFallback, mode) {
+export function voiceFallbackModeFor(currentFallback, mode, currentMode) {
   const selected = voiceModeOrNull(mode);
   if (selected && STABLE.has(selected)) return selected;
-  const previous = voiceModeOrNull(currentFallback);
-  return previous && STABLE.has(previous) ? previous : DEFAULT_VOICE_MODE;
+  const previous = voiceModeOrNull(currentMode);
+  if (previous && STABLE.has(previous)) return previous;
+  const fallback = voiceModeOrNull(currentFallback);
+  return fallback && STABLE.has(fallback) ? fallback : DEFAULT_VOICE_MODE;
 }
 
 /** The cloning status a lane carries for a freshly selected mode. */
-export function voiceModeSelectionStatus(mode, fallbackVoiceMode, reason = 'insufficient_clear_speech') {
+export function voiceModeSelectionStatus(mode, fallbackVoiceMode, previousMode, reason = 'insufficient_clear_speech') {
   const cloning = mode === VOICE_MODE_SPEAKER_CLONE;
   return {
     state: cloning ? 'preparing' : 'off',
     reason: cloning ? String(reason || '') : 'disabled',
-    fallbackVoiceMode: voiceFallbackModeFor(fallbackVoiceMode, mode),
+    fallbackVoiceMode: voiceFallbackModeFor(fallbackVoiceMode, mode, previousMode),
   };
 }
 

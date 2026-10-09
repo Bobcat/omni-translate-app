@@ -36,34 +36,46 @@ test('an unknown stored mode resolves to the default', () => {
 });
 
 test('a stable choice becomes the fallback voice', () => {
-  assert.equal(voiceFallbackModeFor('female', 'male'), 'male');
-  assert.equal(voiceFallbackModeFor('male', 'female'), 'female');
+  assert.equal(voiceFallbackModeFor('female', 'male', 'female'), 'male');
+  assert.equal(voiceFallbackModeFor('male', 'female', 'male'), 'female');
 });
 
-test('choosing the clone keeps the previous fallback', () => {
-  assert.equal(voiceFallbackModeFor('male', 'speaker_clone'), 'male');
-  assert.equal(voiceFallbackModeFor('female', 'speaker_clone'), 'female');
+test('choosing the clone falls back to the voice that was speaking', () => {
+  // The mode that was active until now, not the previously prepared fallback:
+  // male -> female -> clone must fall back to female.
+  assert.equal(voiceFallbackModeFor('male', 'speaker_clone', 'female'), 'female');
+  assert.equal(voiceFallbackModeFor('female', 'speaker_clone', 'male'), 'male');
 });
 
-test('an unusable fallback or mode falls back to the default voice', () => {
-  assert.equal(voiceFallbackModeFor(undefined, 'speaker_clone'), 'female');
-  assert.equal(voiceFallbackModeFor('nonsense', 'speaker_clone'), 'female');
+test('choosing the clone with no stable voice before it keeps the fallback', () => {
+  assert.equal(voiceFallbackModeFor('male', 'speaker_clone', 'speaker_clone'), 'male');
+  assert.equal(voiceFallbackModeFor('male', 'speaker_clone', undefined), 'male');
+});
+
+test('an unusable choice keeps the voice that was speaking', () => {
+  assert.equal(voiceFallbackModeFor('female', 'nonsense', 'male'), 'male');
+  // With nothing usable anywhere, the default speaks.
+  assert.equal(voiceFallbackModeFor(undefined, 'speaker_clone', undefined), 'female');
+  assert.equal(voiceFallbackModeFor('nonsense', 'nonsense', 'nonsense'), 'female');
   // The clone itself is never a fallback voice.
-  assert.equal(voiceFallbackModeFor('speaker_clone', 'speaker_clone'), 'female');
-  // An unusable mode must not throw away a usable fallback: the caller that
-  // needs a mode normalizes it first (see normalizeVoiceMode).
-  assert.equal(voiceFallbackModeFor('male', 'nonsense'), 'male');
+  assert.equal(voiceFallbackModeFor('speaker_clone', 'speaker_clone', 'speaker_clone'), 'female');
 });
 
 test('a freshly selected mode reports preparing only for the clone', () => {
-  assert.deepEqual(voiceModeSelectionStatus('speaker_clone', 'male'), {
+  assert.deepEqual(voiceModeSelectionStatus('speaker_clone', 'male', 'male'), {
     state: 'preparing',
     reason: 'insufficient_clear_speech',
     fallbackVoiceMode: 'male',
   });
-  assert.deepEqual(voiceModeSelectionStatus('female', 'male'), {
+  assert.deepEqual(voiceModeSelectionStatus('female', 'male', 'male'), {
     state: 'off',
     reason: 'disabled',
+    fallbackVoiceMode: 'female',
+  });
+  // Switching to the clone from female reports female, whatever was prepared.
+  assert.deepEqual(voiceModeSelectionStatus('speaker_clone', 'male', 'female'), {
+    state: 'preparing',
+    reason: 'insufficient_clear_speech',
     fallbackVoiceMode: 'female',
   });
 });

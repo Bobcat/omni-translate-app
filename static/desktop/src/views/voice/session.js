@@ -706,14 +706,20 @@ export function createVoiceSession({ onChange, onMicLevel, resumeButton }) {
 
   function setVoiceMode(mode) {
     if (!state.ttsEnabled || !state.voiceModeAvailable) return;
+    const previousMode = state.voiceMode;
     const normalized = normalizeVoiceMode(mode);
-    state.voiceCloneFallbackMode = voiceFallbackModeFor(state.voiceCloneFallbackMode, normalized);
+    state.voiceCloneFallbackMode = voiceFallbackModeFor(
+      state.voiceCloneFallbackMode,
+      mode,
+      previousMode,
+    );
     state.voiceMode = normalized;
     persistVoiceModePreference(normalized);
     for (const laneId of LANE_IDS) {
       state.voiceCloningStatus[laneId] = voiceModeSelectionStatus(
         normalized,
         state.voiceCloneFallbackMode,
+        previousMode,
       );
     }
     state.socket?.updateVoiceMode(normalized);

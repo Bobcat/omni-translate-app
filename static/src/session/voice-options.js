@@ -70,12 +70,17 @@ function notify() {
  */
 export function setVoiceMode(mode) {
   if (!_options.available) return;
+  const previousMode = _options.mode;
   const normalized = normalizeVoiceMode(mode);
-  _options.fallbackMode = voiceFallbackModeFor(_options.fallbackMode, normalized);
+  _options.fallbackMode = voiceFallbackModeFor(_options.fallbackMode, mode, previousMode);
   _options.mode = normalized;
   persistVoiceModePreference(normalized);
   for (const laneId of LANE_IDS) {
-    _options.cloningStatus[laneId] = voiceModeSelectionStatus(normalized, _options.fallbackMode);
+    _options.cloningStatus[laneId] = voiceModeSelectionStatus(
+      normalized,
+      _options.fallbackMode,
+      previousMode,
+    );
   }
   if (state.socket?.isOpen?.()) state.socket.updateVoiceMode(normalized);
   notify();
