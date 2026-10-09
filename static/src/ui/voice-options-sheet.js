@@ -45,26 +45,23 @@ export function initVoiceOptionsSheet() {
   });
 }
 
+// This sheet deliberately owns no history entry. It exists only while a voice
+// session runs, so it must not push or pop the page stack: closing it used to
+// walk the browser back past the session and land on the setup screen.
 export function openVoiceOptionsSheet() {
   els.voiceOptionsSheet.hidden = false;
   renderVoiceOptionsSheet();
-  if (history.state?.view !== 'voiceOptionsSheet') {
-    history.pushState({ view: 'voiceOptionsSheet' }, '');
-  }
 }
 
-export function closeVoiceOptionsSheet({ popHistory = true } = {}) {
-  const wasOpen = !els.voiceOptionsSheet.hidden;
+export function closeVoiceOptionsSheet() {
   els.voiceOptionsSheet.hidden = true;
-  if (wasOpen && popHistory && history.state?.view === 'voiceOptionsSheet') {
-    history.back();
-  }
 }
 
 /** Called by the app's popstate router. */
-export function handleVoiceOptionsPopstate(event) {
+export function handleVoiceOptionsPopstate() {
   if (els.voiceOptionsSheet.hidden) return false;
-  if (event?.state?.view === 'voiceOptionsSheet') return true;
+  // Back closes the panel and stops there, rather than continuing into the
+  // session's own history entries.
   els.voiceOptionsSheet.hidden = true;
   return true;
 }

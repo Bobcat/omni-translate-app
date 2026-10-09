@@ -354,14 +354,29 @@ test('the voice sheet closes through its own close button', () => {
   assert.equal(voiceSheet().hidden, true);
 });
 
-test('the voice sheet closes when the browser goes back', async () => {
+test('the voice sheet owns no history entry', () => {
+  const before = stubs.history.entries.length;
+  openVoiceOptionsSheet();
+
+  // A session-scoped panel must not touch the page stack: closing it used to
+  // walk the browser back past the running session.
+  assert.equal(stubs.history.entries.length, before);
+});
+
+test('going back closes the voice sheet without leaving the session', async () => {
+  // A real session always sits on top of some history; without an entry the
+  // stub has nothing to go back to.
+  stubs.history.pushState(null, '', '/');
   openVoiceOptionsSheet();
   assert.equal(voiceSheet().hidden, false);
 
   stubs.history.back();
   await settle();
 
+  // The panel closes and Back stops there: the entry the session sits on is
+  // still current, so the user does not land back on the setup screen.
   assert.equal(voiceSheet().hidden, true);
+  assert.equal(stubs.history.current, null);
 });
 
 test('choosing a voice updates the state and the stored preference', () => {

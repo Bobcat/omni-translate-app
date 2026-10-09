@@ -674,17 +674,20 @@ button {
 
 /* Voice sheet: the cloning status the desktop view shows under its voice row.
    Only one line is ever relevant, so the sheet carries this without a heading. */
+/* Aligned with the setting-group padding above, so the text lines up with the
+   rows instead of hugging the sheet edge. */
 .voice-cloning-status,
 .voice-cloning-guidance {
   margin: 0;
-  padding: 0 4px;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  background: var(--surface);
   color: var(--muted);
   font-size: 0.8rem;
   line-height: 1.4;
 }
 
 .voice-cloning-guidance {
-  margin-top: 4px;
   font-size: 0.75rem;
 }
 

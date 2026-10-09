@@ -157,7 +157,7 @@ export function handleMessage(msg) {
     cleanupClientSession({ keepSocket: false });
     state.sessionId = null;
     // The sheet is only reachable while a session runs, so it closes with it.
-    closeVoiceOptionsSheet({ popHistory: false });
+    closeVoiceOptionsSheet();
     resetVoiceOptions();
     resetLiveRecordingToSetup();
     state.sessionEndMessage = endMessage;
