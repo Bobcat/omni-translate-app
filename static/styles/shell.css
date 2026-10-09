@@ -77,8 +77,26 @@ button {
   position: relative;
 }
 
+/* Voice options and settings share the right-hand grid cell as one flex row, so
+   the centred title keeps its position whichever icons are visible. */
+.titlebar-settings-button,
+.titlebar-voice-button {
+  display: inline-flex;
+  flex-direction: row-reverse;
+  align-items: center;
+  gap: 4px;
+}
+
+.titlebar-voice-button {
+  grid-column: 3;
+  grid-row: 1;
+  justify-self: end;
+  position: relative;
+}
+
 .titlebar-settings-button::before,
-.titlebar-account-button::before {
+.titlebar-account-button::before,
+.titlebar-voice-button::before {
   position: absolute;
   inset: -8px;
   content: '';
@@ -163,6 +181,7 @@ button {
 }
 
 .app.is-image-translation .titlebar-settings-button,
+.app.is-image-translation .titlebar-voice-button,
 .app.is-image-translation .titlebar-vad-badge {
   display: none;
 }
@@ -653,6 +672,27 @@ button {
   font-size: 0.9rem;
   line-height: 1.35;
   text-align: center;
+}
+
+/* Voice sheet: the cloning status the desktop view shows under its voice row.
+   Only one line is ever relevant, so the sheet carries this without a heading. */
+.voice-cloning-status,
+.voice-cloning-guidance {
+  margin: 0;
+  padding: 0 4px;
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+.voice-cloning-guidance {
+  margin-top: 4px;
+  font-size: 0.75rem;
+}
+
+.voice-cloning-status[hidden],
+.voice-cloning-guidance[hidden] {
+  display: none;
 }
 
 .setup-mode-pill {

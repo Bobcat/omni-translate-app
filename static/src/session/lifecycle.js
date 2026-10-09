@@ -33,7 +33,9 @@ import { updateActionButtons } from '../ui/action-buttons.js';
 import { renderAudioSettings } from '../settings/audio.js';
 import { renderTuningSettings } from '../settings/tuning.js';
 import { sessionTtsSettingsPayload } from '../settings/tts.js';
+import { sessionVoiceMode } from './voice-options.js';
 import { renderTranscript } from '../ui/render-turn.js';
+import { handleVoiceOptionsPopstate } from '../ui/voice-options-sheet.js';
 import { enableTranscriptAutoFollow } from '../ui/auto-follow.js';
 import {
   armAutoOffSilenceTimer,
@@ -88,6 +90,7 @@ export async function startListening({ withMic = true } = {}) {
       sideBLanguage: state.sideBLanguage,
       liveSettings: state.tuningSettings,
       ttsSettings: sessionTtsSettingsPayload(),
+      voiceMode: sessionVoiceMode(),
     });
     const sessionId = String(session.session?.session_id || session.session_id || '').trim();
     if (!sessionId) throw new Error('Missing session id');
@@ -501,6 +504,7 @@ export function handlePopstateBack(event) {
     closeLanguageSheet();
     return;
   }
+  if (handleVoiceOptionsPopstate(event)) return;
   if (handleSettingsSheetPopstate(event)) return;
   if (finishImageTranslationFromHistory()) return;
   if (state.appMode !== APP_MODES.LIVE_RECORDING) return;

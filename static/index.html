@@ -69,6 +69,19 @@
         </button>
         <h1 class="app-title"><strong>Omni</strong> Translate</h1>
         <span class="vad-badge titlebar-vad-badge" id="vadBadge" hidden>Speech detected</span>
+        <button class="settings-button titlebar-voice-button" id="voiceOptionsButton" type="button" aria-label="Voice options" title="Voice options" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <line x1="21" y1="4" x2="14" y2="4"></line>
+            <line x1="10" y1="4" x2="3" y2="4"></line>
+            <line x1="21" y1="12" x2="12" y2="12"></line>
+            <line x1="8" y1="12" x2="3" y2="12"></line>
+            <line x1="21" y1="20" x2="16" y2="20"></line>
+            <line x1="12" y1="20" x2="3" y2="20"></line>
+            <line x1="14" y1="2" x2="14" y2="6"></line>
+            <line x1="8" y1="10" x2="8" y2="14"></line>
+            <line x1="16" y1="18" x2="16" y2="22"></line>
+          </svg>
+        </button>
         <button class="settings-button titlebar-settings-button" id="settingsButton" type="button" aria-label="Open settings" title="Settings">
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/>
@@ -567,8 +580,39 @@
           <div class="sheet-body language-sheet-body" id="languageSheetList" role="listbox" aria-labelledby="languageSheetTitle"></div>
         </div>
       </div>
+      <div class="sheet-layer" id="voiceOptionsSheet" hidden>
+        <button class="sheet-scrim" id="voiceOptionsScrim" type="button" aria-label="Close"></button>
+        <div class="bottom-sheet">
+          <div class="sheet-header">
+            <button class="settings-back is-sheet-close" id="closeVoiceOptionsButton" type="button" aria-label="Close" title="Close">
+              <svg class="settings-back-icon settings-back-down-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M6 9l6 6 6-6"></path>
+              </svg>
+            </button>
+            <h2 id="voiceOptionsTitle">Voice</h2>
+          </div>
+          <div class="sheet-body" id="voiceOptionsBody">
+            <section class="setting-group" aria-label="Translation voice">
+              <div class="setting-group-title">Voice</div>
+              <div class="segmented" role="radiogroup" aria-label="Translation voice" id="voiceModeGroup"></div>
+            </section>
+            <section class="setting-group">
+              <label class="toggle-row" for="voiceAutoSpeak">
+                <span>Automatically speak translations</span>
+                <span class="switch">
+                  <input id="voiceAutoSpeak" type="checkbox" role="switch">
+                  <span class="switch-track" aria-hidden="true"></span>
+                  <span class="switch-thumb" aria-hidden="true"></span>
+                </span>
+              </label>
+            </section>
+            <p class="voice-cloning-status" id="voiceCloningStatus" role="status" hidden></p>
+            <p class="voice-cloning-guidance" id="voiceCloningGuidance" role="note" hidden></p>
+          </div>
+        </div>
+      </div>
 
     </main>
-    <script type="module" src="/src/app.js?v=20261008-dev-mode-1"></script>
+    <script type="module" src="/src/app.js?v=20261009-voice-options-1"></script>
   </body>
 </html>

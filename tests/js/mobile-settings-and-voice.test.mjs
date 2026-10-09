@@ -1,8 +1,10 @@
-// Settings-sheet history: the dev-mode switch has to pop the entry a developer
-// subpage pushed, not push a second one, or browser Back walks back onto a page
-// the switch just hid. These assertions are on the real history stack the sheet
-// module drives, so reverting to a push (or dropping the popstate fallback)
-// fails here rather than only in a browser.
+// Mobile settings and voice options, driven through the real app entry: the
+// settings sheet's history behaviour (the dev-mode switch pops the entry a
+// developer subpage pushed, so browser Back cannot return to a hidden page) and
+// the voice options sheet (icon, voices, automatic speaking, cloning status).
+//
+// One file owns the app boot on purpose: the stubs are global, so two files
+// booting the app would overwrite each other's DOM and history.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -12,6 +14,7 @@ import assert from 'node:assert/strict';
 // a test can fire the same event the browser would.
 function makeElement(overrides = {}) {
   const listeners = new Map();
+  const children = [];
   const target = {
     hidden: false,
     textContent: '',
@@ -39,8 +42,12 @@ function makeElement(overrides = {}) {
     listenerCount(type) {
       return (listeners.get(type) || []).length;
     },
-    append() {},
-    replaceChildren() {},
+    appendChild(node) { children.push(node); return node; },
+    append(...nodes) { children.push(...nodes); },
+    replaceChildren(...nodes) {
+      children.length = 0;
+      children.push(...nodes);
+    },
     querySelector: () => makeElement(),
     querySelectorAll: () => [],
     closest: () => makeElement(),
@@ -143,6 +150,8 @@ function installBrowserStubs() {
   globalThis.document = {
     querySelector: elementFor,
     querySelectorAll: () => [],
+    // Created nodes live in the same registry as the queried ones, so a test
+    // can inspect what the app built into a container.
     createElement: () => makeElement(),
     createDocumentFragment: () => makeElement(),
     addEventListener() {},
@@ -152,6 +161,8 @@ function installBrowserStubs() {
   globalThis.window = {
     location: { href: 'https://example.test/', search: '', pathname: '/', hash: '' },
     history,
+    // Same map the history stub dispatches into: app.js registers its popstate
+    // router here, and history.back() has to reach it.
     addEventListener(type, listener) {
       if (!listeners.has(type)) listeners.set(type, []);
       listeners.get(type).push(listener);
@@ -167,11 +178,14 @@ const stubs = installBrowserStubs();
 // The app's sheets start closed; handlePopstateBack checks the language sheet
 // first and would swallow every event if it were left open.
 stubs.elementFor('#languageSheet').hidden = true;
+stubs.elementFor('#voiceOptionsSheet').hidden = true;
 // Boot the real app entry so the Dev tools switch is wired exactly as shipped:
 // app.js registers the settings router and the handler that reacts to the
 // switch. Only the network call is stubbed.
 globalThis.fetch = async (url) => {
-  const body = String(url).includes('/api/config') ? { auth: { configured: false } } : {};
+  const body = String(url).includes('/api/config')
+    ? { auth: { configured: false }, tts: { capabilities: { voice_selection: true } } }
+    : {};
   return {
     ok: true,
     status: 200,
@@ -183,6 +197,9 @@ await import('../../static/src/app.js');
 const sheet = await import('../../static/src/settings/sheet.js');
 const { setDevMode } = await import('../../static/src/settings/dev-mode.js');
 const { state } = await import('../../static/src/state.js');
+const voiceOptions = await import('../../static/src/session/voice-options.js');
+const { openVoiceOptionsSheet } = await import('../../static/src/ui/voice-options-sheet.js');
+const { renderVoiceOptionsSheet } = await import('../../static/src/ui/voice-options-sheet.js');
 
 test.after(() => {
   delete globalThis.requestAnimationFrame;
@@ -213,9 +230,11 @@ test.beforeEach(async () => {
   // Each test starts from closed sheets, a clean history stack and no stored
   // dev-mode preference.
   stubs.store.clear();
+  voiceOptions.resetVoiceOptions();
   stubs.history.reset();
   stubs.elements.get('#settingsSheet').hidden = true;
   stubs.elements.get('#languageSheet').hidden = true;
+  stubs.elements.get('#voiceOptionsSheet').hidden = true;
 });
 
 test('the Dev tools switch returns to the sheet root without pushing an entry', async () => {
@@ -260,7 +279,6 @@ test('returning from Voice library to Dev tools runs the page-exit hook', async 
   // Dev tools entry rather than leaving Voice library current.
   assert.deepEqual(pages(), ['home', 'dev-tools', 'voice-library']);
   assert.equal(stubs.history.current.page, 'dev-tools');
-  console.log('DBG test state#', state.__id, 'marker=', state.voiceLibraryAwaitingFirstPlayback);
   assert.equal(state.voiceLibraryAwaitingFirstPlayback, null);
   await settle(); // leave no popstate behind for the next test
 });
@@ -314,4 +332,94 @@ test('a dev-only popstate is honored while dev mode is on', () => {
   sheet.handleSettingsSheetPopstate({ state: { view: 'settingsSheet', page: 'tuning' } });
 
   assert.equal(state.settingsPage, 'tuning');
+});
+
+const voiceSheet = () => stubs.elementFor('#voiceOptionsSheet');
+
+// The rendered radios are the sheet's own detail; what matters is that a tap on
+// a control lands in the session state. The list itself is covered by
+// voice-options.test.mjs and the shared rules by voice-selection.test.mjs.
+test('the voice icon opens the sheet', () => {
+  openVoiceOptionsSheet();
+
+  assert.equal(voiceSheet().hidden, false);
+});
+
+test('the voice sheet closes through its own close button', () => {
+  openVoiceOptionsSheet();
+  stubs.elementFor('#closeVoiceOptionsButton').fire('click');
+
+  assert.equal(voiceSheet().hidden, true);
+});
+
+test('the voice sheet closes when the browser goes back', async () => {
+  openVoiceOptionsSheet();
+  assert.equal(voiceSheet().hidden, false);
+
+  stubs.history.back();
+  await settle();
+
+  assert.equal(voiceSheet().hidden, true);
+});
+
+test('choosing a voice updates the state and the stored preference', () => {
+  openVoiceOptionsSheet();
+  stubs.elementFor('#voiceModeGroup').fire('change', { target: { name: 'voiceMode', value: 'male' } });
+
+  assert.equal(voiceOptions.voiceMode(), 'male');
+  assert.deepEqual(JSON.parse(stubs.store.get('voice_mode')), { mode: 'male' });
+});
+
+test('an unrelated control in the group does not change the voice', () => {
+  openVoiceOptionsSheet();
+  stubs.elementFor('#voiceModeGroup').fire('change', { target: { name: 'somethingElse', value: 'male' } });
+
+  assert.equal(voiceOptions.voiceMode(), 'female');
+  assert.equal(stubs.store.has('voice_mode'), false);
+});
+
+test('the automatic-speaking switch follows and updates the session choice', () => {
+  openVoiceOptionsSheet();
+  const autoSpeak = stubs.elementFor('#voiceAutoSpeak');
+  assert.equal(autoSpeak.checked, true);
+
+  autoSpeak.checked = false;
+  autoSpeak.fire('change');
+
+  assert.equal(voiceOptions.autoSpeak(), false);
+  assert.deepEqual(JSON.parse(stubs.store.get('tts_global')), { auto_speak: false });
+});
+
+test('the cloning guidance appears only for the clone voice', () => {
+  openVoiceOptionsSheet();
+  assert.equal(stubs.elementFor('#voiceCloningGuidance').hidden, true);
+
+  stubs.elementFor('#voiceModeGroup').fire('change', {
+    target: { name: 'voiceMode', value: 'speaker_clone' },
+  });
+
+  assert.equal(voiceOptions.voiceMode(), 'speaker_clone');
+  assert.equal(stubs.elementFor('#voiceCloningGuidance').hidden, false);
+  assert.match(stubs.elementFor('#voiceCloningGuidance').textContent, /speak clearly/);
+});
+
+test('the voices are disabled when the backend cannot select them', () => {
+  voiceOptions.configureVoiceOptions({ available: false });
+  openVoiceOptionsSheet();
+
+  assert.equal(voiceOptions.voiceModeAvailable(), false);
+  assert.equal(stubs.elementFor('#voiceAutoSpeak').disabled, true);
+  // A disabled control cannot change the voice either.
+  stubs.elementFor('#voiceModeGroup').fire('change', { target: { name: 'voiceMode', value: 'male' } });
+  assert.equal(voiceOptions.voiceMode(), 'female');
+  voiceOptions.configureVoiceOptions({ available: true });
+});
+
+test.after(() => {
+  delete globalThis.document;
+  delete globalThis.localStorage;
+  delete globalThis.window;
+  delete globalThis.history;
+  delete globalThis.navigator;
+  delete globalThis.requestAnimationFrame;
 });

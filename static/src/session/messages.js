@@ -26,6 +26,12 @@ import { renderTranscript } from '../ui/render-turn.js';
 import { enableTranscriptAutoFollow } from '../ui/auto-follow.js';
 import { normalizeTurnPayload } from '../domain/turns.js';
 import { voiceSessionEndMessage } from '../shared/voice-session-end.js';
+import {
+  applyVoiceCloningStatusMessage,
+  applyVoiceModeSettingsMessage,
+  applyVoiceSessionReady,
+  resetVoiceOptions,
+} from './voice-options.js';
 import { audioQueue } from './audio-queue.js';
 import {
   hideVadHint,
@@ -110,6 +116,14 @@ export function handleMessage(msg) {
     updateActionButtons();
     return;
   }
+  if (msg.type === 'voice_cloning_status') {
+    applyVoiceCloningStatusMessage(msg);
+    return;
+  }
+  if (msg.type === 'voice_mode_settings') {
+    applyVoiceModeSettingsMessage(msg);
+    return;
+  }
   if (msg.type === 'tts_status') {
     updateActionButtons();
     return;
@@ -141,6 +155,7 @@ export function handleMessage(msg) {
     hideVadHint();
     cleanupClientSession({ keepSocket: false });
     state.sessionId = null;
+    resetVoiceOptions();
     resetLiveRecordingToSetup();
     state.sessionEndMessage = endMessage;
     renderLifecycle();
@@ -152,6 +167,7 @@ function applyReady(msg) {
   state.sideBLanguage = normalizeLanguageName(msg.side_b_language || state.sideBLanguage);
   state.tuningSettings = mergeSettings(DEFAULT_TUNING_SETTINGS, msg.live_settings || state.tuningSettings);
   state.ttsSettings = mergeSettings(state.ttsSettings, msg.tts_settings || {});
+  applyVoiceSessionReady(msg);
   state.lanes = buildLocalLanes(state.sideALanguage, state.sideBLanguage);
   for (const laneId of Object.keys(msg.lanes || {})) {
     mergeLanePayload(laneId, msg.lanes[laneId]);

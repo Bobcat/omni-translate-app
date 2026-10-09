@@ -36,6 +36,9 @@ export function renderLifecycle() {
   els.translateNowButton.hidden = !(liveRecording && debugControls);
   els.speakNowButton.hidden = !(liveRecording && debugControls);
   els.micToggleButton.hidden = !liveRecording;
+  // Voice options belong to voice translation only; the image view has its own
+  // render controls and no speech output.
+  els.voiceOptionsButton.hidden = !(setup || liveRecording);
   els.pcExportButton.hidden = !(liveRecording && micOff && state.devToolsSettings.showControls);
   els.setupFixtureButton.hidden = !(setup && state.devToolsSettings.showControls);
   els.setupFixtureButton.disabled = state.status === 'connecting' || Boolean(state.fixtureBusy);
