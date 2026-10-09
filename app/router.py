@@ -106,16 +106,10 @@ async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-ENTRY_VERSION = "20261009-voice-options-2"
-
-
 @api_router.get("/config")
 async def config() -> dict[str, Any]:
     return {
         "protocol_version": PROTOCOL_VERSION,
-        # The mobile shell uses this to notice that it is running an older
-        # bundle than the one index.html now points at, and reloads itself.
-        "entry_version": ENTRY_VERSION,
         "audio_input": {
             "format": "pcm16le",
             "sample_rate_hz": get_int("live.audio.sample_rate_hz", 16000),
