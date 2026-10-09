@@ -30,6 +30,7 @@ import {
   applyVoiceCloningStatusMessage,
   applyVoiceModeSettingsMessage,
   applyVoiceSessionReady,
+  notifyVoiceOptionsChanged,
 } from './voice-options.js';
 import { audioQueue } from './audio-queue.js';
 import {
@@ -131,6 +132,10 @@ export function handleMessage(msg) {
   if (msg.type === 'tts_settings') {
     state.ttsSettings = mergeSettings(state.ttsSettings, msg.tts_settings || {});
     renderTtsSettings({ preserveScroll: true });
+    // The server's snapshot is authoritative, so the open voice panel has to
+    // follow it too: the automatic-speaking switch and the mode availability
+    // can both differ from what was just tapped.
+    notifyVoiceOptionsChanged();
     return;
   }
   if (msg.type === 'translation_status') {

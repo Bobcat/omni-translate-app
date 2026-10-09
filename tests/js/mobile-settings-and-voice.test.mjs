@@ -91,6 +91,8 @@ function installBrowserStubs() {
     get index() { return index; },
     /** Settings entries pushed after the baseline page entry. */
     get entries() { return stack.slice(1).map((entry) => entry.state); },
+    /** The entries the browser can still reach: everything up to now. */
+    get reachable() { return stack.slice(1, index + 1).map((entry) => entry.state); },
     /** The entry the browser is currently on. */
     get current() { return stack[index].state; },
     reset() {
@@ -215,6 +217,126 @@ let sentTts = null;
 const { openVoiceOptionsSheet, closeVoiceOptionsSheet } = await import('../../static/src/ui/voice-options-sheet.js');
 const { renderVoiceOptionsSheet } = await import('../../static/src/ui/voice-options-sheet.js');
 
+test('closing the panel from its button keeps the session running', async () => {
+  const { state: st } = { state };
+  st.appMode = APP_MODES.LIVE_RECORDING;
+  st.sessionId = null; // no socket: a stray finish must stay observable
+  stubs.history.pushState({ view: 'live_recording' }, '', '/');
+  openVoiceOptionsSheet();
+  assert.equal(stubs.history.current.view, 'voiceOptionsSheet');
+
+  stubs.elementFor('#closeVoiceOptionsButton').fire('click');
+  await settle();
+
+  // The programmatic pop must not reach the router, which would end the session.
+  assert.equal(voiceSheet().hidden, true);
+  assert.equal(st.appMode, APP_MODES.LIVE_RECORDING, 'the session is still live');
+  assert.equal(stubs.history.current.view, 'live_recording', 'no stale overlay entry');
+});
+
+test('closing the panel from the scrim keeps the session running', async () => {
+  state.appMode = APP_MODES.LIVE_RECORDING;
+  stubs.history.pushState({ view: 'live_recording' }, '', '/');
+  openVoiceOptionsSheet();
+
+  stubs.elementFor('#voiceOptionsScrim').fire('click');
+  await settle();
+
+  assert.equal(voiceSheet().hidden, true);
+  assert.equal(state.appMode, APP_MODES.LIVE_RECORDING);
+  assert.equal(stubs.history.current.view, 'live_recording');
+});
+
+test('browser Back closes the panel without duplicating the session entry', async () => {
+  state.appMode = APP_MODES.LIVE_RECORDING;
+  stubs.history.pushState({ view: 'live_recording' }, '', '/');
+  const before = stubs.history.reachable.map((entry) => entry?.view);
+  openVoiceOptionsSheet();
+
+  stubs.history.back();
+  await settle();
+
+  assert.equal(voiceSheet().hidden, true);
+  assert.equal(state.appMode, APP_MODES.LIVE_RECORDING);
+  assert.equal(stubs.history.current.view, 'live_recording');
+  // Exactly the stack it started with: no second live entry was pushed.
+  assert.deepEqual(stubs.history.reachable.map((entry) => entry?.view), before);
+
+  // A further Back now reaches the session's own exit path.
+  stubs.history.back();
+  await settle();
+  assert.equal(state.appMode, APP_MODES.SETUP);
+});
+
+test('a session teardown removes the overlay and the session entry', async () => {
+  const { applySessionTeardown } = await import('../../static/src/session/lifecycle.js');
+  state.appMode = APP_MODES.LIVE_RECORDING;
+  stubs.history.pushState({ view: 'live_recording' }, '', '/');
+  openVoiceOptionsSheet();
+  assert.equal(stubs.history.current.view, 'voiceOptionsSheet');
+
+  applySessionTeardown();
+  await settle();
+
+  assert.equal(voiceSheet().hidden, true);
+  assert.equal(state.appMode, APP_MODES.SETUP);
+  assert.equal(stubs.history.current, null, 'back on the baseline entry');
+});
+
+test('the local finish action tears the session down on both socket states', async () => {
+  const { finishSession } = await import('../../static/src/session/lifecycle.js');
+
+  for (const socketOpen of [true, false]) {
+    voiceOptions.resetVoiceOptions();
+    state.appMode = APP_MODES.LIVE_RECORDING;
+    state.sessionId = 'session-x';
+    state.socket = socketOpen
+      ? { isOpen: () => true, finishListening() {}, close() {} }
+      : { isOpen: () => false, close() {} };
+    openVoiceOptionsSheet();
+    voiceOptions.applyVoiceSessionReady({
+      voice_mode: 'speaker_clone',
+      voice_cloning_status: { a_to_b: { state: 'preparing', fallback_voice_mode: 'male' } },
+    });
+
+    finishSession();
+    await settle();
+
+    const label = socketOpen ? 'open socket' : 'closed socket';
+    assert.equal(voiceSheet().hidden, true, `${label}: panel closes`);
+    assert.deepEqual(voiceOptions.voiceCloningStatus(), {}, `${label}: status clears`);
+    assert.equal(state.appMode, APP_MODES.SETUP, `${label}: back to setup`);
+  }
+  state.socket = null;
+});
+
+test('a backend the server no longer offers disables the modes', () => {
+  state.ttsCapabilities = { voice_selection: true };
+  state.ttsSettings.backend = 'nanovllm_voxcpm';
+  state.ttsOptions = { ...state.ttsOptions, backends: [{ value: 'kokoro' }] };
+
+  assert.equal(voiceOptions.voiceModeAvailable(), false);
+  assert.equal(voiceOptions.sessionVoiceMode(), null);
+
+  // Offered again, the modes come back.
+  state.ttsOptions = { ...state.ttsOptions, backends: [{ value: 'kokoro' }, { value: 'nanovllm_voxcpm' }] };
+  assert.equal(voiceOptions.voiceModeAvailable(), true);
+  assert.equal(voiceOptions.sessionVoiceMode(), 'female');
+});
+
+test('a server TTS echo refreshes the open panel', () => {
+  state.ttsSettings.backend = 'nanovllm_voxcpm';
+  state.ttsSettings.auto_speak = true;
+  openVoiceOptionsSheet();
+  assert.equal(stubs.elementFor('#voiceAutoSpeak').checked, true);
+
+  // The server snapshot is authoritative: the switch has to follow it.
+  state.ttsSettings = { ...state.ttsSettings, auto_speak: false };
+  voiceOptions.notifyVoiceOptionsChanged();
+
+  assert.equal(stubs.elementFor('#voiceAutoSpeak').checked, false);
+});
+
 test.after(() => {
   delete globalThis.requestAnimationFrame;
   delete globalThis.document;
@@ -244,6 +366,13 @@ test.beforeEach(async () => {
   // Each test starts from closed sheets, a clean history stack and no stored
   // dev-mode preference.
   stubs.store.clear();
+  // Voice state is app state: a previous test must not decide what this one
+  // starts from.
+  state.socket = null;
+  state.ttsSettings.enabled = true;
+  state.ttsSettings.auto_speak = true;
+  state.ttsSettings.backend = 'nanovllm_voxcpm';
+  state.ttsCapabilities = { voice_selection: true };
   voiceOptions.resetVoiceOptions();
   stubs.history.reset();
   stubs.elements.get('#settingsSheet').hidden = true;
@@ -419,7 +548,7 @@ test('an unrelated control in the group does not change the voice', () => {
   assert.equal(stubs.store.has('voice_mode'), false);
 });
 
-test('the automatic-speaking switch follows and updates the session choice', () => {
+test('the automatic-speaking switch persists the choice', () => {
   openVoiceOptionsSheet();
   const autoSpeak = stubs.elementFor('#voiceAutoSpeak');
   assert.equal(autoSpeak.checked, true);

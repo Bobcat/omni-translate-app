@@ -171,7 +171,9 @@ export function finishSession() {
   if (!state.socket?.isOpen()) {
     cleanupClientSession();
     state.sessionId = null;
-    setLiveRecordingAppMode(APP_MODES.SETUP);
+    // Same transition as every other exit, so the panel and the session voice
+    // state cannot be left behind.
+    applySessionTeardown();
     return;
   }
   const finishingSocket = state.socket;
@@ -459,7 +461,21 @@ export function cleanupClientSession({ keepSocket = false } = {}) {
  * voice state belong to the session, so every path goes through here.
  */
 export function applySessionTeardown() {
+  // The panel's entry and the session's entry both have to go. history.back()
+  // is asynchronous, so relying on it here would leave the overlay current
+  // while the setup transition runs and skips its own pop.
+  const overlayCurrent = !els.voiceOptionsSheet.hidden
+    && history.state?.view === 'voiceOptionsSheet';
+  // No skip flag here: this branch closes the sheet itself and jumps with
+  // history.go, and a skip left set would swallow the next real Back.
   closeVoiceOptionsSheet({ popHistory: false });
+  if (overlayCurrent) {
+    // Both entries in one synchronous jump. The popstate this causes is
+    // ignored by the router on its own: the sheet is hidden, so the voice
+    // branch declines the event. No skip flag is needed, and leaving one set
+    // would swallow the next real Back once the jump lands at the baseline.
+    history.go(-2);
+  }
   resetVoiceOptions();
   resetLiveRecordingToSetup();
 }

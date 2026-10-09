@@ -54,10 +54,15 @@ export function initVoiceOptionsSheet() {
 }
 
 // The sheet owns exactly one history entry while it is open, the same way the
-// other sheets do. Without it, Back would consume the live-session entry: the
-// sheet would close, but the session entry would be gone and a second Back
-// would leave the document instead of finishing the session.
+// other sheets do. Without it, Back would consume the live-session entry and a
+// second Back would leave the document instead of finishing the session.
+//
+// Closing the sheet programmatically pops that entry, and the popstate it
+// causes must not reach the router: the router would read it as a user going
+// back and finish the running session. The language sheet handles the same
+// situation with a one-shot skip, which is what this is.
 let _ownsHistoryEntry = false;
+let _skipNextPopstate = false;
 
 export function openVoiceOptionsSheet() {
   els.voiceOptionsSheet.hidden = false;
@@ -68,27 +73,30 @@ export function openVoiceOptionsSheet() {
   }
 }
 
+/** Hide the panel; `popHistory` pops its entry and skips the resulting event. */
 export function closeVoiceOptionsSheet({ popHistory = true } = {}) {
   const wasOwned = _ownsHistoryEntry;
   _ownsHistoryEntry = false;
   els.voiceOptionsSheet.hidden = true;
   if (popHistory && wasOwned && history.state?.view === 'voiceOptionsSheet') {
+    _skipNextPopstate = true;
     history.back();
   }
 }
 
 /** Called by the app's popstate router. */
 export function handleVoiceOptionsPopstate() {
-  const owned = _ownsHistoryEntry;
-  _ownsHistoryEntry = false;
-  const wasOpen = !els.voiceOptionsSheet.hidden;
-  els.voiceOptionsSheet.hidden = true;
-  if (!wasOpen) return false;
-  if (owned) {
-    // The entry that was just popped was ours, so this Back only closed the
-    // sheet. Put the session's entry back to keep the stack as it was.
-    history.pushState({ view: 'live_recording' }, '');
+  // Our own programmatic pop first: if this were treated as a user going back,
+  // the router would finish the running session.
+  if (_skipNextPopstate) {
+    _skipNextPopstate = false;
+    return true;
   }
+  if (els.voiceOptionsSheet.hidden) return false;
+  // A real Back: it already popped our overlay, so the session entry is current
+  // again and nothing needs restoring.
+  _ownsHistoryEntry = false;
+  els.voiceOptionsSheet.hidden = true;
   return true;
 }
 

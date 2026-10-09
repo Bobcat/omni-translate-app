@@ -76,6 +76,11 @@ function notify() {
   if (_onChange) _onChange();
 }
 
+/** Re-render whatever shows voice state, after an authoritative server update. */
+export function notifyVoiceOptionsChanged() {
+  notify();
+}
+
 /**
  * Apply the mode, whether or not a session is live: the socket carries it when
  * one is, and the stored choice decides the next session otherwise.

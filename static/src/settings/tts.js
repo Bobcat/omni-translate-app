@@ -112,7 +112,16 @@ export function applyTtsConfig(tts) {
  */
 export function ttsSupportsVoiceSelection() {
   if (!state.ttsCapabilities?.voice_selection) return false;
-  return TTS_BACKENDS_WITH_VOICE_MODES.includes(String(state.ttsSettings.backend || ''));
+  const backend = String(state.ttsSettings.backend || '');
+  if (!TTS_BACKENDS_WITH_VOICE_MODES.includes(backend)) return false;
+  // The server advertises which backends it currently offers. A stored choice
+  // can outlive one of them, and synthesising against a model the pool no
+  // longer serves is not something the panel should invite.
+  const offered = state.ttsOptions?.backends;
+  if (Array.isArray(offered) && offered.length) {
+    return offered.some((option) => String(option?.value || option) === backend);
+  }
+  return true;
 }
 
 export function mergeStoredTtsConfigIntoState() {
