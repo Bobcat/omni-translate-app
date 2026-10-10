@@ -114,6 +114,11 @@ function installBrowserStubs() {
       index -= 1;
       queue(stack[index].state);
     },
+    forward() {
+      if (index >= stack.length - 1) return;
+      index += 1;
+      queue(stack[index].state);
+    },
     go(delta) {
       const next = index + delta;
       if (next < 0 || next >= stack.length) return;
@@ -196,7 +201,16 @@ globalThis.fetch = async (url) => {
   const body = String(url).includes('/api/config')
     ? {
       auth: { configured: false },
-      tts: { backend: 'nanovllm_voxcpm', capabilities: { voice_selection: true } },
+      tts: {
+        backend: 'nanovllm_voxcpm',
+        capabilities: { voice_selection: true },
+        options: {
+          backends: [
+            { value: 'kokoro', label: 'Kokoro' },
+            { value: 'nanovllm_voxcpm', label: 'NanoVLLM VoxCPM' },
+          ],
+        },
+      },
     }
     : {};
   return {
@@ -214,7 +228,11 @@ const voiceOptions = await import('../../static/src/session/voice-options.js');
 const { renderLifecycle } = await import('../../static/src/ui/render-status.js');
 const { APP_MODES } = await import('../../static/src/shared/constants.js');
 let sentTts = null;
-const { openVoiceOptionsSheet, closeVoiceOptionsSheet } = await import('../../static/src/ui/voice-options-sheet.js');
+const {
+  openVoiceOptionsSheet,
+  closeVoiceOptionsSheet,
+  resetVoiceOptionsSheetHistory,
+} = await import('../../static/src/ui/voice-options-sheet.js');
 const { renderVoiceOptionsSheet } = await import('../../static/src/ui/voice-options-sheet.js');
 
 test('closing the panel from its button keeps the session running', async () => {
@@ -337,6 +355,90 @@ test('a server TTS echo refreshes the open panel', () => {
   assert.equal(stubs.elementFor('#voiceAutoSpeak').checked, false);
 });
 
+test('Forward reopens the panel instead of ending the session', async () => {
+  state.appMode = APP_MODES.LIVE_RECORDING;
+  stubs.history.pushState({ view: 'live_recording' }, '', '/');
+  openVoiceOptionsSheet();
+  stubs.elementFor('#closeVoiceOptionsButton').fire('click');
+  await settle();
+  assert.equal(state.appMode, APP_MODES.LIVE_RECORDING);
+  assert.equal(voiceSheet().hidden, true);
+
+  stubs.history.forward();
+  await settle();
+
+  assert.equal(state.appMode, APP_MODES.LIVE_RECORDING, 'the session survives Forward');
+  assert.equal(voiceSheet().hidden, false, 'the panel reopens');
+  assert.equal(stubs.history.current.view, 'voiceOptionsSheet');
+});
+
+test('Forward after browser Back also reopens the panel', async () => {
+  state.appMode = APP_MODES.LIVE_RECORDING;
+  stubs.history.pushState({ view: 'live_recording' }, '', '/');
+  openVoiceOptionsSheet();
+  stubs.history.back();
+  await settle();
+  assert.equal(voiceSheet().hidden, true);
+
+  stubs.history.forward();
+  await settle();
+
+  assert.equal(state.appMode, APP_MODES.LIVE_RECORDING);
+  assert.equal(voiceSheet().hidden, false);
+});
+
+test('a stale Forward entry cannot reopen the panel after teardown', async () => {
+  const { applySessionTeardown } = await import('../../static/src/session/lifecycle.js');
+  state.appMode = APP_MODES.LIVE_RECORDING;
+  stubs.history.pushState({ view: 'live_recording' }, '', '/');
+  openVoiceOptionsSheet();
+  stubs.elementFor('#closeVoiceOptionsButton').fire('click');
+  await settle();
+
+  applySessionTeardown();
+  await settle();
+  assert.equal(state.appMode, APP_MODES.SETUP);
+
+  stubs.history.forward();
+  await settle();
+
+  assert.equal(state.appMode, APP_MODES.SETUP, 'the session stays ended');
+  assert.equal(voiceSheet().hidden, true, 'no session UI after teardown');
+});
+
+test('an empty offered-backend list disables the modes', () => {
+  state.ttsCapabilities = { voice_selection: true };
+  state.ttsSettings.backend = 'nanovllm_voxcpm';
+  state.ttsOptions = { ...state.ttsOptions, backends: [] };
+
+  assert.equal(voiceOptions.voiceModeAvailable(), false);
+  assert.equal(voiceOptions.sessionVoiceMode(), null);
+});
+
+test('an older TTS echo does not reverse the latest automatic-speaking tap', async () => {
+  const { handleMessage } = await import('../../static/src/session/messages.js');
+  state.sessionId = 'session-echo';
+  stubs.store.clear();
+
+  // The user taps off, then on, before the first change comes back.
+  voiceOptions.setAutoSpeak(false);
+  voiceOptions.setAutoSpeak(true);
+
+  // The echo for the first tap arrives: it must not flip the control.
+  handleMessage({ type: 'tts_settings', session_id: 'session-echo', tts_settings: { auto_speak: false } });
+  assert.equal(voiceOptions.autoSpeak(), true, 'the latest tap stands');
+
+  // The echo for the second tap confirms it and clears the pending value.
+  handleMessage({ type: 'tts_settings', session_id: 'session-echo', tts_settings: { auto_speak: true } });
+  assert.equal(voiceOptions.autoSpeak(), true);
+
+  // With nothing pending, the server is authoritative again.
+  handleMessage({ type: 'tts_settings', session_id: 'session-echo', tts_settings: { auto_speak: false } });
+  assert.equal(voiceOptions.autoSpeak(), false);
+
+  state.sessionId = null;
+});
+
 test.after(() => {
   delete globalThis.requestAnimationFrame;
   delete globalThis.document;
@@ -373,11 +475,20 @@ test.beforeEach(async () => {
   state.ttsSettings.auto_speak = true;
   state.ttsSettings.backend = 'nanovllm_voxcpm';
   state.ttsCapabilities = { voice_selection: true };
+  // The server's offered list, as /api/config reports it.
+  state.ttsOptions = {
+    ...state.ttsOptions,
+    backends: [
+      { value: 'kokoro', label: 'Kokoro' },
+      { value: 'nanovllm_voxcpm', label: 'NanoVLLM VoxCPM' },
+    ],
+  };
   voiceOptions.resetVoiceOptions();
   stubs.history.reset();
   stubs.elements.get('#settingsSheet').hidden = true;
   stubs.elements.get('#languageSheet').hidden = true;
   stubs.elements.get('#voiceOptionsSheet').hidden = true;
+  resetVoiceOptionsSheetHistory();
 });
 
 test('the Dev tools switch returns to the sheet root without pushing an entry', async () => {

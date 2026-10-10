@@ -25,6 +25,9 @@ let _onChange = null;
 /** The shared audio queue, so enabling automatic speaking unlocks playback
  *  inside the user's tap. Mirrors the existing controls in settings/tts.js. */
 let _audioQueue = null;
+/** The automatic-speaking value awaiting its server echo, or null. Echoes
+ *  arrive in order, so an older snapshot must not reverse a newer tap. */
+let _pendingAutoSpeak = null;
 
 let _options = {
   mode: DEFAULT_VOICE_MODE,
@@ -108,6 +111,7 @@ export function setAutoSpeak(enabled) {
   const next = Boolean(enabled);
   const wasOn = Boolean(state.ttsSettings.auto_speak);
   state.ttsSettings.auto_speak = next;
+  _pendingAutoSpeak = next;
   persistAutoSpeakPreference(next);
   // Unlock playback inside the tap that turned it on, as the other two
   // automatic-speaking controls do.
@@ -126,6 +130,21 @@ export function applyVoiceSessionReady(msg) {
   }
   _options.cloningStatus = statuses;
   notify();
+}
+
+/**
+ * Apply a `tts_settings` snapshot from the server. While a change of our own is
+ * still waiting for its echo, an older snapshot is ignored for that field, so
+ * the control cannot flip back in front of the user.
+ */
+export function applyTtsSettingsEcho(settings = {}) {
+  const snapshot = settings && typeof settings === 'object' ? settings : {};
+  const incoming = snapshot.auto_speak;
+  if (_pendingAutoSpeak !== null && typeof incoming === 'boolean') {
+    if (incoming === _pendingAutoSpeak) _pendingAutoSpeak = null;
+    else delete snapshot.auto_speak;
+  }
+  return snapshot;
 }
 
 /** A `voice_cloning_status` event for one lane. */
@@ -152,6 +171,8 @@ export function storedVoiceMode() {
 /** Drop session state: the clone status clears and the mode comes from storage
  * again, so the next session starts from the user's stored choice. */
 export function resetVoiceOptions() {
+  // A session that ended cannot deliver the echo any more.
+  _pendingAutoSpeak = null;
   _options.cloningStatus = {};
   _options.mode = storedVoiceMode();
   _options.fallbackMode = voiceFallbackModeFor(DEFAULT_VOICE_MODE, _options.mode);

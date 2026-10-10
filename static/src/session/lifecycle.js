@@ -34,7 +34,11 @@ import { renderAudioSettings } from '../settings/audio.js';
 import { renderTuningSettings } from '../settings/tuning.js';
 import { sessionTtsSettingsPayload } from '../settings/tts.js';
 import { resetVoiceOptions, sessionVoiceMode } from './voice-options.js';
-import { closeVoiceOptionsSheet } from '../ui/voice-options-sheet.js';
+import {
+  closeVoiceOptionsSheet,
+  resetVoiceOptionsSheetHistory,
+  voiceOptionsSheetCloseInFlight,
+} from '../ui/voice-options-sheet.js';
 import { renderTranscript } from '../ui/render-turn.js';
 import { handleVoiceOptionsPopstate } from '../ui/voice-options-sheet.js';
 import { enableTranscriptAutoFollow } from '../ui/auto-follow.js';
@@ -461,20 +465,24 @@ export function cleanupClientSession({ keepSocket = false } = {}) {
  * voice state belong to the session, so every path goes through here.
  */
 export function applySessionTeardown() {
-  // The panel's entry and the session's entry both have to go. history.back()
-  // is asynchronous, so relying on it here would leave the overlay current
-  // while the setup transition runs and skips its own pop.
-  const overlayCurrent = !els.voiceOptionsSheet.hidden
-    && history.state?.view === 'voiceOptionsSheet';
-  // No skip flag here: this branch closes the sheet itself and jumps with
-  // history.go, and a skip left set would swallow the next real Back.
+  // The panel's overlay has to stop being current before the session exit runs,
+  // because that exit only pops an entry it recognises as the session's. Rather
+  // than counting stack steps — history.go is asynchronous and races the exit —
+  // the overlay entry is relabelled as the session entry, and the exit pops it
+  // exactly as it would have without the panel.
+  // Count what has to leave the stack: the panel's own entry, which may already
+  // be on its way out from a close, plus the session entry. history.go jumps
+  // them in one synchronous step instead of racing the asynchronous exit.
+  const overlaySteps = voiceOptionsSheetCloseInFlight()
+    || (!els.voiceOptionsSheet.hidden && history.state?.view === 'voiceOptionsSheet') ? 1 : 0;
+  const sessionSteps = history.state?.view === 'live_recording' ? 1 : 0;
   closeVoiceOptionsSheet({ popHistory: false });
-  if (overlayCurrent) {
-    // Both entries in one synchronous jump. The popstate this causes is
-    // ignored by the router on its own: the sheet is hidden, so the voice
-    // branch declines the event. No skip flag is needed, and leaving one set
-    // would swallow the next real Back once the jump lands at the baseline.
-    history.go(-2);
+  resetVoiceOptionsSheetHistory();
+  const steps = overlaySteps + sessionSteps;
+  if (steps > 0) {
+    // No skip flag: the router ignores this popstate because the sheet is
+    // hidden, and a flag left set would swallow the next real Back.
+    history.go(-steps);
   }
   resetVoiceOptions();
   resetLiveRecordingToSetup();

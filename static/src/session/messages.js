@@ -27,6 +27,7 @@ import { enableTranscriptAutoFollow } from '../ui/auto-follow.js';
 import { normalizeTurnPayload } from '../domain/turns.js';
 import { voiceSessionEndMessage } from '../shared/voice-session-end.js';
 import {
+  applyTtsSettingsEcho,
   applyVoiceCloningStatusMessage,
   applyVoiceModeSettingsMessage,
   applyVoiceSessionReady,
@@ -130,7 +131,7 @@ export function handleMessage(msg) {
     return;
   }
   if (msg.type === 'tts_settings') {
-    state.ttsSettings = mergeSettings(state.ttsSettings, msg.tts_settings || {});
+    state.ttsSettings = mergeSettings(state.ttsSettings, applyTtsSettingsEcho(msg.tts_settings));
     renderTtsSettings({ preserveScroll: true });
     // The server's snapshot is authoritative, so the open voice panel has to
     // follow it too: the automatic-speaking switch and the mode availability

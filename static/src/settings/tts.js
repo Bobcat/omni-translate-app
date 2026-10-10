@@ -118,7 +118,9 @@ export function ttsSupportsVoiceSelection() {
   // can outlive one of them, and synthesising against a model the pool no
   // longer serves is not something the panel should invite.
   const offered = state.ttsOptions?.backends;
-  if (Array.isArray(offered) && offered.length) {
+  // An authoritative list is always honoured, including an empty one: the
+  // server reporting no backends means none can be selected.
+  if (Array.isArray(offered)) {
     return offered.some((option) => String(option?.value || option) === backend);
   }
   return true;
