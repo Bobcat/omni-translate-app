@@ -95,6 +95,8 @@ function installBrowserStubs() {
     get reachable() { return stack.slice(1, index + 1).map((entry) => entry.state); },
     /** The entry the browser is currently on. */
     get current() { return stack[index].state; },
+    /** Total entries, as the real History API reports it. */
+    get length() { return stack.length; },
     reset() {
       stack.length = 1;
       index = 0;
@@ -109,21 +111,20 @@ function installBrowserStubs() {
       stack[index] = { state, url: url || stack[index].url };
       globalThis.window.location.href = stack[index].url;
     },
-    back() {
-      if (index === 0) return;
-      index -= 1;
-      queue(stack[index].state);
-    },
-    forward() {
-      if (index >= stack.length - 1) return;
-      index += 1;
-      queue(stack[index].state);
-    },
+    // Traversal is asynchronous in a browser: the index moves and popstate is
+    // dispatched in a task, not inside the call. Modelling that synchronously
+    // hid a real ordering defect once already.
+    back() { this.go(-1); },
+    forward() { this.go(1); },
     go(delta) {
-      const next = index + delta;
-      if (next < 0 || next >= stack.length) return;
-      index = next;
-      queue(stack[index].state);
+      const next = Math.max(0, Math.min(stack.length - 1, index + delta));
+      if (next === index) return;
+      queueMicrotask(() => {
+        index = next;
+        for (const listener of [...(listeners.get('popstate') || [])]) {
+          listener({ state: stack[index].state });
+        }
+      });
     },
   };
 
@@ -286,21 +287,6 @@ test('browser Back closes the panel without duplicating the session entry', asyn
   assert.equal(state.appMode, APP_MODES.SETUP);
 });
 
-test('a session teardown removes the overlay and the session entry', async () => {
-  const { applySessionTeardown } = await import('../../static/src/session/lifecycle.js');
-  state.appMode = APP_MODES.LIVE_RECORDING;
-  stubs.history.pushState({ view: 'live_recording' }, '', '/');
-  openVoiceOptionsSheet();
-  assert.equal(stubs.history.current.view, 'voiceOptionsSheet');
-
-  applySessionTeardown();
-  await settle();
-
-  assert.equal(voiceSheet().hidden, true);
-  assert.equal(state.appMode, APP_MODES.SETUP);
-  assert.equal(stubs.history.current, null, 'back on the baseline entry');
-});
-
 test('the local finish action tears the session down on both socket states', async () => {
   const { finishSession } = await import('../../static/src/session/lifecycle.js');
 
@@ -439,6 +425,95 @@ test('an older TTS echo does not reverse the latest automatic-speaking tap', asy
   state.sessionId = null;
 });
 
+test('a teardown with the panel open reaches the baseline entry', async () => {
+  const { applySessionTeardown } = await import('../../static/src/session/lifecycle.js');
+  state.appMode = APP_MODES.LIVE_RECORDING;
+  // The same entries the app itself creates: a session entry, then the overlay.
+  stubs.history.pushState({ view: 'live_recording' }, '', '/');
+  openVoiceOptionsSheet();
+
+  applySessionTeardown();
+  await settle();
+  await settle();
+
+  // Traversal is asynchronous, so one settle is not enough to prove this.
+  assert.equal(state.appMode, APP_MODES.SETUP);
+  assert.equal(voiceSheet().hidden, true);
+  assert.equal(stubs.history.current, null, 'no stale session or overlay entry');
+});
+
+test('reopening before the close lands keeps the panel on its own entry', async () => {
+  state.appMode = APP_MODES.LIVE_RECORDING;
+  stubs.history.pushState({ view: 'live_recording' }, '', '/');
+  openVoiceOptionsSheet();
+  closeVoiceOptionsSheet();
+  // Reopen without awaiting the pending traversal.
+  openVoiceOptionsSheet();
+
+  await settle();
+  await settle();
+
+  assert.equal(voiceSheet().hidden, false, 'the panel stays open');
+  assert.equal(stubs.history.current.view, 'voiceOptionsSheet', 'it owns an entry');
+
+  // Back closes only the panel; a second Back reaches the session exit.
+  stubs.history.back();
+  await settle();
+  assert.equal(voiceSheet().hidden, true);
+  assert.equal(state.appMode, APP_MODES.LIVE_RECORDING, 'the session survived');
+});
+
+test('repeated automatic-speaking values are matched echo by echo', async () => {
+  const { handleMessage } = await import('../../static/src/session/messages.js');
+  state.sessionId = 'session-repeat';
+  state.ttsSettings.auto_speak = true;
+
+  // on -> off -> on -> off before any echo arrives.
+  voiceOptions.setAutoSpeak(false);
+  voiceOptions.setAutoSpeak(true);
+  voiceOptions.setAutoSpeak(false);
+
+  const deliver = (value) => handleMessage({
+    type: 'tts_settings',
+    session_id: 'session-repeat',
+    tts_settings: { auto_speak: value },
+  });
+
+  deliver(false); // confirms the first tap only
+  assert.equal(voiceOptions.autoSpeak(), false, 'the latest choice stands');
+  deliver(true);  // confirms the second tap; still not the latest
+  assert.equal(voiceOptions.autoSpeak(), false, 'the latest choice still stands');
+  deliver(false); // confirms the latest tap
+  assert.equal(voiceOptions.autoSpeak(), false);
+
+  // Nothing outstanding, so the server is authoritative again.
+  deliver(true);
+  assert.equal(voiceOptions.autoSpeak(), true);
+  state.sessionId = null;
+});
+
+test('a rejected update lets the server become authoritative again', async () => {
+  const { handleMessage } = await import('../../static/src/session/messages.js');
+  state.sessionId = 'session-reject';
+  state.ttsSettings.auto_speak = true;
+
+  voiceOptions.setAutoSpeak(false);
+  handleMessage({
+    type: 'error',
+    session_id: 'session-reject',
+    code: 'invalid_tts_settings',
+    message: 'no',
+  });
+
+  handleMessage({
+    type: 'tts_settings',
+    session_id: 'session-reject',
+    tts_settings: { auto_speak: true },
+  });
+  assert.equal(voiceOptions.autoSpeak(), true, 'the server snapshot applies again');
+  state.sessionId = null;
+});
+
 test.after(() => {
   delete globalThis.requestAnimationFrame;
   delete globalThis.document;
@@ -448,8 +523,15 @@ test.after(() => {
   delete globalThis.navigator;
 });
 
-/** Let the queued popstate tasks run, draining anything a previous test left. */
-const settle = () => new Promise((resolve) => setImmediate(resolve));
+/**
+ * Let queued traversal and popstate tasks run. History traversal is
+ * asynchronous, so a single turn is not enough: this drains the microtask queue
+ * and then the task queue.
+ */
+const settle = async () => {
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+};
 
 /** Wait until the app entry has run init() to its end, so no start-up render
  * can land in the middle of a test. Registering the service worker is its last
@@ -599,10 +681,11 @@ test('the voice icon opens the sheet', () => {
   assert.equal(voiceSheet().hidden, false);
 });
 
-test('the voice sheet closes through its own close button', () => {
+test('the voice sheet closes through its own close button', async () => {
   stubs.history.pushState({ view: 'live_recording' }, '', '/');
   openVoiceOptionsSheet();
   stubs.elementFor('#closeVoiceOptionsButton').fire('click');
+  await settle();
 
   assert.equal(voiceSheet().hidden, true);
   assert.equal(stubs.history.current.view, 'live_recording');
@@ -634,10 +717,11 @@ test('going back closes the sheet and leaves the session entry current', async (
   assert.equal(stubs.history.current.view, 'live_recording');
 });
 
-test('the sheet closes through its button and the session entry stays', () => {
+test('the sheet closes through its button and the session entry stays', async () => {
   stubs.history.pushState({ view: 'live_recording' }, '', '/');
   openVoiceOptionsSheet();
   closeVoiceOptionsSheet();
+  await settle();
 
   assert.equal(voiceSheet().hidden, true);
   assert.equal(stubs.history.current.view, 'live_recording');

@@ -25,8 +25,13 @@ let _onChange = null;
 /** The shared audio queue, so enabling automatic speaking unlocks playback
  *  inside the user's tap. Mirrors the existing controls in settings/tts.js. */
 let _audioQueue = null;
-/** The automatic-speaking value awaiting its server echo, or null. Echoes
- *  arrive in order, so an older snapshot must not reverse a newer tap. */
+/**
+ * Automatic speaking that the user changed and the server has not confirmed.
+ * `value` is what the user last chose, so the control keeps showing it while
+ * echoes are outstanding; `count` is how many echoes that takes. A repeated
+ * value makes an older echo indistinguishable from a newer one, which is why
+ * the count is tracked rather than the value alone.
+ */
 let _pendingAutoSpeak = null;
 
 let _options = {
@@ -111,7 +116,10 @@ export function setAutoSpeak(enabled) {
   const next = Boolean(enabled);
   const wasOn = Boolean(state.ttsSettings.auto_speak);
   state.ttsSettings.auto_speak = next;
-  _pendingAutoSpeak = next;
+  _pendingAutoSpeak = {
+    value: next,
+    count: (_pendingAutoSpeak?.count || 0) + 1,
+  };
   persistAutoSpeakPreference(next);
   // Unlock playback inside the tap that turned it on, as the other two
   // automatic-speaking controls do.
@@ -139,12 +147,23 @@ export function applyVoiceSessionReady(msg) {
  */
 export function applyTtsSettingsEcho(settings = {}) {
   const snapshot = settings && typeof settings === 'object' ? settings : {};
-  const incoming = snapshot.auto_speak;
-  if (_pendingAutoSpeak !== null && typeof incoming === 'boolean') {
-    if (incoming === _pendingAutoSpeak) _pendingAutoSpeak = null;
-    else delete snapshot.auto_speak;
+  const pending = _pendingAutoSpeak;
+  if (pending && typeof snapshot.auto_speak === 'boolean') {
+    // While echoes are outstanding the user's latest choice is what the control
+    // shows: an echo can only answer an older tap, whatever value it carries.
+    delete snapshot.auto_speak;
+    pending.count -= 1;
+    _pendingAutoSpeak = pending.count > 0 ? pending : null;
   }
   return snapshot;
+}
+
+/**
+ * A rejected update leaves nothing outstanding: the server's next snapshot
+ * becomes authoritative for the field again.
+ */
+export function applyTtsSettingsRejection() {
+  _pendingAutoSpeak = null;
 }
 
 /** A `voice_cloning_status` event for one lane. */
@@ -171,7 +190,7 @@ export function storedVoiceMode() {
 /** Drop session state: the clone status clears and the mode comes from storage
  * again, so the next session starts from the user's stored choice. */
 export function resetVoiceOptions() {
-  // A session that ended cannot deliver the echo any more.
+  // A session that ended cannot deliver the echoes any more.
   _pendingAutoSpeak = null;
   _options.cloningStatus = {};
   _options.mode = storedVoiceMode();

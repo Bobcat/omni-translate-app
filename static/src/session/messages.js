@@ -28,6 +28,7 @@ import { normalizeTurnPayload } from '../domain/turns.js';
 import { voiceSessionEndMessage } from '../shared/voice-session-end.js';
 import {
   applyTtsSettingsEcho,
+  applyTtsSettingsRejection,
   applyVoiceCloningStatusMessage,
   applyVoiceModeSettingsMessage,
   applyVoiceSessionReady,
@@ -152,6 +153,8 @@ export function handleMessage(msg) {
     return;
   }
   if (msg.type === 'error') {
+    // A rejected TTS update will never be echoed, so nothing stays outstanding.
+    if (String(msg.code || '') === 'invalid_tts_settings') applyTtsSettingsRejection();
     setStatus('error');
     return;
   }

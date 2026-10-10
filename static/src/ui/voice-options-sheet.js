@@ -66,11 +66,24 @@ let _ownsHistoryEntry = false;
 let _skipNextPopstate = false;
 /** True between our own history.back() and the popstate it produces. */
 let _closeInFlight = false;
+/** A reopen requested while a close was still on its way. */
+let _reopenAfterClose = false;
+/** What the entry below the overlay was when it was opened. */
+let _entryBelow = null;
 
 export function openVoiceOptionsSheet() {
+  if (_closeInFlight) {
+    // The close's Back has not landed yet. Claiming the current entry now would
+    // be claiming one that is on its way out, so the reopen waits for it.
+    _reopenAfterClose = true;
+    els.voiceOptionsSheet.hidden = false;
+    renderVoiceOptionsSheet();
+    return;
+  }
   els.voiceOptionsSheet.hidden = false;
   renderVoiceOptionsSheet();
   if (!_ownsHistoryEntry && history.state?.view !== 'voiceOptionsSheet') {
+    _entryBelow = history.state?.view ?? null;
     history.pushState({ view: 'voiceOptionsSheet' }, '');
     _ownsHistoryEntry = true;
   }
@@ -85,6 +98,18 @@ export function resetVoiceOptionsSheetHistory() {
   _ownsHistoryEntry = false;
   _skipNextPopstate = false;
   _closeInFlight = false;
+  _reopenAfterClose = false;
+  _entryBelow = null;
+}
+
+/**
+ * Whether the session's own entry sits directly below the panel's overlay. The
+ * overlay is only ever opened on top of a live session, so this is how a
+ * teardown knows the session entry is there even though `history.state` shows
+ * the overlay.
+ */
+export function voiceOptionsSheetEntryBelowIsSession() {
+  return _entryBelow === 'live_recording';
 }
 
 /** Whether this sheet has its own pop still on the way. */
@@ -116,9 +141,18 @@ export function handleVoiceOptionsPopstate(event) {
   if (_skipNextPopstate) {
     _skipNextPopstate = false;
     _closeInFlight = false;
+    if (_reopenAfterClose) {
+      // The close landed; the panel is open again, so it needs its own entry.
+      _reopenAfterClose = false;
+      if (history.state?.view !== 'voiceOptionsSheet') {
+        history.pushState({ view: 'voiceOptionsSheet' }, '');
+      }
+      _ownsHistoryEntry = true;
+    }
     return true;
   }
   _closeInFlight = false;
+  _reopenAfterClose = false;
   const entering = event?.state?.view === 'voiceOptionsSheet';
   // A stale Forward entry must not reopen session UI after the session ended.
   if (entering && state.appMode !== APP_MODES.LIVE_RECORDING) return false;

@@ -38,6 +38,7 @@ import {
   closeVoiceOptionsSheet,
   resetVoiceOptionsSheetHistory,
   voiceOptionsSheetCloseInFlight,
+  voiceOptionsSheetEntryBelowIsSession,
 } from '../ui/voice-options-sheet.js';
 import { renderTranscript } from '../ui/render-turn.js';
 import { handleVoiceOptionsPopstate } from '../ui/voice-options-sheet.js';
@@ -464,28 +465,34 @@ export function cleanupClientSession({ keepSocket = false } = {}) {
  * dropped socket, or the local finish action. The panel and the session-only
  * voice state belong to the session, so every path goes through here.
  */
+/** The stack entries a legacy session history hook may still be tracking. */
+function voiceSheetOverlayCurrent() {
+  return voiceOptionsSheetCloseInFlight()
+    || (!els.voiceOptionsSheet.hidden && history.state?.view === 'voiceOptionsSheet');
+}
+
 export function applySessionTeardown() {
-  // The panel's overlay has to stop being current before the session exit runs,
-  // because that exit only pops an entry it recognises as the session's. Rather
-  // than counting stack steps — history.go is asynchronous and races the exit —
-  // the overlay entry is relabelled as the session entry, and the exit pops it
-  // exactly as it would have without the panel.
-  // Count what has to leave the stack: the panel's own entry, which may already
-  // be on its way out from a close, plus the session entry. history.go jumps
-  // them in one synchronous step instead of racing the asynchronous exit.
+  // One path owns the traversal: history traversal is asynchronous, so the
+  // setup transition cannot pop the session entry itself — when it runs, the
+  // panel's overlay would still be current and it would skip its own pop.
   const overlaySteps = voiceOptionsSheetCloseInFlight()
     || (!els.voiceOptionsSheet.hidden && history.state?.view === 'voiceOptionsSheet') ? 1 : 0;
-  const sessionSteps = history.state?.view === 'live_recording' ? 1 : 0;
+  const sessionSteps = voiceOptionsSheetEntryBelowIsSession() ? 1 : 0;
+  const steps = overlaySteps + sessionSteps;
   closeVoiceOptionsSheet({ popHistory: false });
   resetVoiceOptionsSheetHistory();
-  const steps = overlaySteps + sessionSteps;
-  if (steps > 0) {
-    // No skip flag: the router ignores this popstate because the sheet is
-    // hidden, and a flag left set would swallow the next real Back.
-    history.go(-steps);
+  _skipLiveRecordingHistorySync = true;
+  try {
+    if (steps > 0) {
+      // No skip flag for this popstate: the sheet is hidden, so the voice
+      // branch declines it. A flag left set would swallow the next real Back.
+      history.go(-steps);
+    }
+    resetVoiceOptions();
+    resetLiveRecordingToSetup();
+  } finally {
+    _skipLiveRecordingHistorySync = false;
   }
-  resetVoiceOptions();
-  resetLiveRecordingToSetup();
 }
 
 export function resetLiveRecordingToSetup() {
@@ -520,10 +527,18 @@ function setLiveRecordingAppMode(appMode) {
 }
 
 let _skipLiveRecordingHistorySync = false;
+/**
+ * The history entry the session started from. Everything the session and the
+ * panel added sits above it, which is how a teardown knows how far to jump
+ * without guessing from the current entry.
+ */
+let _sessionHistoryBaseIndex = null;
 
 function syncLiveRecordingHistory(previous, next) {
   if (_skipLiveRecordingHistorySync) return;
   if (previous !== APP_MODES.LIVE_RECORDING && next === APP_MODES.LIVE_RECORDING) {
+    // Everything above the current entry belongs to nothing yet.
+    _sessionHistoryBaseIndex = history.length;
     if (history.state?.view !== 'live_recording') {
       history.pushState({ view: 'live_recording' }, '');
     }
