@@ -38,6 +38,11 @@ import {
   initDevMode,
   setDevMode,
 } from './settings/dev-mode.js';
+import { configureVoiceOptions } from './session/voice-options.js';
+import {
+  initVoiceOptionsSheet,
+  renderVoiceOptionsSheet,
+} from './ui/voice-options-sheet.js';
 import {
   isDevOnlyPage,
   renderSettingsMenuRows,
@@ -152,6 +157,12 @@ async function init() {
   state.tuningSettings = mergeSettings(DEFAULT_TUNING_SETTINGS, config.live_settings || {});
   applyTtsConfig(config.tts || {});
   mergeStoredTtsConfigIntoState();
+  // Voice selection is a backend capability, not a stored preference: the
+  // control is only offered while the active TTS backend supports the modes.
+  configureVoiceOptions({
+    onChange: renderVoiceOptionsSheet,
+    audioQueue,
+  });
   applyVoiceLibraryStatus(config.voice_library?.stable || {});
 
   // Auth kicks off in the background (the SDK loads from a CDN); the account
@@ -211,6 +222,7 @@ async function init() {
   bindAppearanceSettings();
   els.voiceLibraryControls.addEventListener('change', handleVoiceLibraryChange);
   els.voiceLibraryControls.addEventListener('click', handleVoiceLibraryClick);
+  initVoiceOptionsSheet();
   els.devToolsShowControls.addEventListener('change', handleDevToolsShowControlsChange);
   els.devToolsDevMode.addEventListener('change', handleDevModeChange);
   els.devToolsStorageReset.addEventListener('click', handleClearAppStorage);
@@ -258,6 +270,7 @@ async function init() {
   renderTranscript();
   initDevMode();
   renderSettingsMenuRows();
+  renderVoiceOptionsSheet();
   initAppearance();
   renderAppearanceSettings();
   renderAudioSettings();

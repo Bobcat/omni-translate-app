@@ -33,7 +33,14 @@ import { updateActionButtons } from '../ui/action-buttons.js';
 import { renderAudioSettings } from '../settings/audio.js';
 import { renderTuningSettings } from '../settings/tuning.js';
 import { sessionTtsSettingsPayload } from '../settings/tts.js';
+import { resetVoiceOptions, sessionVoiceMode } from './voice-options.js';
+import {
+  closeVoiceOptionsSheet,
+  resetVoiceOptionsSheetHistory,
+  voiceOptionsSheetCloseInFlight,
+} from '../ui/voice-options-sheet.js';
 import { renderTranscript } from '../ui/render-turn.js';
+import { handleVoiceOptionsPopstate } from '../ui/voice-options-sheet.js';
 import { enableTranscriptAutoFollow } from '../ui/auto-follow.js';
 import {
   armAutoOffSilenceTimer,
@@ -88,6 +95,7 @@ export async function startListening({ withMic = true } = {}) {
       sideBLanguage: state.sideBLanguage,
       liveSettings: state.tuningSettings,
       ttsSettings: sessionTtsSettingsPayload(),
+      voiceMode: sessionVoiceMode(),
     });
     const sessionId = String(session.session?.session_id || session.session_id || '').trim();
     if (!sessionId) throw new Error('Missing session id');
@@ -98,7 +106,7 @@ export async function startListening({ withMic = true } = {}) {
       () => {
         if (state.socket !== socket) return;
         cleanupClientSession({ keepSocket: false });
-        resetLiveRecordingToSetup();
+        applySessionTeardown();
         setStatus('idle');
       },
     );
@@ -167,7 +175,9 @@ export function finishSession() {
   if (!state.socket?.isOpen()) {
     cleanupClientSession();
     state.sessionId = null;
-    setLiveRecordingAppMode(APP_MODES.SETUP);
+    // Same transition as every other exit, so the panel and the session voice
+    // state cannot be left behind.
+    applySessionTeardown();
     return;
   }
   const finishingSocket = state.socket;
@@ -186,7 +196,7 @@ export function finishSession() {
   hideVadHint();
   renderMicLevel(0);
   renderAudioSettings();
-  resetLiveRecordingToSetup();
+  applySessionTeardown();
 }
 
 export async function startMicrophoneCapture() {
@@ -449,6 +459,35 @@ export function cleanupClientSession({ keepSocket = false } = {}) {
   }
 }
 
+/**
+ * Leave a voice session behind, however it ended: the server's `ended` event, a
+ * dropped socket, or the local finish action. The panel and the session-only
+ * voice state belong to the session, so every path goes through here.
+ */
+export function applySessionTeardown() {
+  // The panel's overlay has to stop being current before the session exit runs,
+  // because that exit only pops an entry it recognises as the session's. Rather
+  // than counting stack steps — history.go is asynchronous and races the exit —
+  // the overlay entry is relabelled as the session entry, and the exit pops it
+  // exactly as it would have without the panel.
+  // Count what has to leave the stack: the panel's own entry, which may already
+  // be on its way out from a close, plus the session entry. history.go jumps
+  // them in one synchronous step instead of racing the asynchronous exit.
+  const overlaySteps = voiceOptionsSheetCloseInFlight()
+    || (!els.voiceOptionsSheet.hidden && history.state?.view === 'voiceOptionsSheet') ? 1 : 0;
+  const sessionSteps = history.state?.view === 'live_recording' ? 1 : 0;
+  closeVoiceOptionsSheet({ popHistory: false });
+  resetVoiceOptionsSheetHistory();
+  const steps = overlaySteps + sessionSteps;
+  if (steps > 0) {
+    // No skip flag: the router ignores this popstate because the sheet is
+    // hidden, and a flag left set would swallow the next real Back.
+    history.go(-steps);
+  }
+  resetVoiceOptions();
+  resetLiveRecordingToSetup();
+}
+
 export function resetLiveRecordingToSetup() {
   clearAllLanes({ laneId: 'a_to_b' });
   state.requestedStartLaneId = 'a_to_b';
@@ -501,6 +540,7 @@ export function handlePopstateBack(event) {
     closeLanguageSheet();
     return;
   }
+  if (handleVoiceOptionsPopstate(event)) return;
   if (handleSettingsSheetPopstate(event)) return;
   if (finishImageTranslationFromHistory()) return;
   if (state.appMode !== APP_MODES.LIVE_RECORDING) return;

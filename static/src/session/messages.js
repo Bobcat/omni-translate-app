@@ -26,8 +26,16 @@ import { renderTranscript } from '../ui/render-turn.js';
 import { enableTranscriptAutoFollow } from '../ui/auto-follow.js';
 import { normalizeTurnPayload } from '../domain/turns.js';
 import { voiceSessionEndMessage } from '../shared/voice-session-end.js';
+import {
+  applyTtsSettingsEcho,
+  applyVoiceCloningStatusMessage,
+  applyVoiceModeSettingsMessage,
+  applyVoiceSessionReady,
+  notifyVoiceOptionsChanged,
+} from './voice-options.js';
 import { audioQueue } from './audio-queue.js';
 import {
+  applySessionTeardown,
   hideVadHint,
   handleVadState,
   resetLiveRecordingToSetup,
@@ -110,13 +118,25 @@ export function handleMessage(msg) {
     updateActionButtons();
     return;
   }
+  if (msg.type === 'voice_cloning_status') {
+    applyVoiceCloningStatusMessage(msg);
+    return;
+  }
+  if (msg.type === 'voice_mode_settings') {
+    applyVoiceModeSettingsMessage(msg);
+    return;
+  }
   if (msg.type === 'tts_status') {
     updateActionButtons();
     return;
   }
   if (msg.type === 'tts_settings') {
-    state.ttsSettings = mergeSettings(state.ttsSettings, msg.tts_settings || {});
+    state.ttsSettings = mergeSettings(state.ttsSettings, applyTtsSettingsEcho(msg.tts_settings));
     renderTtsSettings({ preserveScroll: true });
+    // The server's snapshot is authoritative, so the open voice panel has to
+    // follow it too: the automatic-speaking switch and the mode availability
+    // can both differ from what was just tapped.
+    notifyVoiceOptionsChanged();
     return;
   }
   if (msg.type === 'translation_status') {
@@ -141,7 +161,7 @@ export function handleMessage(msg) {
     hideVadHint();
     cleanupClientSession({ keepSocket: false });
     state.sessionId = null;
-    resetLiveRecordingToSetup();
+    applySessionTeardown();
     state.sessionEndMessage = endMessage;
     renderLifecycle();
   }
@@ -152,6 +172,7 @@ function applyReady(msg) {
   state.sideBLanguage = normalizeLanguageName(msg.side_b_language || state.sideBLanguage);
   state.tuningSettings = mergeSettings(DEFAULT_TUNING_SETTINGS, msg.live_settings || state.tuningSettings);
   state.ttsSettings = mergeSettings(state.ttsSettings, msg.tts_settings || {});
+  applyVoiceSessionReady(msg);
   state.lanes = buildLocalLanes(state.sideALanguage, state.sideBLanguage);
   for (const laneId of Object.keys(msg.lanes || {})) {
     mergeLanePayload(laneId, msg.lanes[laneId]);

@@ -83,10 +83,17 @@ function playStableSampleFromTts(tag, gender) {
   _audioQueue.enqueue({ url, duration_ms: 0, replay: true });
 }
 
+/** Backends that implement the product voice modes (app/voice/mode.py). */
+const TTS_BACKENDS_WITH_VOICE_MODES = ['voxcpm2', 'nanovllm_voxcpm'];
+
 export function applyTtsConfig(tts) {
   const settings = cloneSettings(tts || {});
   const options = cloneSettings(settings.options || {});
   delete settings.options;
+  // Which optional TTS features this deployment offers at all. The active
+  // backend is what decides the voice modes, and that can change at runtime.
+  state.ttsCapabilities = settings.capabilities || {};
+  delete settings.capabilities;
   const previousBackend = state.ttsSettings.backend;
   const nextSettings = mergeSettings(DEFAULT_TTS_SETTINGS, settings);
   const nextOptions = mergeSettings(DEFAULT_TTS_OPTIONS, options);
@@ -96,6 +103,27 @@ export function applyTtsConfig(tts) {
   state.ttsOptions = nextOptions;
   expandSelectedBackendGroup(previousBackend);
   if (!unchanged) renderTtsSettings({ preserveScroll: true });
+}
+
+/**
+ * Whether the settings being submitted can select a product voice mode. The
+ * deployment has to offer the feature and the chosen backend has to be one that
+ * implements it, mirroring app/voice/mode.py on the server.
+ */
+export function ttsSupportsVoiceSelection() {
+  if (!state.ttsCapabilities?.voice_selection) return false;
+  const backend = String(state.ttsSettings.backend || '');
+  if (!TTS_BACKENDS_WITH_VOICE_MODES.includes(backend)) return false;
+  // The server advertises which backends it currently offers. A stored choice
+  // can outlive one of them, and synthesising against a model the pool no
+  // longer serves is not something the panel should invite.
+  const offered = state.ttsOptions?.backends;
+  // An authoritative list is always honoured, including an empty one: the
+  // server reporting no backends means none can be selected.
+  if (Array.isArray(offered)) {
+    return offered.some((option) => String(option?.value || option) === backend);
+  }
+  return true;
 }
 
 export function mergeStoredTtsConfigIntoState() {
