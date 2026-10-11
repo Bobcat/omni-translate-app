@@ -23,11 +23,28 @@ export const VOICE_HISTORY_PANEL = 'panel';
 /** Marks a history entry as one of ours, for this session. */
 const ENTRY_SOURCE = 'voiceSession';
 
-let _generation = 0;
+/**
+ * A per-page-load identifier plus a counter. History entries survive a reload
+ * while this module's state does not, so an integer alone would let a new
+ * session adopt entries from the previous page load.
+ */
+const PAGE_LOAD_ID = (() => {
+  try {
+    if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID().slice(0, 8);
+  } catch {
+    // Fall through to the counter-only form below.
+  }
+  return Math.random().toString(36).slice(2, 10);
+})();
+let _generation = `${PAGE_LOAD_ID}:0`;
 let _desired = VOICE_HISTORY_SETUP;
 let _stepInFlight = false;
 /** A teardown that still has voice entries to leave behind. */
 let _leavingSession = false;
+/** The pop that is on its way was asked for by reconcile(). */
+let _ourPop = false;
+/** Runs when a teardown has left the last voice entry. */
+let _onTeardownComplete = null;
 let _onStateChange = null;
 
 /**
@@ -53,7 +70,8 @@ export function desiredVoiceHistoryState() {
 
 /** A new session: its own generation, starting from the setup entry. */
 export function beginVoiceHistorySession() {
-  _generation += 1;
+  const step = Number(String(_generation).split(':')[1] || 0) + 1;
+  _generation = `${PAGE_LOAD_ID}:${step}`;
   _desired = VOICE_HISTORY_SETUP;
   _stepInFlight = false;
   _leavingSession = false;
@@ -70,24 +88,41 @@ export function requestVoiceHistoryState(next) {
  * time. A generation bump alone would only hide them — the entries would still
  * be there for Forward to walk back onto.
  */
-export function endVoiceHistorySession() {
-  _desired = VOICE_HISTORY_SETUP;
+/**
+ * The session and its panel are done: both entries leave the stack, one pop at a
+ * time. A generation bump alone would only hide them — the entries would still
+ * be there for Forward to walk back onto. `onComplete` runs once the browser is
+ * on an entry that is not ours, so the app's own move to setup cannot run ahead
+ * of its history.
+ */
+export function endVoiceHistorySession({ onComplete = null } = {}) {
   _leavingSession = true;
+  _onTeardownComplete = typeof onComplete === 'function' ? onComplete : null;
   leaveVoiceEntries();
 }
 
 /** Pop one voice entry, or finish when there are none left. */
 function leaveVoiceEntries() {
-  const onVoiceEntry = history.state?.source === ENTRY_SOURCE;
-  if (!onVoiceEntry) {
+  if (history.state?.source !== ENTRY_SOURCE) {
     _leavingSession = false;
-    _generation += 1;
+    _stepInFlight = false;
+    _generation = nextGeneration();
+    _desired = VOICE_HISTORY_SETUP;
+    const done = _onTeardownComplete;
+    _onTeardownComplete = null;
     _onStateChange?.(VOICE_HISTORY_SETUP);
+    done?.();
     return;
   }
   if (_stepInFlight) return;
   _stepInFlight = true;
+  _ourPop = true;
   history.back();
+}
+
+function nextGeneration() {
+  const step = Number(String(_generation).split(':')[1] || 0) + 1;
+  return `${PAGE_LOAD_ID}:${step}`;
 }
 
 /**
@@ -95,21 +130,27 @@ function leaveVoiceEntries() {
  * there instead of treating it as the end of the session.
  */
 export function handleVoiceHistoryPopstate() {
+  const ours = _ourPop;
+  _ourPop = false;
   _stepInFlight = false;
-  const actual = currentVoiceHistoryState();
-  const ours = history.state?.source === ENTRY_SOURCE;
-  // A teardown keeps its goal and takes the next step out.
   if (_leavingSession) {
+    // A teardown keeps its goal and takes the next step out.
     leaveVoiceEntries();
     return true;
   }
-  if (actual === VOICE_HISTORY_SETUP && !ours) return false;
-  // Every other pop is the truth about where the browser now is, whether the
-  // app asked for it or the user did. Treating our own step as somehow
-  // different is what made Forward behave differently after the close button
-  // than after Back.
-  _desired = actual;
+  const actual = currentVoiceHistoryState();
+  const onOurEntry = history.state?.source === ENTRY_SOURCE;
+  if (actual === VOICE_HISTORY_SETUP && !onOurEntry) return false;
+  if (!ours) {
+    // A navigation the user drove defines the new goal.
+    _desired = actual;
+    _onStateChange?.(actual);
+    return true;
+  }
+  // A step the controller asked for: keep the goal and take the next one, so an
+  // older step cannot overwrite a newer goal.
   _onStateChange?.(actual);
+  reconcile();
   return true;
 }
 
@@ -120,10 +161,24 @@ function pushEntry(kind) {
   );
   _stepInFlight = false;
   // A push produces no popstate, so the app has to be told here; a pop does it
-  // through the router's handler.
+  // through the router's handler. Then the next step of the table runs, which is
+  // how setup -> panel reaches the panel entry after pushing the live one.
   _onStateChange?.(kind);
+  reconcile();
 }
 
+/**
+ * Bring the history in line with the desired state, taking at most one step.
+ * The table, with the current entry on the left and the desired state on the
+ * right:
+ *
+ *   setup -> live    push live
+ *   setup -> panel   push live, then push panel on the next pass
+ *   live  -> panel   push panel
+ *   panel -> live    back to the live entry underneath (a push would truncate
+ *                    the panel's Forward branch)
+ *   any   -> setup   back one entry at a time, reconciled as each pop lands
+ */
 function reconcile() {
   if (_stepInFlight) return;
   const actual = currentVoiceHistoryState();
@@ -133,20 +188,25 @@ function reconcile() {
     _onStateChange?.(actual);
     return;
   }
-  // Towards setup: only ever pop one entry, then let the resulting popstate
-  // decide the next step.
   if (_desired === VOICE_HISTORY_SETUP) {
-    if (actual === VOICE_HISTORY_SETUP) return;
     _stepInFlight = true;
+    _ourPop = true;
     history.back();
     return;
   }
-  // Towards live or panel. The panel needs the live entry underneath it first.
-  if (_desired === VOICE_HISTORY_PANEL && actual === VOICE_HISTORY_SETUP) {
-    pushEntry(VOICE_HISTORY_LIVE);
+  if (_desired === VOICE_HISTORY_PANEL && actual === VOICE_HISTORY_LIVE) {
+    pushEntry(VOICE_HISTORY_PANEL);
     return;
   }
-  pushEntry(_desired);
+  if (_desired === VOICE_HISTORY_LIVE && actual === VOICE_HISTORY_PANEL) {
+    _stepInFlight = true;
+    _ourPop = true;
+    history.back();
+    return;
+  }
+  // From setup towards the panel: the live entry has to exist below it first,
+  // and reconcile() runs again when that push lands.
+  pushEntry(VOICE_HISTORY_LIVE);
 }
 
 /** Whether a reconcile step is waiting for its popstate. */

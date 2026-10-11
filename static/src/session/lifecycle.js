@@ -469,12 +469,14 @@ export function cleanupClientSession({ keepSocket = false } = {}) {
  * voice state belong to the session, so every path goes through here.
  */
 export function applySessionTeardown() {
-  // The controller owns both entries and reconciles them one step at a time, so
-  // asking for setup is all a teardown has to do: a pending panel reopen is
-  // cancelled by definition, and no code jumps several entries at once.
-  endVoiceHistorySession();
+  // The controller owns both entries and leaves them one pop at a time. Its
+  // completion is what moves the app to setup: doing that here would expose the
+  // setup UI, and the Start action, while the session's entries were still
+  // current — and a session started in that window could have its entries
+  // replaced by the old teardown's pending pops.
   resetVoiceOptions();
-  resetLiveRecordingToSetup();
+  applyVoiceOptionsVisibility(VOICE_HISTORY_SETUP);
+  endVoiceHistorySession({ onComplete: resetLiveRecordingToSetup });
 }
 
 export function resetLiveRecordingToSetup() {

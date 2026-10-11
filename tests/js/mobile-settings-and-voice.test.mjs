@@ -864,7 +864,6 @@ test('the voice icon opens the sheet', () => {
 
 test('the voice sheet closes through its own close button', async () => {
   startLiveSession();
-  startLiveSession();
   openVoiceOptionsSheet();
   stubs.elementFor('#closeVoiceOptionsButton').fire('click');
   await settle();
@@ -886,7 +885,6 @@ test('the voice sheet owns exactly one history entry while open', () => {
 });
 
 test('going back closes the sheet and leaves the session entry current', async () => {
-  startLiveSession();
   // A live session sits on its own entry; the sheet adds one on top.
   startLiveSession();
   openVoiceOptionsSheet();
@@ -902,7 +900,6 @@ test('going back closes the sheet and leaves the session entry current', async (
 });
 
 test('the sheet closes through its button and the session entry stays', async () => {
-  startLiveSession();
   startLiveSession();
   openVoiceOptionsSheet();
   closeVoiceOptionsSheet();
