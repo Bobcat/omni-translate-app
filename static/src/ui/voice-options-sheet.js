@@ -9,6 +9,13 @@ import { VOICE_MODE_SPEAKER_CLONE } from '../domain/voice-selection.js';
 import { visibleVoiceCloningGuidance, visibleVoiceCloningStatus } from '../domain/cloning-status.js';
 import { currentLaneId } from '../domain/lanes.js';
 import { setupSheetSwipeClose } from './sheets.js';
+import {
+  VOICE_HISTORY_LIVE,
+  VOICE_HISTORY_PANEL,
+  currentVoiceHistoryState,
+  handleVoiceHistoryPopstate,
+  requestVoiceHistoryState,
+} from '../session/history.js';
 import { sessionTtsSettingsPayload } from '../settings/tts.js';
 import {
   autoSpeak,
@@ -54,115 +61,31 @@ export function initVoiceOptionsSheet() {
   });
 }
 
-// The sheet owns exactly one history entry while it is open, the same way the
-// other sheets do. Without it, Back would consume the live-session entry and a
-// second Back would leave the document instead of finishing the session.
-//
-// Closing the sheet programmatically pops that entry, and the popstate it
-// causes must not reach the router: the router would read it as a user going
-// back and finish the running session. The language sheet handles the same
-// situation with a one-shot skip, which is what this is.
-let _ownsHistoryEntry = false;
-let _skipNextPopstate = false;
-/** True between our own history.back() and the popstate it produces. */
-let _closeInFlight = false;
-/** A reopen requested while a close was still on its way. */
-let _reopenAfterClose = false;
+// The sheet owns no history: the voice session's history controller does, in
+// session/history.js, because the panel's entry and the session's entry have to
+// be managed together. This module only reacts to the state it is handed.
+
+/** Show or hide the panel for a history state. */
+export function applyVoiceOptionsVisibility(historyState) {
+  els.voiceOptionsSheet.hidden = historyState !== VOICE_HISTORY_PANEL;
+  if (!els.voiceOptionsSheet.hidden) renderVoiceOptionsSheet();
+}
 
 export function openVoiceOptionsSheet() {
-  if (_closeInFlight) {
-    // The close's Back has not landed yet. Claiming the current entry now would
-    // be claiming one that is on its way out, so the reopen waits for it.
-    _reopenAfterClose = true;
-    els.voiceOptionsSheet.hidden = false;
-    renderVoiceOptionsSheet();
-    return;
-  }
-  els.voiceOptionsSheet.hidden = false;
-  renderVoiceOptionsSheet();
-  if (!_ownsHistoryEntry && history.state?.view !== 'voiceOptionsSheet') {
-    pushOverlayEntry();
-  }
+  requestVoiceHistoryState(VOICE_HISTORY_PANEL);
 }
 
-/** Open the overlay's own history entry. */
-function pushOverlayEntry() {
-  history.pushState({ view: 'voiceOptionsSheet' }, '');
-  _ownsHistoryEntry = true;
+export function closeVoiceOptionsSheet() {
+  requestVoiceHistoryState(VOICE_HISTORY_LIVE);
 }
 
 /**
- * Forget the history bookkeeping. Used when the app is put back into a known
- * state, so a flag left over from an interrupted close cannot disable the next
- * open or swallow the next Back.
+ * Called by the app's popstate router. The controller decides whether the event
+ * is one of ours; the panel then follows the resulting state.
  */
-export function resetVoiceOptionsSheetHistory() {
-  _ownsHistoryEntry = false;
-  _skipNextPopstate = false;
-  _closeInFlight = false;
-  _reopenAfterClose = false;
-}
-
-
-
-
-/** Hide the panel; `popHistory` pops its entry and skips the resulting event. */
-export function closeVoiceOptionsSheet({ popHistory = true } = {}) {
-  const wasOwned = _ownsHistoryEntry;
-  _ownsHistoryEntry = false;
-  // Closing cancels a reopen that was waiting for the previous pop: a teardown
-  // can start in that window, and a replacement overlay would then be pushed
-  // after the session already ended, leaving the teardown waiting forever.
-  _reopenAfterClose = false;
-  els.voiceOptionsSheet.hidden = true;
-  if (popHistory && wasOwned && history.state?.view === 'voiceOptionsSheet') {
-    _skipNextPopstate = true;
-    _closeInFlight = true;
-    history.back();
-  }
-}
-
-/**
- * Called by the app's popstate router. The event's own state decides what is
- * wanted: Back away from the overlay closes the panel, while Forward back into
- * it reopens the panel rather than ending the session.
- */
-export function handleVoiceOptionsPopstate(event) {
-  // Our own programmatic pop first: if this were treated as a user going back,
-  // the router would finish the running session.
-  if (_skipNextPopstate) {
-    _skipNextPopstate = false;
-    _closeInFlight = false;
-    if (_reopenAfterClose) {
-      // The close landed; the panel is open again, so it needs its own entry,
-      // recorded against whatever is current now.
-      _reopenAfterClose = false;
-      if (history.state?.view !== 'voiceOptionsSheet') {
-        pushOverlayEntry();
-      } else {
-        _ownsHistoryEntry = true;
-      }
-    }
-    return true;
-  }
-  _closeInFlight = false;
-  _reopenAfterClose = false;
-  const entering = event?.state?.view === 'voiceOptionsSheet';
-  // A stale Forward entry must not reopen session UI after the session ended.
-  if (entering && state.appMode !== APP_MODES.LIVE_RECORDING) return false;
-  if (entering) {
-    // Forward re-enters the overlay that is still on the stack; only ownership
-    // has to be reclaimed.
-    _ownsHistoryEntry = true;
-    els.voiceOptionsSheet.hidden = false;
-    renderVoiceOptionsSheet();
-    return true;
-  }
-  if (els.voiceOptionsSheet.hidden) return false;
-  // Back away from the overlay: it already popped, so the session entry is
-  // current again and nothing needs restoring.
-  _ownsHistoryEntry = false;
-  els.voiceOptionsSheet.hidden = true;
+export function handleVoiceOptionsPopstate() {
+  if (!handleVoiceHistoryPopstate()) return false;
+  applyVoiceOptionsVisibility(currentVoiceHistoryState());
   return true;
 }
 

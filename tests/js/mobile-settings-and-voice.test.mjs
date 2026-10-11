@@ -226,23 +226,35 @@ const sheet = await import('../../static/src/settings/sheet.js');
 const { setDevMode } = await import('../../static/src/settings/dev-mode.js');
 const { state } = await import('../../static/src/state.js');
 const voiceOptions = await import('../../static/src/session/voice-options.js');
+const voiceHistory = await import('../../static/src/session/history.js');
+const { VOICE_HISTORY_LIVE, VOICE_HISTORY_PANEL } = voiceHistory;
+
+/**
+ * Put the app into a live session the way the app does: the controller brackets
+ * the session with its own history entries, which is what the panel and the
+ * teardown coordinate with.
+ */
+function startLiveSession() {
+  state.appMode = APP_MODES.SETUP;
+  // The app already wired the controller's callback during init; reconfiguring
+  // it here would clear it.
+  voiceHistory.beginVoiceHistorySession();
+  state.appMode = APP_MODES.LIVE_RECORDING;
+  voiceHistory.requestVoiceHistoryState(voiceHistory.VOICE_HISTORY_LIVE);
+}
 const { renderLifecycle } = await import('../../static/src/ui/render-status.js');
 const { APP_MODES } = await import('../../static/src/shared/constants.js');
 let sentTts = null;
-const {
-  openVoiceOptionsSheet,
-  closeVoiceOptionsSheet,
-  resetVoiceOptionsSheetHistory,
-} = await import('../../static/src/ui/voice-options-sheet.js');
+const { openVoiceOptionsSheet, closeVoiceOptionsSheet } = await import('../../static/src/ui/voice-options-sheet.js');
 const { renderVoiceOptionsSheet } = await import('../../static/src/ui/voice-options-sheet.js');
 
 test('closing the panel from its button keeps the session running', async () => {
   const { state: st } = { state };
   st.appMode = APP_MODES.LIVE_RECORDING;
   st.sessionId = null; // no socket: a stray finish must stay observable
-  stubs.history.pushState({ view: 'live_recording' }, '', '/');
+  startLiveSession();
   openVoiceOptionsSheet();
-  assert.equal(stubs.history.current.view, 'voiceOptionsSheet');
+  assert.equal(stubs.history.current.kind, 'panel');
 
   stubs.elementFor('#closeVoiceOptionsButton').fire('click');
   await settle();
@@ -250,12 +262,12 @@ test('closing the panel from its button keeps the session running', async () => 
   // The programmatic pop must not reach the router, which would end the session.
   assert.equal(voiceSheet().hidden, true);
   assert.equal(st.appMode, APP_MODES.LIVE_RECORDING, 'the session is still live');
-  assert.equal(stubs.history.current.view, 'live_recording', 'no stale overlay entry');
+  assert.equal(stubs.history.current.kind, 'live', 'no stale overlay entry');
 });
 
 test('closing the panel from the scrim keeps the session running', async () => {
   state.appMode = APP_MODES.LIVE_RECORDING;
-  stubs.history.pushState({ view: 'live_recording' }, '', '/');
+  startLiveSession();
   openVoiceOptionsSheet();
 
   stubs.elementFor('#voiceOptionsScrim').fire('click');
@@ -263,13 +275,13 @@ test('closing the panel from the scrim keeps the session running', async () => {
 
   assert.equal(voiceSheet().hidden, true);
   assert.equal(state.appMode, APP_MODES.LIVE_RECORDING);
-  assert.equal(stubs.history.current.view, 'live_recording');
+  assert.equal(stubs.history.current.kind, 'live');
 });
 
 test('browser Back closes the panel without duplicating the session entry', async () => {
   state.appMode = APP_MODES.LIVE_RECORDING;
-  stubs.history.pushState({ view: 'live_recording' }, '', '/');
-  const before = stubs.history.reachable.map((entry) => entry?.view);
+  startLiveSession();
+  const before = stubs.history.reachable.map((entry) => entry?.kind);
   openVoiceOptionsSheet();
 
   stubs.history.back();
@@ -277,9 +289,9 @@ test('browser Back closes the panel without duplicating the session entry', asyn
 
   assert.equal(voiceSheet().hidden, true);
   assert.equal(state.appMode, APP_MODES.LIVE_RECORDING);
-  assert.equal(stubs.history.current.view, 'live_recording');
+  assert.equal(stubs.history.current.kind, 'live');
   // Exactly the stack it started with: no second live entry was pushed.
-  assert.deepEqual(stubs.history.reachable.map((entry) => entry?.view), before);
+  assert.deepEqual(stubs.history.reachable.map((entry) => entry?.kind), before);
 
   // A further Back now reaches the session's own exit path.
   stubs.history.back();
@@ -329,6 +341,7 @@ test('a backend the server no longer offers disables the modes', () => {
 });
 
 test('a server TTS echo refreshes the open panel', () => {
+  startLiveSession();
   state.ttsSettings.backend = 'nanovllm_voxcpm';
   state.ttsSettings.auto_speak = true;
   openVoiceOptionsSheet();
@@ -343,7 +356,7 @@ test('a server TTS echo refreshes the open panel', () => {
 
 test('Forward reopens the panel instead of ending the session', async () => {
   state.appMode = APP_MODES.LIVE_RECORDING;
-  stubs.history.pushState({ view: 'live_recording' }, '', '/');
+  startLiveSession();
   openVoiceOptionsSheet();
   stubs.elementFor('#closeVoiceOptionsButton').fire('click');
   await settle();
@@ -355,12 +368,12 @@ test('Forward reopens the panel instead of ending the session', async () => {
 
   assert.equal(state.appMode, APP_MODES.LIVE_RECORDING, 'the session survives Forward');
   assert.equal(voiceSheet().hidden, false, 'the panel reopens');
-  assert.equal(stubs.history.current.view, 'voiceOptionsSheet');
+  assert.equal(stubs.history.current.kind, 'panel');
 });
 
 test('Forward after browser Back also reopens the panel', async () => {
   state.appMode = APP_MODES.LIVE_RECORDING;
-  stubs.history.pushState({ view: 'live_recording' }, '', '/');
+  startLiveSession();
   openVoiceOptionsSheet();
   stubs.history.back();
   await settle();
@@ -376,7 +389,7 @@ test('Forward after browser Back also reopens the panel', async () => {
 test('a stale Forward entry cannot reopen the panel after teardown', async () => {
   const { applySessionTeardown } = await import('../../static/src/session/lifecycle.js');
   state.appMode = APP_MODES.LIVE_RECORDING;
-  stubs.history.pushState({ view: 'live_recording' }, '', '/');
+  startLiveSession();
   openVoiceOptionsSheet();
   stubs.elementFor('#closeVoiceOptionsButton').fire('click');
   await settle();
@@ -429,7 +442,7 @@ test('a teardown with the panel open reaches the baseline entry', async () => {
   const { applySessionTeardown } = await import('../../static/src/session/lifecycle.js');
   state.appMode = APP_MODES.LIVE_RECORDING;
   // The same entries the app itself creates: a session entry, then the overlay.
-  stubs.history.pushState({ view: 'live_recording' }, '', '/');
+  startLiveSession();
   openVoiceOptionsSheet();
 
   applySessionTeardown();
@@ -444,7 +457,7 @@ test('a teardown with the panel open reaches the baseline entry', async () => {
 
 test('reopening before the close lands keeps the panel on its own entry', async () => {
   state.appMode = APP_MODES.LIVE_RECORDING;
-  stubs.history.pushState({ view: 'live_recording' }, '', '/');
+  startLiveSession();
   openVoiceOptionsSheet();
   closeVoiceOptionsSheet();
   // Reopen without awaiting the pending traversal.
@@ -454,7 +467,7 @@ test('reopening before the close lands keeps the panel on its own entry', async 
   await settle();
 
   assert.equal(voiceSheet().hidden, false, 'the panel stays open');
-  assert.equal(stubs.history.current.view, 'voiceOptionsSheet', 'it owns an entry');
+  assert.equal(stubs.history.current.kind, 'panel', 'it owns an entry');
 
   // Back closes only the panel; a second Back reaches the session exit.
   stubs.history.back();
@@ -547,7 +560,7 @@ test('a confirmed value survives a later rejection', async () => {
 test('ending a session without opening the panel removes the session entry', async () => {
   const { applySessionTeardown } = await import('../../static/src/session/lifecycle.js');
   state.appMode = APP_MODES.LIVE_RECORDING;
-  stubs.history.pushState({ view: 'live_recording' }, '', '/');
+  startLiveSession();
 
   // Nobody touched Voice options: this is the ordinary session end.
   applySessionTeardown();
@@ -561,12 +574,12 @@ test('ending a session without opening the panel removes the session entry', asy
 test('Back that already ended the session does not traverse past the baseline', async () => {
   const { finishSession } = await import('../../static/src/session/lifecycle.js');
   state.appMode = APP_MODES.LIVE_RECORDING;
-  stubs.history.pushState({ view: 'live_recording' }, '', '/');
+  startLiveSession();
   openVoiceOptionsSheet();
   stubs.history.back();
   await settle();
   assert.equal(voiceSheet().hidden, true);
-  assert.equal(stubs.history.current.view, 'live_recording');
+  assert.equal(stubs.history.current.kind, 'live');
 
   // A second Back finishes the session: the router ends up here on the
   // baseline, so the teardown must not remove another entry.
@@ -583,7 +596,7 @@ test('Back that already ended the session does not traverse past the baseline', 
 test('a teardown after a rapid reopen reaches the baseline', async () => {
   const { applySessionTeardown } = await import('../../static/src/session/lifecycle.js');
   state.appMode = APP_MODES.LIVE_RECORDING;
-  stubs.history.pushState({ view: 'live_recording' }, '', '/');
+  startLiveSession();
   openVoiceOptionsSheet();
   closeVoiceOptionsSheet();
   openVoiceOptionsSheet(); // before the close lands
@@ -601,7 +614,7 @@ test('a teardown after a rapid reopen reaches the baseline', async () => {
 test('a teardown after a Forward reopen reaches the baseline', async () => {
   const { applySessionTeardown } = await import('../../static/src/session/lifecycle.js');
   state.appMode = APP_MODES.LIVE_RECORDING;
-  stubs.history.pushState({ view: 'live_recording' }, '', '/');
+  startLiveSession();
   openVoiceOptionsSheet();
   closeVoiceOptionsSheet();
   await settle();
@@ -620,7 +633,7 @@ test('a teardown after a Forward reopen reaches the baseline', async () => {
 test('a teardown during a programmatic close reaches the baseline', async () => {
   const { applySessionTeardown } = await import('../../static/src/session/lifecycle.js');
   state.appMode = APP_MODES.LIVE_RECORDING;
-  stubs.history.pushState({ view: 'live_recording' }, '', '/');
+  startLiveSession();
   openVoiceOptionsSheet();
 
   // The close has been requested but its traversal has not landed yet.
@@ -662,7 +675,7 @@ test('a rejection after one accepted change restores that accepted value', async
 test('a teardown before a queued reopen lands still reaches setup', async () => {
   const { applySessionTeardown } = await import('../../static/src/session/lifecycle.js');
   state.appMode = APP_MODES.LIVE_RECORDING;
-  stubs.history.pushState({ view: 'live_recording' }, '', '/');
+  startLiveSession();
   openVoiceOptionsSheet();
   closeVoiceOptionsSheet();
   openVoiceOptionsSheet(); // deferred, waiting for the close's pop
@@ -735,7 +748,9 @@ test.beforeEach(async () => {
   stubs.elements.get('#settingsSheet').hidden = true;
   stubs.elements.get('#languageSheet').hidden = true;
   stubs.elements.get('#voiceOptionsSheet').hidden = true;
-  resetVoiceOptionsSheetHistory();
+  // Every test starts outside a session; one that needs the panel calls
+  // startLiveSession() itself, because the panel belongs to a running session.
+  voiceHistory.beginVoiceHistorySession();
 });
 
 test('the Dev tools switch returns to the sheet root without pushing an entry', async () => {
@@ -841,26 +856,29 @@ const voiceSheet = () => stubs.elementFor('#voiceOptionsSheet');
 // a control lands in the session state. The list itself is covered by
 // voice-options.test.mjs and the shared rules by voice-selection.test.mjs.
 test('the voice icon opens the sheet', () => {
+  startLiveSession();
   openVoiceOptionsSheet();
 
   assert.equal(voiceSheet().hidden, false);
 });
 
 test('the voice sheet closes through its own close button', async () => {
-  stubs.history.pushState({ view: 'live_recording' }, '', '/');
+  startLiveSession();
+  startLiveSession();
   openVoiceOptionsSheet();
   stubs.elementFor('#closeVoiceOptionsButton').fire('click');
   await settle();
 
   assert.equal(voiceSheet().hidden, true);
-  assert.equal(stubs.history.current.view, 'live_recording');
+  assert.equal(stubs.history.current.kind, 'live');
 });
 
 test('the voice sheet owns exactly one history entry while open', () => {
+  startLiveSession();
   const before = stubs.history.entries.length;
   openVoiceOptionsSheet();
   assert.equal(stubs.history.entries.length, before + 1);
-  assert.equal(stubs.history.current.view, 'voiceOptionsSheet');
+  assert.equal(stubs.history.current.kind, 'panel');
 
   // Closing pops only that entry, so the page stack is as it was.
   closeVoiceOptionsSheet();
@@ -868,8 +886,9 @@ test('the voice sheet owns exactly one history entry while open', () => {
 });
 
 test('going back closes the sheet and leaves the session entry current', async () => {
+  startLiveSession();
   // A live session sits on its own entry; the sheet adds one on top.
-  stubs.history.pushState({ view: 'live_recording' }, '', '/');
+  startLiveSession();
   openVoiceOptionsSheet();
   assert.equal(voiceSheet().hidden, false);
 
@@ -879,20 +898,22 @@ test('going back closes the sheet and leaves the session entry current', async (
   // Back closed the sheet and the session entry is current again, so a second
   // Back reaches the finish path instead of leaving the document.
   assert.equal(voiceSheet().hidden, true);
-  assert.equal(stubs.history.current.view, 'live_recording');
+  assert.equal(stubs.history.current.kind, 'live');
 });
 
 test('the sheet closes through its button and the session entry stays', async () => {
-  stubs.history.pushState({ view: 'live_recording' }, '', '/');
+  startLiveSession();
+  startLiveSession();
   openVoiceOptionsSheet();
   closeVoiceOptionsSheet();
   await settle();
 
   assert.equal(voiceSheet().hidden, true);
-  assert.equal(stubs.history.current.view, 'live_recording');
+  assert.equal(stubs.history.current.kind, 'live');
 });
 
 test('choosing a voice updates the state and the stored preference', () => {
+  startLiveSession();
   openVoiceOptionsSheet();
   stubs.elementFor('#voiceModeGroup').fire('change', { target: { name: 'voiceMode', value: 'male' } });
 
@@ -901,6 +922,7 @@ test('choosing a voice updates the state and the stored preference', () => {
 });
 
 test('an unrelated control in the group does not change the voice', () => {
+  startLiveSession();
   openVoiceOptionsSheet();
   stubs.elementFor('#voiceModeGroup').fire('change', { target: { name: 'somethingElse', value: 'male' } });
 
@@ -909,6 +931,7 @@ test('an unrelated control in the group does not change the voice', () => {
 });
 
 test('the automatic-speaking switch persists the choice', () => {
+  startLiveSession();
   openVoiceOptionsSheet();
   const autoSpeak = stubs.elementFor('#voiceAutoSpeak');
   assert.equal(autoSpeak.checked, true);
@@ -921,6 +944,7 @@ test('the automatic-speaking switch persists the choice', () => {
 });
 
 test('the cloning guidance appears only for the clone voice', () => {
+  startLiveSession();
   openVoiceOptionsSheet();
   assert.equal(stubs.elementFor('#voiceCloningGuidance').hidden, true);
 
@@ -934,6 +958,7 @@ test('the cloning guidance appears only for the clone voice', () => {
 });
 
 test('a backend without voice modes disables the voices but keeps speaking', () => {
+  startLiveSession();
   // Kokoro speaks translations but cannot select one of the product modes.
   state.ttsSettings.backend = 'kokoro';
   openVoiceOptionsSheet();
@@ -950,6 +975,7 @@ test('a backend without voice modes disables the voices but keeps speaking', () 
 });
 
 test('automatic speaking is disabled when speech output is off', () => {
+  startLiveSession();
   state.ttsSettings.enabled = false;
   openVoiceOptionsSheet();
 
@@ -958,6 +984,7 @@ test('automatic speaking is disabled when speech output is off', () => {
 });
 
 test('the automatic-speaking switch sends the full TTS snapshot', () => {
+  startLiveSession();
   const socket = {
     isOpen: () => true,
     updateTtsSettings: (settings) => { sentTts = settings; },
@@ -982,7 +1009,7 @@ test('a teardown with an open clone session clears everything and lands home', a
   stubs.store.clear();
   voiceOptions.resetVoiceOptions();
   state.appMode = APP_MODES.LIVE_RECORDING;
-  stubs.history.pushState({ view: 'live_recording' }, '', '/');
+  startLiveSession();
   voiceOptions.applyVoiceSessionReady({
     voice_mode: 'speaker_clone',
     voice_cloning_status: { a_to_b: { state: 'preparing', fallback_voice_mode: 'male' } },
@@ -1010,7 +1037,7 @@ test('a teardown never traverses past the app baseline', async () => {
   stubs.history.pushState({ view: 'app_baseline' }, '', '/');
 
   state.appMode = APP_MODES.LIVE_RECORDING;
-  stubs.history.pushState({ view: 'live_recording' }, '', '/');
+  startLiveSession();
   openVoiceOptionsSheet();
 
   applySessionTeardown();
@@ -1025,28 +1052,25 @@ test('a teardown never traverses past the app baseline', async () => {
   assert.equal(stubs.history.current.view, 'sentinel');
 });
 
-test('the voice icon is only in the document while a session runs', () => {
+test('the voice icon is visible only while a session runs', () => {
   const icon = () => stubs.elementFor('#voiceOptionsButton');
 
   state.appMode = APP_MODES.SETUP;
   renderLifecycle();
-  // Detached rather than hidden: a stale stylesheet cannot display an element
-  // that is not in the titlebar.
-  assert.equal(icon().parentElement, null, 'setup must not carry the voice icon');
+  assert.equal(icon().hidden, true, 'setup must not offer the voice icon');
 
   state.appMode = APP_MODES.LIVE_RECORDING;
   renderLifecycle();
-  assert.notEqual(icon().parentElement, null, 'a running session offers the icon');
-  assert.equal(icon().hidden, false);
+  assert.equal(icon().hidden, false, 'a running session offers the icon');
 
   state.appMode = APP_MODES.IMAGE_TRANSLATION;
   renderLifecycle();
-  assert.equal(icon().parentElement, null, 'the image view has no speech output');
+  assert.equal(icon().hidden, true, 'the image view has no speech output');
 
   // Leave the app in setup, the normal starting state for the other tests.
   state.appMode = APP_MODES.SETUP;
   renderLifecycle();
-  assert.equal(icon().parentElement, null);
+  assert.equal(icon().hidden, true);
 });
 
 test.after(() => {

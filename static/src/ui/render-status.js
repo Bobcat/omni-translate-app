@@ -15,17 +15,15 @@ export function setStatus(status) {
   updateActionButtons();
 }
 
-/** The voice icon exists in the DOM only while a session runs. */
-function setVoiceOptionsIconMounted(mounted) {
-  const icon = els.voiceOptionsButton;
-  if (!icon) return;
-  const parent = icon.parentElement || els.titlebar;
-  if (mounted) {
-    if (!icon.parentElement && parent) parent.append(icon);
-    icon.hidden = false;
-    return;
-  }
-  if (icon.parentElement) icon.remove();
+/**
+ * The voice icon is visible only while a session runs. It stays in the DOM and
+ * is hidden: the session history controller owns which entries exist, so
+ * removing the node here would leave that controller holding a detached
+ * element.
+ */
+function setVoiceOptionsIconVisible(visible) {
+  if (!els.voiceOptionsButton) return;
+  els.voiceOptionsButton.hidden = !visible;
 }
 
 export function renderLifecycle() {
@@ -50,10 +48,8 @@ export function renderLifecycle() {
   els.speakNowButton.hidden = !(liveRecording && debugControls);
   els.micToggleButton.hidden = !liveRecording;
   // Only while a voice session is running: before it starts there is nothing to
-  // switch, and the image view has no speech output. The icon is detached from
-  // the titlebar rather than hidden, so a slightly stale stylesheet cannot make
-  // it appear anyway.
-  setVoiceOptionsIconMounted(liveRecording);
+  // switch, and the image view has no speech output.
+  setVoiceOptionsIconVisible(liveRecording);
   els.pcExportButton.hidden = !(liveRecording && micOff && state.devToolsSettings.showControls);
   els.setupFixtureButton.hidden = !(setup && state.devToolsSettings.showControls);
   els.setupFixtureButton.disabled = state.status === 'connecting' || Boolean(state.fixtureBusy);
