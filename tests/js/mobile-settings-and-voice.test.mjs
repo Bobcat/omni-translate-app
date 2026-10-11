@@ -659,6 +659,26 @@ test('a rejection after one accepted change restores that accepted value', async
   state.sessionId = null;
 });
 
+test('a teardown before a queued reopen lands still reaches setup', async () => {
+  const { applySessionTeardown } = await import('../../static/src/session/lifecycle.js');
+  state.appMode = APP_MODES.LIVE_RECORDING;
+  stubs.history.pushState({ view: 'live_recording' }, '', '/');
+  openVoiceOptionsSheet();
+  closeVoiceOptionsSheet();
+  openVoiceOptionsSheet(); // deferred, waiting for the close's pop
+
+  // End the session before that pop lands: the deferred reopen must not push a
+  // replacement overlay after the session is gone.
+  applySessionTeardown();
+  await settle();
+  await settle();
+  await settle();
+
+  assert.equal(state.appMode, APP_MODES.SETUP, 'the session ended');
+  assert.equal(voiceSheet().hidden, true, 'no replacement overlay');
+  assert.equal(stubs.history.current, null, 'baseline entry current');
+});
+
 test.after(() => {
   delete globalThis.requestAnimationFrame;
   delete globalThis.document;

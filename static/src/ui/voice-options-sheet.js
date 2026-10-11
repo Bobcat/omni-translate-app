@@ -110,6 +110,10 @@ export function resetVoiceOptionsSheetHistory() {
 export function closeVoiceOptionsSheet({ popHistory = true } = {}) {
   const wasOwned = _ownsHistoryEntry;
   _ownsHistoryEntry = false;
+  // Closing cancels a reopen that was waiting for the previous pop: a teardown
+  // can start in that window, and a replacement overlay would then be pushed
+  // after the session already ended, leaving the teardown waiting forever.
+  _reopenAfterClose = false;
   els.voiceOptionsSheet.hidden = true;
   if (popHistory && wasOwned && history.state?.view === 'voiceOptionsSheet') {
     _skipNextPopstate = true;
