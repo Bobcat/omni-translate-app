@@ -96,17 +96,20 @@ function leaveVoiceEntries() {
  */
 export function handleVoiceHistoryPopstate() {
   _stepInFlight = false;
+  const actual = currentVoiceHistoryState();
+  const ours = history.state?.source === ENTRY_SOURCE;
+  // A teardown keeps its goal and takes the next step out.
   if (_leavingSession) {
     leaveVoiceEntries();
     return true;
   }
-  const actual = currentVoiceHistoryState();
-  const ours = history.state?.source === ENTRY_SOURCE;
   if (actual === VOICE_HISTORY_SETUP && !ours) return false;
-  // A navigation the user drove defines the new goal.
+  // Every other pop is the truth about where the browser now is, whether the
+  // app asked for it or the user did. Treating our own step as somehow
+  // different is what made Forward behave differently after the close button
+  // than after Back.
   _desired = actual;
   _onStateChange?.(actual);
-  reconcile();
   return true;
 }
 
