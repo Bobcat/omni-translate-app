@@ -33,7 +33,13 @@ import { updateActionButtons } from '../ui/action-buttons.js';
 import { renderAudioSettings } from '../settings/audio.js';
 import { renderTuningSettings } from '../settings/tuning.js';
 import { sessionTtsSettingsPayload } from '../settings/tts.js';
+import { resetVoiceOptions, sessionVoiceMode } from './voice-options.js';
+import {
+  closeVoiceOptionsSheet,
+  resetVoiceOptionsSheetHistory,
+} from '../ui/voice-options-sheet.js';
 import { renderTranscript } from '../ui/render-turn.js';
+import { handleVoiceOptionsPopstate } from '../ui/voice-options-sheet.js';
 import { enableTranscriptAutoFollow } from '../ui/auto-follow.js';
 import {
   armAutoOffSilenceTimer,
@@ -88,6 +94,7 @@ export async function startListening({ withMic = true } = {}) {
       sideBLanguage: state.sideBLanguage,
       liveSettings: state.tuningSettings,
       ttsSettings: sessionTtsSettingsPayload(),
+      voiceMode: sessionVoiceMode(),
     });
     const sessionId = String(session.session?.session_id || session.session_id || '').trim();
     if (!sessionId) throw new Error('Missing session id');
@@ -98,7 +105,7 @@ export async function startListening({ withMic = true } = {}) {
       () => {
         if (state.socket !== socket) return;
         cleanupClientSession({ keepSocket: false });
-        resetLiveRecordingToSetup();
+        applySessionTeardown({ clearEndMessage: true });
         setStatus('idle');
       },
     );
@@ -167,7 +174,9 @@ export function finishSession() {
   if (!state.socket?.isOpen()) {
     cleanupClientSession();
     state.sessionId = null;
-    setLiveRecordingAppMode(APP_MODES.SETUP);
+    // Same transition as every other exit, so the panel and the session voice
+    // state cannot be left behind. This path carries no server notice.
+    applySessionTeardown({ clearEndMessage: true });
     return;
   }
   const finishingSocket = state.socket;
@@ -186,7 +195,7 @@ export function finishSession() {
   hideVadHint();
   renderMicLevel(0);
   renderAudioSettings();
-  resetLiveRecordingToSetup();
+  applySessionTeardown();
 }
 
 export async function startMicrophoneCapture() {
@@ -449,11 +458,54 @@ export function cleanupClientSession({ keepSocket = false } = {}) {
   }
 }
 
+/**
+ * Leave a voice session behind, however it ended: the server's `ended` event, a
+ * dropped socket, or the local finish action. The panel and the session-only
+ * voice state belong to the session, so every path goes through here.
+ */
+export function applySessionTeardown({ clearEndMessage = false } = {}) {
+  // A socket drop or a local finish carries no server notice, so a stale one
+  // from an earlier session must not be shown. A server `ended` passes false:
+  // it stores its message around this call and wants it kept.
+  if (clearEndMessage) state.sessionEndMessage = '';
+  // Traversal is asynchronous, so nothing here counts steps or jumps several
+  // entries at once: a competing pop from the panel could be overtaken and the
+  // jump could cross the app's own entry into another document. Each layer pops
+  // exactly its own entry instead. The panel's pop has not landed when this
+  // returns, so the session entry is popped by the retry below, which the router
+  // calls once that popstate arrives.
+  _sessionTeardownPending = true;
+  closeVoiceOptionsSheet();
+  resetVoiceOptions();
+  retrySessionTeardown();
+}
+
+/** Complete a teardown once the panel's overlay has left the stack. */
+function finishSessionTeardown() {
+  _sessionTeardownPending = false;
+  resetLiveRecordingToSetup();
+}
+
+/**
+ * Called by the app's popstate router and from the teardown itself: the panel's
+ * overlay may be the entry that just popped, and only then can the session
+ * entry be popped in turn.
+ */
+export function retrySessionTeardown() {
+  if (!_sessionTeardownPending) return;
+  if (!els.voiceOptionsSheet.hidden) return;
+  if (history.state?.view === 'voiceOptionsSheet') return;
+  finishSessionTeardown();
+}
+
 export function resetLiveRecordingToSetup() {
   clearAllLanes({ laneId: 'a_to_b' });
   state.requestedStartLaneId = 'a_to_b';
   state.captureMutedForPlayback = false;
-  state.sessionEndMessage = '';
+  // `sessionEndMessage` is deliberately left alone: a server end notice is
+  // stored around this call, and clearing it here would hide the message the
+  // user is meant to read. `startListening()` clears it when the next session
+  // begins, and the exits that carry no notice clear it themselves.
   setLiveRecordingAppMode(APP_MODES.SETUP);
   setStatus('idle');
 }
@@ -481,6 +533,8 @@ function setLiveRecordingAppMode(appMode) {
 }
 
 let _skipLiveRecordingHistorySync = false;
+/** A session teardown whose overlay pop has not landed yet. */
+let _sessionTeardownPending = false;
 
 function syncLiveRecordingHistory(previous, next) {
   if (_skipLiveRecordingHistorySync) return;
@@ -499,6 +553,12 @@ export function handlePopstateBack(event) {
   if (consumeLanguagePopstateSkip()) return;
   if (!els.languageSheet.hidden) {
     closeLanguageSheet();
+    return;
+  }
+  if (handleVoiceOptionsPopstate(event)) {
+    // A teardown that started with the panel open can finish now that the
+    // overlay has popped.
+    retrySessionTeardown();
     return;
   }
   if (handleSettingsSheetPopstate(event)) return;

@@ -75,6 +75,7 @@ export const state = {
   tuningSettings: cloneSettings(DEFAULT_TUNING_SETTINGS),
   tuningExpandedGroups: new Set(),
   ttsSettings: cloneSettings(DEFAULT_TTS_SETTINGS),
+  ttsCapabilities: {},
   devToolsSettings: loadDevToolsSettings(),
   ttsOptions: cloneSettings(DEFAULT_TTS_OPTIONS),
   ttsExpandedGroups: new Set(),

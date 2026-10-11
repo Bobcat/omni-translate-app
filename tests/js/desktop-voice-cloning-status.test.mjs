@@ -4,7 +4,7 @@ import test from 'node:test';
 import {
   visibleVoiceCloningGuidance,
   visibleVoiceCloningStatus,
-} from '../../static/desktop/src/views/voice/cloning-status.js';
+} from '../../static/src/domain/cloning-status.js';
 
 test('voice cloning status stays hidden outside a live enabled session', () => {
   assert.equal(visibleVoiceCloningStatus({

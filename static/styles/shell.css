@@ -77,8 +77,24 @@ button {
   position: relative;
 }
 
+/* Both icons sit in the right-hand grid cell, which keeps the centred title in
+   place. The voice button is offset by one icon width plus the gap so the two do
+   not overlap; the settings button stays on the outer edge. */
+.titlebar-voice-button {
+  grid-column: 3;
+  grid-row: 1;
+  justify-self: end;
+  position: relative;
+  margin-right: 36px;
+}
+
+.titlebar-voice-button[hidden] {
+  display: none;
+}
+
 .titlebar-settings-button::before,
-.titlebar-account-button::before {
+.titlebar-account-button::before,
+.titlebar-voice-button::before {
   position: absolute;
   inset: -8px;
   content: '';
@@ -144,11 +160,14 @@ button {
   color: var(--text);
 }
 
+/* Sits left of the voice icon, which is left of the settings icon: each step is
+   one icon width plus the gap. The badge is wider than an icon, so it clears
+   both buttons rather than one. */
 .titlebar-vad-badge {
   grid-column: 3;
   grid-row: 1;
   justify-self: end;
-  margin-right: 36px;
+  margin-right: 72px;
 }
 
 .app.is-image-translation .app-titlebar {
@@ -163,6 +182,7 @@ button {
 }
 
 .app.is-image-translation .titlebar-settings-button,
+.app.is-image-translation .titlebar-voice-button,
 .app.is-image-translation .titlebar-vad-badge {
   display: none;
 }
@@ -653,6 +673,30 @@ button {
   font-size: 0.9rem;
   line-height: 1.35;
   text-align: center;
+}
+
+/* Voice sheet: the cloning status the desktop view shows under its voice row.
+   Only one line is ever relevant, so the sheet carries this without a heading. */
+/* Aligned with the setting-group padding above, so the text lines up with the
+   rows instead of hugging the sheet edge. */
+.voice-cloning-status,
+.voice-cloning-guidance {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+.voice-cloning-guidance {
+  font-size: 0.75rem;
+}
+
+.voice-cloning-status[hidden],
+.voice-cloning-guidance[hidden] {
+  display: none;
 }
 
 .setup-mode-pill {

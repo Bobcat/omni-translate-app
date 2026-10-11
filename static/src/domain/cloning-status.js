@@ -1,3 +1,6 @@
+// What the user is told about the speaker clone. Shared by both frontends:
+// mobile shows it in the voice sheet, desktop in its preferences block.
+
 export function visibleVoiceCloningStatus(state, laneId) {
   if (!state?.live || state.voiceMode !== 'speaker_clone') return null;
   const status = state.voiceCloningStatus?.[laneId];
