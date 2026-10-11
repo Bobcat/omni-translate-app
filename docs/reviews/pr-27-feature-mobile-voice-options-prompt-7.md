@@ -53,6 +53,41 @@ One scenario per page load:
 | Teardown after a rapid reopen | `null` | setup | hidden |
 | Teardown after a Forward reopen | `null` | setup | hidden |
 
+## An architectural question for you
+
+Six rounds have been spent on one thing: this panel's relationship with browser
+history. Round 4 confirmed the teardown ordering was genuinely wrong, round 5
+found the step count broke the ordinary session end, round 6 found it removed the
+wrong entry in three reopening sequences. Each fix was correct for the sequence
+it was shown and wrong for another. Round 7 replaces counting with a two-stage
+teardown, and the author has verified seven sequences in a browser — but the
+pattern is not encouraging, and you have watched it more closely than anyone.
+
+So, beyond the findings: **what would you do with this panel's history model?**
+
+The options the author sees:
+
+1. Keep it as it is now — one overlay entry, owned by the panel, popped by the
+   panel, with the teardown completed by the router once that pop lands.
+2. Remove the panel's history entry altogether. The panel becomes a pure
+   overlay: it opens and closes without touching the stack, and browser Back
+   while it is open would end the session (the router already does that for a
+   live session). That trades the whole class of defects for a Back that does
+   not close the panel first.
+3. Give the panel an entry but never let the teardown touch history: the session
+   exit could leave the overlay entry to the panel and accept that a session
+   ending with the panel open leaves one stale entry, cleared on the next open.
+4. Something else, including a different routing model for live sessions — the
+   session entry itself is the other half of this, since it is pushed and popped
+   by the same module.
+
+The constraint set: the mobile app is turn-based; a live voice session is a
+distinct mode rather than a page; `static/src/ui/language-sheet.js` and
+`static/src/settings/sheet.js` already solve "Back closes the sheet" with an
+entry and a popstate skip; and the same router serves both sheets and the
+session exit. The author is willing to take the larger change if it is the
+honest one, and would rather hear that now than after another round.
+
 ## Review priorities
 
 - The pending teardown is the new risk. Check whether it can be left set, or
@@ -110,3 +145,7 @@ List findings first, ordered by severity. For each finding include:
 Then list unresolved risks and untested paths. Give an explicit merge-quality
 verdict. If there are no findings, state that directly and name the paths that
 were not exercised.
+
+Finish with your answer to the architectural question above. A recommendation
+with its trade-offs is more useful here than a verdict on the current shape: the
+author will act on it rather than defend the existing code.
