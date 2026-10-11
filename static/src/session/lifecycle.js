@@ -465,20 +465,19 @@ export function cleanupClientSession({ keepSocket = false } = {}) {
  * dropped socket, or the local finish action. The panel and the session-only
  * voice state belong to the session, so every path goes through here.
  */
-/** The stack entries a legacy session history hook may still be tracking. */
-function voiceSheetOverlayCurrent() {
-  return voiceOptionsSheetCloseInFlight()
-    || (!els.voiceOptionsSheet.hidden && history.state?.view === 'voiceOptionsSheet');
-}
-
 export function applySessionTeardown() {
   // One path owns the traversal: history traversal is asynchronous, so the
   // setup transition cannot pop the session entry itself — when it runs, the
   // panel's overlay would still be current and it would skip its own pop.
-  const overlaySteps = voiceOptionsSheetCloseInFlight()
-    || (!els.voiceOptionsSheet.hidden && history.state?.view === 'voiceOptionsSheet') ? 1 : 0;
-  const sessionSteps = voiceOptionsSheetEntryBelowIsSession() ? 1 : 0;
-  const steps = overlaySteps + sessionSteps;
+  // The step count comes from what is current right now:
+  //   - the overlay (open or closing) plus the session entry recorded below it,
+  //   - the session entry alone, when the panel was never opened,
+  //   - nothing, when Back already landed on the baseline.
+  const overlayCurrent = voiceOptionsSheetCloseInFlight()
+    || (!els.voiceOptionsSheet.hidden && history.state?.view === 'voiceOptionsSheet');
+  const steps = overlayCurrent
+    ? 1 + (voiceOptionsSheetEntryBelowIsSession() ? 1 : 0)
+    : (history.state?.view === 'live_recording' ? 1 : 0);
   closeVoiceOptionsSheet({ popHistory: false });
   resetVoiceOptionsSheetHistory();
   _skipLiveRecordingHistorySync = true;
@@ -527,18 +526,10 @@ function setLiveRecordingAppMode(appMode) {
 }
 
 let _skipLiveRecordingHistorySync = false;
-/**
- * The history entry the session started from. Everything the session and the
- * panel added sits above it, which is how a teardown knows how far to jump
- * without guessing from the current entry.
- */
-let _sessionHistoryBaseIndex = null;
 
 function syncLiveRecordingHistory(previous, next) {
   if (_skipLiveRecordingHistorySync) return;
   if (previous !== APP_MODES.LIVE_RECORDING && next === APP_MODES.LIVE_RECORDING) {
-    // Everything above the current entry belongs to nothing yet.
-    _sessionHistoryBaseIndex = history.length;
     if (history.state?.view !== 'live_recording') {
       history.pushState({ view: 'live_recording' }, '');
     }

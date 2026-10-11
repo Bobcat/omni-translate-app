@@ -33,6 +33,8 @@ let _audioQueue = null;
  * the count is tracked rather than the value alone.
  */
 let _pendingAutoSpeak = null;
+/** The last automatic-speaking value the server confirmed, for a rejection. */
+let _confirmedAutoSpeak = null;
 
 let _options = {
   mode: DEFAULT_VOICE_MODE,
@@ -115,6 +117,7 @@ export function setVoiceMode(mode) {
 export function setAutoSpeak(enabled) {
   const next = Boolean(enabled);
   const wasOn = Boolean(state.ttsSettings.auto_speak);
+  if (!_pendingAutoSpeak) _confirmedAutoSpeak = wasOn;
   state.ttsSettings.auto_speak = next;
   _pendingAutoSpeak = {
     value: next,
@@ -154,6 +157,7 @@ export function applyTtsSettingsEcho(settings = {}) {
     delete snapshot.auto_speak;
     pending.count -= 1;
     _pendingAutoSpeak = pending.count > 0 ? pending : null;
+    if (!_pendingAutoSpeak) _confirmedAutoSpeak = pending.value;
   }
   return snapshot;
 }
@@ -164,6 +168,13 @@ export function applyTtsSettingsEcho(settings = {}) {
  */
 export function applyTtsSettingsRejection() {
   _pendingAutoSpeak = null;
+  // The server refused the update, so the value it never accepted must not stay
+  // on screen: put the last confirmed one back, including its preference.
+  if (_confirmedAutoSpeak !== null) {
+    state.ttsSettings.auto_speak = _confirmedAutoSpeak;
+    persistAutoSpeakPreference(_confirmedAutoSpeak);
+  }
+  notify();
 }
 
 /** A `voice_cloning_status` event for one lane. */
@@ -192,6 +203,7 @@ export function storedVoiceMode() {
 export function resetVoiceOptions() {
   // A session that ended cannot deliver the echoes any more.
   _pendingAutoSpeak = null;
+  _confirmedAutoSpeak = null;
   _options.cloningStatus = {};
   _options.mode = storedVoiceMode();
   _options.fallbackMode = voiceFallbackModeFor(DEFAULT_VOICE_MODE, _options.mode);

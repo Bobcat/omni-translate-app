@@ -492,12 +492,16 @@ test('repeated automatic-speaking values are matched echo by echo', async () => 
   state.sessionId = null;
 });
 
-test('a rejected update lets the server become authoritative again', async () => {
+test('a rejection restores the last confirmed automatic-speaking value', async () => {
   const { handleMessage } = await import('../../static/src/session/messages.js');
   state.sessionId = 'session-reject';
   state.ttsSettings.auto_speak = true;
+  stubs.store.clear();
 
   voiceOptions.setAutoSpeak(false);
+  assert.equal(voiceOptions.autoSpeak(), false, 'the tap applies optimistically');
+
+  // The server refuses it and sends no snapshot at all.
   handleMessage({
     type: 'error',
     session_id: 'session-reject',
@@ -505,13 +509,75 @@ test('a rejected update lets the server become authoritative again', async () =>
     message: 'no',
   });
 
+  assert.equal(voiceOptions.autoSpeak(), true, 'the rejected value is undone');
+  assert.deepEqual(
+    JSON.parse(stubs.store.get('tts_global')),
+    { auto_speak: true },
+    'the preference follows it back',
+  );
+  state.sessionId = null;
+});
+
+test('a confirmed value survives a later rejection', async () => {
+  const { handleMessage } = await import('../../static/src/session/messages.js');
+  state.sessionId = 'session-confirm';
+  state.ttsSettings.auto_speak = true;
+
+  // First change is confirmed by its echo, so off becomes the known value.
+  voiceOptions.setAutoSpeak(false);
   handleMessage({
     type: 'tts_settings',
-    session_id: 'session-reject',
-    tts_settings: { auto_speak: true },
+    session_id: 'session-confirm',
+    tts_settings: { auto_speak: false },
   });
-  assert.equal(voiceOptions.autoSpeak(), true, 'the server snapshot applies again');
+
+  // A later change is rejected; off must come back, not the original on.
+  voiceOptions.setAutoSpeak(true);
+  handleMessage({
+    type: 'error',
+    session_id: 'session-confirm',
+    code: 'invalid_tts_settings',
+    message: 'no',
+  });
+
+  assert.equal(voiceOptions.autoSpeak(), false);
   state.sessionId = null;
+});
+
+test('ending a session without opening the panel removes the session entry', async () => {
+  const { applySessionTeardown } = await import('../../static/src/session/lifecycle.js');
+  state.appMode = APP_MODES.LIVE_RECORDING;
+  stubs.history.pushState({ view: 'live_recording' }, '', '/');
+
+  // Nobody touched Voice options: this is the ordinary session end.
+  applySessionTeardown();
+  await settle();
+  await settle();
+
+  assert.equal(state.appMode, APP_MODES.SETUP);
+  assert.equal(stubs.history.current, null, 'the session entry is gone');
+});
+
+test('Back that already ended the session does not traverse past the baseline', async () => {
+  const { finishSession } = await import('../../static/src/session/lifecycle.js');
+  state.appMode = APP_MODES.LIVE_RECORDING;
+  stubs.history.pushState({ view: 'live_recording' }, '', '/');
+  openVoiceOptionsSheet();
+  stubs.history.back();
+  await settle();
+  assert.equal(voiceSheet().hidden, true);
+  assert.equal(stubs.history.current.view, 'live_recording');
+
+  // A second Back finishes the session: the router ends up here on the
+  // baseline, so the teardown must not remove another entry.
+  stubs.history.back();
+  await settle();
+  finishSession();
+  await settle();
+  await settle();
+
+  assert.equal(state.appMode, APP_MODES.SETUP);
+  assert.equal(stubs.history.current, null, 'no entry removed past the baseline');
 });
 
 test.after(() => {

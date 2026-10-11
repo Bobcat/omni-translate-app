@@ -122,6 +122,9 @@ export function voiceOptionsSheetCloseInFlight() {
 export function closeVoiceOptionsSheet({ popHistory = true } = {}) {
   const wasOwned = _ownsHistoryEntry;
   _ownsHistoryEntry = false;
+  // The overlay is on its way out, so what used to be below it says nothing
+  // about the stack any more.
+  _entryBelow = null;
   els.voiceOptionsSheet.hidden = true;
   if (popHistory && wasOwned && history.state?.view === 'voiceOptionsSheet') {
     _skipNextPopstate = true;
@@ -166,6 +169,7 @@ export function handleVoiceOptionsPopstate(event) {
   // Back away from the overlay: it already popped, so the session entry is
   // current again and nothing needs restoring.
   _ownsHistoryEntry = false;
+  _entryBelow = null;
   els.voiceOptionsSheet.hidden = true;
   return true;
 }
