@@ -39,7 +39,6 @@ import {
   setDevMode,
 } from './settings/dev-mode.js';
 import { configureVoiceOptions } from './session/voice-options.js';
-import { configureVoiceSessionHistory } from './session/history.js';
 import {
   initVoiceOptionsSheet,
   renderVoiceOptionsSheet,
@@ -99,7 +98,6 @@ import {
   setViewMode,
   startFromSettings,
   handlePopstateBack,
-  applyVoiceHistoryState,
 } from './session/lifecycle.js';
 import {
   handleImageFileChange,
@@ -165,9 +163,6 @@ async function init() {
     onChange: renderVoiceOptionsSheet,
     audioQueue,
   });
-  // The voice session's history entries have one owner; the panel follows the
-  // state the controller settles on.
-  configureVoiceSessionHistory({ onStateChange: applyVoiceHistoryState });
   applyVoiceLibraryStatus(config.voice_library?.stable || {});
 
   // Auth kicks off in the background (the SDK loads from a CDN); the account

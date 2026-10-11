@@ -34,15 +34,10 @@ import { renderAudioSettings } from '../settings/audio.js';
 import { renderTuningSettings } from '../settings/tuning.js';
 import { sessionTtsSettingsPayload } from '../settings/tts.js';
 import { resetVoiceOptions, sessionVoiceMode } from './voice-options.js';
-import { applyVoiceOptionsVisibility } from '../ui/voice-options-sheet.js';
 import {
-  VOICE_HISTORY_LIVE,
-  VOICE_HISTORY_PANEL,
-  VOICE_HISTORY_SETUP,
-  beginVoiceHistorySession,
-  endVoiceHistorySession,
-  requestVoiceHistoryState,
-} from './history.js';
+  closeVoiceOptionsSheet,
+  resetVoiceOptionsSheetHistory,
+} from '../ui/voice-options-sheet.js';
 import { renderTranscript } from '../ui/render-turn.js';
 import { handleVoiceOptionsPopstate } from '../ui/voice-options-sheet.js';
 import { enableTranscriptAutoFollow } from '../ui/auto-follow.js';
@@ -110,7 +105,7 @@ export async function startListening({ withMic = true } = {}) {
       () => {
         if (state.socket !== socket) return;
         cleanupClientSession({ keepSocket: false });
-        applySessionTeardown();
+        applySessionTeardown({ clearEndMessage: true });
         setStatus('idle');
       },
     );
@@ -180,8 +175,8 @@ export function finishSession() {
     cleanupClientSession();
     state.sessionId = null;
     // Same transition as every other exit, so the panel and the session voice
-    // state cannot be left behind.
-    applySessionTeardown();
+    // state cannot be left behind. This path carries no server notice.
+    applySessionTeardown({ clearEndMessage: true });
     return;
   }
   const finishingSocket = state.socket;
@@ -468,22 +463,49 @@ export function cleanupClientSession({ keepSocket = false } = {}) {
  * dropped socket, or the local finish action. The panel and the session-only
  * voice state belong to the session, so every path goes through here.
  */
-export function applySessionTeardown() {
-  // The controller owns both entries and leaves them one pop at a time. Its
-  // completion is what moves the app to setup: doing that here would expose the
-  // setup UI, and the Start action, while the session's entries were still
-  // current — and a session started in that window could have its entries
-  // replaced by the old teardown's pending pops.
+export function applySessionTeardown({ clearEndMessage = false } = {}) {
+  // A socket drop or a local finish carries no server notice, so a stale one
+  // from an earlier session must not be shown. A server `ended` passes false:
+  // it stores its message around this call and wants it kept.
+  if (clearEndMessage) state.sessionEndMessage = '';
+  // Traversal is asynchronous, so nothing here counts steps or jumps several
+  // entries at once: a competing pop from the panel could be overtaken and the
+  // jump could cross the app's own entry into another document. Each layer pops
+  // exactly its own entry instead. The panel's pop has not landed when this
+  // returns, so the session entry is popped by the retry below, which the router
+  // calls once that popstate arrives.
+  _sessionTeardownPending = true;
+  closeVoiceOptionsSheet();
   resetVoiceOptions();
-  applyVoiceOptionsVisibility(VOICE_HISTORY_SETUP);
-  endVoiceHistorySession({ onComplete: resetLiveRecordingToSetup });
+  retrySessionTeardown();
+}
+
+/** Complete a teardown once the panel's overlay has left the stack. */
+function finishSessionTeardown() {
+  _sessionTeardownPending = false;
+  resetLiveRecordingToSetup();
+}
+
+/**
+ * Called by the app's popstate router and from the teardown itself: the panel's
+ * overlay may be the entry that just popped, and only then can the session
+ * entry be popped in turn.
+ */
+export function retrySessionTeardown() {
+  if (!_sessionTeardownPending) return;
+  if (!els.voiceOptionsSheet.hidden) return;
+  if (history.state?.view === 'voiceOptionsSheet') return;
+  finishSessionTeardown();
 }
 
 export function resetLiveRecordingToSetup() {
   clearAllLanes({ laneId: 'a_to_b' });
   state.requestedStartLaneId = 'a_to_b';
   state.captureMutedForPlayback = false;
-  state.sessionEndMessage = '';
+  // `sessionEndMessage` is deliberately left alone: a server end notice is
+  // stored around this call, and clearing it here would hide the message the
+  // user is meant to read. `startListening()` clears it when the next session
+  // begins, and the exits that carry no notice clear it themselves.
   setLiveRecordingAppMode(APP_MODES.SETUP);
   setStatus('idle');
 }
@@ -504,16 +526,29 @@ function setLiveRecordingAppMode(appMode) {
   if (state.appMode !== APP_MODES.LIVE_RECORDING) {
     state.micState = MIC_STATES.OFF;
   }
-  if (previous !== APP_MODES.LIVE_RECORDING && state.appMode === APP_MODES.LIVE_RECORDING) {
-    beginVoiceHistorySession();
-    requestVoiceHistoryState(VOICE_HISTORY_LIVE);
-  }
+  syncLiveRecordingHistory(previous, state.appMode);
   renderLifecycle();
   renderTuningSettings({ preserveScroll: true });
   updateActionButtons();
 }
 
-/** The panel follows the history state the controller settles on. */
+let _skipLiveRecordingHistorySync = false;
+/** A session teardown whose overlay pop has not landed yet. */
+let _sessionTeardownPending = false;
+
+function syncLiveRecordingHistory(previous, next) {
+  if (_skipLiveRecordingHistorySync) return;
+  if (previous !== APP_MODES.LIVE_RECORDING && next === APP_MODES.LIVE_RECORDING) {
+    if (history.state?.view !== 'live_recording') {
+      history.pushState({ view: 'live_recording' }, '');
+    }
+  } else if (previous === APP_MODES.LIVE_RECORDING && next !== APP_MODES.LIVE_RECORDING) {
+    if (history.state?.view === 'live_recording') {
+      history.back();
+    }
+  }
+}
+
 export function handlePopstateBack(event) {
   if (consumeLanguagePopstateSkip()) return;
   if (!els.languageSheet.hidden) {
@@ -521,21 +556,20 @@ export function handlePopstateBack(event) {
     return;
   }
   if (handleVoiceOptionsPopstate(event)) {
-    // The panel and the session's own entry are the controller's; it has already
-    // reconciled towards whatever state this navigation left behind.
+    // A teardown that started with the panel open can finish now that the
+    // overlay has popped.
+    retrySessionTeardown();
     return;
   }
   if (handleSettingsSheetPopstate(event)) return;
   if (finishImageTranslationFromHistory()) return;
   if (state.appMode !== APP_MODES.LIVE_RECORDING) return;
-  finishSession();
-}
-
-export function applyVoiceHistoryState(historyState) {
-  applyVoiceOptionsVisibility(historyState);
-  if (historyState !== VOICE_HISTORY_SETUP) return;
-  if (state.appMode === APP_MODES.LIVE_RECORDING) return;
-  applyVoiceOptionsVisibility(VOICE_HISTORY_SETUP);
+  _skipLiveRecordingHistorySync = true;
+  try {
+    finishSession();
+  } finally {
+    _skipLiveRecordingHistorySync = false;
+  }
 }
 
 export function setViewMode(viewMode) {
