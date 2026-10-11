@@ -152,12 +152,14 @@ export function applyTtsSettingsEcho(settings = {}) {
   const snapshot = settings && typeof settings === 'object' ? settings : {};
   const pending = _pendingAutoSpeak;
   if (pending && typeof snapshot.auto_speak === 'boolean') {
+    // This echo is an accepted value, so it becomes the fallback a later
+    // rejection may restore — even while further changes are still pending.
+    _confirmedAutoSpeak = snapshot.auto_speak;
     // While echoes are outstanding the user's latest choice is what the control
     // shows: an echo can only answer an older tap, whatever value it carries.
     delete snapshot.auto_speak;
     pending.count -= 1;
     _pendingAutoSpeak = pending.count > 0 ? pending : null;
-    if (!_pendingAutoSpeak) _confirmedAutoSpeak = pending.value;
   }
   return snapshot;
 }

@@ -68,8 +68,6 @@ let _skipNextPopstate = false;
 let _closeInFlight = false;
 /** A reopen requested while a close was still on its way. */
 let _reopenAfterClose = false;
-/** What the entry below the overlay was when it was opened. */
-let _entryBelow = null;
 
 export function openVoiceOptionsSheet() {
   if (_closeInFlight) {
@@ -83,10 +81,14 @@ export function openVoiceOptionsSheet() {
   els.voiceOptionsSheet.hidden = false;
   renderVoiceOptionsSheet();
   if (!_ownsHistoryEntry && history.state?.view !== 'voiceOptionsSheet') {
-    _entryBelow = history.state?.view ?? null;
-    history.pushState({ view: 'voiceOptionsSheet' }, '');
-    _ownsHistoryEntry = true;
+    pushOverlayEntry();
   }
+}
+
+/** Open the overlay's own history entry. */
+function pushOverlayEntry() {
+  history.pushState({ view: 'voiceOptionsSheet' }, '');
+  _ownsHistoryEntry = true;
 }
 
 /**
@@ -99,32 +101,15 @@ export function resetVoiceOptionsSheetHistory() {
   _skipNextPopstate = false;
   _closeInFlight = false;
   _reopenAfterClose = false;
-  _entryBelow = null;
 }
 
-/**
- * Whether the session's own entry sits directly below the panel's overlay. The
- * overlay is only ever opened on top of a live session, so this is how a
- * teardown knows the session entry is there even though `history.state` shows
- * the overlay.
- */
-export function voiceOptionsSheetEntryBelowIsSession() {
-  return _entryBelow === 'live_recording';
-}
 
-/** Whether this sheet has its own pop still on the way. */
-export function voiceOptionsSheetCloseInFlight() {
-  return _closeInFlight;
-}
 
 
 /** Hide the panel; `popHistory` pops its entry and skips the resulting event. */
 export function closeVoiceOptionsSheet({ popHistory = true } = {}) {
   const wasOwned = _ownsHistoryEntry;
   _ownsHistoryEntry = false;
-  // The overlay is on its way out, so what used to be below it says nothing
-  // about the stack any more.
-  _entryBelow = null;
   els.voiceOptionsSheet.hidden = true;
   if (popHistory && wasOwned && history.state?.view === 'voiceOptionsSheet') {
     _skipNextPopstate = true;
@@ -145,12 +130,14 @@ export function handleVoiceOptionsPopstate(event) {
     _skipNextPopstate = false;
     _closeInFlight = false;
     if (_reopenAfterClose) {
-      // The close landed; the panel is open again, so it needs its own entry.
+      // The close landed; the panel is open again, so it needs its own entry,
+      // recorded against whatever is current now.
       _reopenAfterClose = false;
       if (history.state?.view !== 'voiceOptionsSheet') {
-        history.pushState({ view: 'voiceOptionsSheet' }, '');
+        pushOverlayEntry();
+      } else {
+        _ownsHistoryEntry = true;
       }
-      _ownsHistoryEntry = true;
     }
     return true;
   }
@@ -160,6 +147,8 @@ export function handleVoiceOptionsPopstate(event) {
   // A stale Forward entry must not reopen session UI after the session ended.
   if (entering && state.appMode !== APP_MODES.LIVE_RECORDING) return false;
   if (entering) {
+    // Forward re-enters the overlay that is still on the stack; only ownership
+    // has to be reclaimed.
     _ownsHistoryEntry = true;
     els.voiceOptionsSheet.hidden = false;
     renderVoiceOptionsSheet();
@@ -169,7 +158,6 @@ export function handleVoiceOptionsPopstate(event) {
   // Back away from the overlay: it already popped, so the session entry is
   // current again and nothing needs restoring.
   _ownsHistoryEntry = false;
-  _entryBelow = null;
   els.voiceOptionsSheet.hidden = true;
   return true;
 }

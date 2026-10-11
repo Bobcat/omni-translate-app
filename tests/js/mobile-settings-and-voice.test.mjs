@@ -580,6 +580,85 @@ test('Back that already ended the session does not traverse past the baseline', 
   assert.equal(stubs.history.current, null, 'no entry removed past the baseline');
 });
 
+test('a teardown after a rapid reopen reaches the baseline', async () => {
+  const { applySessionTeardown } = await import('../../static/src/session/lifecycle.js');
+  state.appMode = APP_MODES.LIVE_RECORDING;
+  stubs.history.pushState({ view: 'live_recording' }, '', '/');
+  openVoiceOptionsSheet();
+  closeVoiceOptionsSheet();
+  openVoiceOptionsSheet(); // before the close lands
+  await settle();
+  assert.equal(voiceSheet().hidden, false);
+
+  applySessionTeardown();
+  await settle();
+  await settle();
+
+  assert.equal(state.appMode, APP_MODES.SETUP);
+  assert.equal(stubs.history.current, null, 'baseline, not the stale session entry');
+});
+
+test('a teardown after a Forward reopen reaches the baseline', async () => {
+  const { applySessionTeardown } = await import('../../static/src/session/lifecycle.js');
+  state.appMode = APP_MODES.LIVE_RECORDING;
+  stubs.history.pushState({ view: 'live_recording' }, '', '/');
+  openVoiceOptionsSheet();
+  closeVoiceOptionsSheet();
+  await settle();
+  stubs.history.forward();
+  await settle();
+  assert.equal(voiceSheet().hidden, false);
+
+  applySessionTeardown();
+  await settle();
+  await settle();
+
+  assert.equal(state.appMode, APP_MODES.SETUP);
+  assert.equal(stubs.history.current, null);
+});
+
+test('a teardown during a programmatic close reaches the baseline', async () => {
+  const { applySessionTeardown } = await import('../../static/src/session/lifecycle.js');
+  state.appMode = APP_MODES.LIVE_RECORDING;
+  stubs.history.pushState({ view: 'live_recording' }, '', '/');
+  openVoiceOptionsSheet();
+
+  // The close has been requested but its traversal has not landed yet.
+  closeVoiceOptionsSheet();
+  applySessionTeardown();
+  await settle();
+  await settle();
+
+  assert.equal(state.appMode, APP_MODES.SETUP);
+  assert.equal(stubs.history.current, null);
+});
+
+test('a rejection after one accepted change restores that accepted value', async () => {
+  const { handleMessage } = await import('../../static/src/session/messages.js');
+  state.sessionId = 'session-mixed';
+  state.ttsSettings.auto_speak = true;
+
+  // off then on, before either response arrives.
+  voiceOptions.setAutoSpeak(false);
+  voiceOptions.setAutoSpeak(true);
+
+  // The server accepts the first and refuses the second, so it ends on off.
+  handleMessage({
+    type: 'tts_settings',
+    session_id: 'session-mixed',
+    tts_settings: { auto_speak: false },
+  });
+  handleMessage({
+    type: 'error',
+    session_id: 'session-mixed',
+    code: 'invalid_tts_settings',
+    message: 'no',
+  });
+
+  assert.equal(voiceOptions.autoSpeak(), false, 'the accepted value comes back');
+  state.sessionId = null;
+});
+
 test.after(() => {
   delete globalThis.requestAnimationFrame;
   delete globalThis.document;
@@ -878,33 +957,52 @@ test('the automatic-speaking switch sends the full TTS snapshot', () => {
   state.socket = null;
 });
 
-test('every way out of a session clears the panel and the session voice state', async () => {
+test('a teardown with an open clone session clears everything and lands home', async () => {
   const { applySessionTeardown } = await import('../../static/src/session/lifecycle.js');
+  stubs.store.clear();
+  voiceOptions.resetVoiceOptions();
+  state.appMode = APP_MODES.LIVE_RECORDING;
+  stubs.history.pushState({ view: 'live_recording' }, '', '/');
+  voiceOptions.applyVoiceSessionReady({
+    voice_mode: 'speaker_clone',
+    voice_cloning_status: { a_to_b: { state: 'preparing', fallback_voice_mode: 'male' } },
+  });
+  openVoiceOptionsSheet();
+  assert.equal(voiceSheet().hidden, false);
 
-  for (const path of ['server ended', 'socket closed', 'local finish']) {
-    with_(path);
-    stubs.history.reset();
-    stubs.store.clear();
-    voiceOptions.resetVoiceOptions();
-    state.appMode = APP_MODES.LIVE_RECORDING;
-    voiceOptions.applyVoiceSessionReady({
-      voice_mode: 'speaker_clone',
-      voice_cloning_status: { a_to_b: { state: 'preparing', fallback_voice_mode: 'male' } },
-    });
-    openVoiceOptionsSheet();
-    assert.equal(voiceSheet().hidden, false, path);
+  applySessionTeardown();
+  await settle();
+  await settle();
 
-    applySessionTeardown();
-
-    assert.equal(voiceSheet().hidden, true, `${path}: panel closes`);
-    assert.deepEqual(voiceOptions.voiceCloningStatus(), {}, `${path}: clone status clears`);
-    assert.equal(state.appMode, APP_MODES.SETUP, `${path}: back to setup`);
-  }
-
+  assert.equal(voiceSheet().hidden, true, 'panel closes');
+  assert.deepEqual(voiceOptions.voiceCloningStatus(), {}, 'clone status clears');
+  assert.equal(state.appMode, APP_MODES.SETUP, 'back to setup');
+  assert.equal(stubs.history.current, null, 'baseline entry current');
   // The stored choice survives, so the next session starts where the user left.
   assert.equal(voiceOptions.voiceMode(), 'female');
+});
 
-  function with_() { /* each path shares one teardown; the label documents it */ }
+test('a teardown never traverses past the app baseline', async () => {
+  const { applySessionTeardown } = await import('../../static/src/session/lifecycle.js');
+  // An entry below the app's own baseline: an over-traversal would land here.
+  stubs.history.reset();
+  stubs.history.pushState({ view: 'sentinel' }, '', '/');
+  stubs.history.pushState({ view: 'app_baseline' }, '', '/');
+
+  state.appMode = APP_MODES.LIVE_RECORDING;
+  stubs.history.pushState({ view: 'live_recording' }, '', '/');
+  openVoiceOptionsSheet();
+
+  applySessionTeardown();
+  await settle();
+  await settle();
+
+  assert.equal(state.appMode, APP_MODES.SETUP);
+  assert.equal(stubs.history.current.view, 'app_baseline', 'stopped on the app baseline');
+  // The sentinel is still reachable, which is what proves nothing over-traversed.
+  stubs.history.back();
+  await settle();
+  assert.equal(stubs.history.current.view, 'sentinel');
 });
 
 test('the voice icon is only in the document while a session runs', () => {
