@@ -46,8 +46,6 @@ def prepare_pdf(
     request_json = json.dumps(
         {
             "request_id": str(operation_id),
-            "task": "translate_pdf",
-            "priority": "normal",
             "source_lang_code": "auto",
             "quota_authorization_required": True,
             **dict(render_options),
@@ -177,7 +175,7 @@ def _submit_multipart(request_json: str, document_bytes: bytes, filename: str, c
     )
     return _read_json(
         "POST",
-        f"{_base_url()}/v1/requests",
+        f"{_base_url()}/v1/pdf-requests",
         content=body,
         headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
         timeout=_submit_timeout_s(),

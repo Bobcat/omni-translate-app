@@ -99,7 +99,6 @@ def translate_image(
 
     request = {
         "request_id": str(operation_id),
-        "task": "translate_image",
         "source_lang_code": source_code,
         "target_lang_code": target_code,
     }
@@ -215,7 +214,7 @@ def _submit(
     body = _multipart_body(boundary, request_json, image_bytes, filename, mime)
     payload = _read_json(
         "POST",
-        f"{_base_url()}/v1/requests",
+        f"{_base_url()}/v1/image-requests",
         content=body,
         headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
     )
@@ -243,7 +242,7 @@ def _submit_reentry(
     safe_source_id = quote(source_request_id, safe="")
     response = _read_json(
         "POST",
-        f"{_base_url()}/v1/requests/{safe_source_id}/{subpath}",
+        f"{_base_url()}/v1/image-requests/{safe_source_id}/{subpath}",
         content=body,
         headers={"Content-Type": "application/json"},
     )
