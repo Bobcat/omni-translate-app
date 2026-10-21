@@ -206,7 +206,9 @@ class PdfCreditFlowTests(unittest.TestCase):
         self.assertEqual(settle_pdf_credit_envelope(self.principal, completed), "consumed")
         self.assertEqual(self.usage(), (0, 390))
 
-    def test_preparation_sends_auto_page_layout_mode(self) -> None:
+    def test_preparation_sends_only_the_pdf_requests_render_options(self) -> None:
+        # translation-services refuses a field its PDF request does not know, the image route's
+        # layout and render modes among them.
         operation_id = str(uuid.uuid4())
         with patch(
             "app.credits.pdf_translation.prepare_pdf",
@@ -221,9 +223,35 @@ class PdfCreditFlowTests(unittest.TestCase):
             )
 
         self.assertEqual(
-            prepare.call_args.kwargs["render_options"]["page_layout_mode"],
-            "auto",
+            prepare.call_args.kwargs["render_options"],
+            {
+                "page_scale": 0.9,
+                "erase_fill_mode": "inpaint",
+                "pdf_output_mode": "vector",
+                "pdf_structure_mode": "source_only",
+            },
         )
+
+    def test_the_bridge_posts_a_pdf_request_to_the_pdf_route(self) -> None:
+        seen: dict[str, object] = {}
+
+        def fake_read_json(method, url, **kwargs):
+            seen.update(method=method, url=url, content=kwargs["content"])
+            return {"request_id": "op", "state": "queued"}
+
+        with patch("app.pdf_translation_bridge._read_json", side_effect=fake_read_json):
+            prepare_pdf(
+                document_bytes=make_pdf(1),
+                filename="doc.pdf",
+                content_type="application/pdf",
+                operation_id="op",
+                render_options={"page_scale": 0.9},
+            )
+
+        self.assertEqual(seen["method"], "POST")
+        self.assertTrue(str(seen["url"]).endswith("/v1/pdf-requests"))
+        self.assertNotIn(b'"task"', seen["content"])
+        self.assertNotIn(b'"priority"', seen["content"])
 
     def test_cancel_before_compute_returns_the_complete_reservation(self) -> None:
         operation_id = str(uuid.uuid4())

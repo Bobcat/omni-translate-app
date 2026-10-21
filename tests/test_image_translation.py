@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
+from app import image_translation_bridge
 from app.image_translation_bridge import ImageTranslationError
 from app.image_translation_bridge import _terminal_error
 from app.image_translation_bridge import retranslate_image
@@ -445,6 +446,28 @@ class BridgeCeilingTests(unittest.TestCase):
         request = json.loads(self._run_bridge(1500))
         self.assertEqual(request["request_id"], OPERATION_ID)
         self.assertEqual(request["max_source_characters"], 1500)
+        # The endpoint names the task; translation-services refuses a field it does not know.
+        self.assertNotIn("task", request)
+
+    def test_the_bridge_uses_the_image_route(self) -> None:
+        urls: list[str] = []
+
+        def fake_read_json(method, url, **_kwargs):
+            urls.append(url)
+            return {"request_id": OPERATION_ID, "state": "queued"}
+
+        with patch("app.image_translation_bridge._read_json", side_effect=fake_read_json):
+            image_translation_bridge._submit(
+                "{}", PNG_BYTES, "photo.png", "image/png", expected_request_id=OPERATION_ID
+            )
+            for subpath in ("retranslate", "rerender"):
+                image_translation_bridge._submit_reentry(
+                    "source", subpath, {}, expected_request_id=OPERATION_ID
+                )
+
+        self.assertTrue(urls[0].endswith("/v1/image-requests"))
+        self.assertTrue(urls[1].endswith("/v1/image-requests/source/retranslate"))
+        self.assertTrue(urls[2].endswith("/v1/image-requests/source/rerender"))
 
     def test_no_ceiling_leaves_the_field_out(self) -> None:
         request = json.loads(self._run_bridge(None))
