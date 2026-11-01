@@ -225,7 +225,7 @@ class PdfCreditFlowTests(unittest.TestCase):
         self.assertEqual(
             prepare.call_args.kwargs["render_options"],
             {
-                "page_scale": 0.9,
+                "page_scale": "auto",
                 "erase_fill_mode": "inpaint",
                 "pdf_output_mode": "vector",
                 "pdf_structure_mode": "source_only",
